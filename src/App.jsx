@@ -23,7 +23,7 @@ const getTelegramUser = () => {
 const money = (v) => v.toLocaleString("ru-RU") + " Br";
 const getBrands = (products) => [...new Set(products.map(p => p.brand))];
 
-const ADMIN_IDS = [778715828, 987654321];
+const ADMIN_IDS = [123456789, 987654321];
 
 const DEFAULT_PRODUCTS = [
   { id: 1, brand: "NIKE", name: "Dunk Low Panda", price: 18990, oldPrice: null, image: "https://images.unsplash.com/photo-1542291026-7eec264c27ff", sales: 120, ratings: [], averageRating: 0, description: "Классические Nike Dunk Low Panda.", sizes: ["40","41","42","43","44"] },
@@ -788,7 +788,7 @@ export default function App() {
     );
   };
 
-  // ---- ИСПРАВЛЕННАЯ АДМИН-ПАНЕЛЬ (с таблицей) ----
+  // ---- АДМИН-ПАНЕЛЬ (с таблицей) ----
   const AdminPanel = () => {
     const { theme } = useTheme();
     const isDark = theme === "dark";
@@ -809,7 +809,6 @@ export default function App() {
       setStatusModalVisible(false);
     };
 
-    // Компонент для трек-номера (локальное состояние)
     const TrackingInput = ({ orderId, initialValue }) => {
       const [tracking, setTracking] = useState(initialValue || "");
       const updateTrackingLocal = (text) => {
@@ -846,7 +845,6 @@ export default function App() {
 
             <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Управление заказами (таблица)</Text>
 
-            {/* Таблица заказов */}
             <View style={[styles.tableContainer, isDark && styles.tableContainerDark]}>
               <View style={styles.tableHeader}>
                 <Text style={[styles.tableHeaderText, isDark && styles.textDark]}>№</Text>
@@ -875,7 +873,6 @@ export default function App() {
               ))}
             </View>
 
-            {/* Модалка выбора статуса */}
             <Modal visible={statusModalVisible} transparent animationType="fade">
               <View style={styles.modalOverlay}>
                 <View style={[styles.modalView, isDark && styles.modalViewDark]}>
@@ -1056,7 +1053,7 @@ export default function App() {
     );
   };
 
-  // ---- Меню ----
+  // ---- Меню (закреплённое внизу) ----
   const Menu = () => {
     const { theme } = useTheme();
     const isDark = theme === "dark";
@@ -1113,7 +1110,7 @@ export default function App() {
 }
 
 // ==============================
-// СТИЛИ (полный набор)
+// СТИЛИ
 // ==============================
 const styles = StyleSheet.create({
   page: { flex: 1, backgroundColor: "#F7F7F5", padding: 14, paddingBottom: 80 },
@@ -1302,6 +1299,7 @@ const styles = StyleSheet.create({
   },
   menuBadgeText: { color: '#fff', fontSize: 11, fontWeight: 'bold' },
 
+  // ЗАКРЕПЛЁННОЕ МЕНЮ
   menu: {
     position: 'absolute',
     bottom: 0,
@@ -1315,6 +1313,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-around",
     alignItems: "center",
     paddingBottom: 5,
+    zIndex: 1000, // поверх всего
   },
   menuDark: { backgroundColor: "#1a1a1a", borderColor: "#333" },
   menuText: { fontSize: 13, fontWeight: "bold", color: "#333" },
@@ -1326,7 +1325,6 @@ const styles = StyleSheet.create({
   loader: { textAlign: "center", padding: 8, color: "#777" },
   empty: { textAlign: "center", padding: 20, color: "#999" },
 
-  // Стили для таблицы админки
   tableContainer: { backgroundColor: "#fff", borderRadius: 16, overflow: 'hidden', marginVertical: 10 },
   tableContainerDark: { backgroundColor: "#2a2a2a" },
   tableHeader: { flexDirection: 'row', backgroundColor: "#111", paddingVertical: 10, paddingHorizontal: 6 },
