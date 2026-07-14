@@ -1,4 +1,4 @@
-import React, { useState, useEffect, createContext, useContext } from "react";
+import React, { useState, useEffect, createContext, useContext, useCallback, memo } from "react";
 import {
   View, Text, StyleSheet, TouchableOpacity, Image, ScrollView, Alert,
   TextInput, Clipboard, FlatList, Modal, Share, Switch
@@ -23,7 +23,7 @@ const getTelegramUser = () => {
 const money = (v) => v.toLocaleString("ru-RU") + " Br";
 const getBrands = (products) => [...new Set(products.map(p => p.brand))];
 
-const ADMIN_IDS = [123456789, 987654321];
+const ADMIN_IDS = [778715828, 987654321];
 
 const DEFAULT_PRODUCTS = [
   { id: 1, brand: "NIKE", name: "Dunk Low Panda", price: 18990, oldPrice: null, image: "https://images.unsplash.com/photo-1542291026-7eec264c27ff", sales: 120, ratings: [], averageRating: 0, description: "Классические Nike Dunk Low Panda.", sizes: ["40","41","42","43","44"] },
@@ -80,6 +80,30 @@ const loadFromCloud = async (key) => {
   }
   return null;
 };
+
+// ==============================
+// ВНЕШНИЙ КОМПОНЕНТ ДЛЯ ТРЕК-НОМЕРА (чтобы не пересоздавался)
+// ==============================
+const TrackingInput = memo(({ orderId, initialValue, onUpdate }) => {
+  const [tracking, setTracking] = useState(initialValue || "");
+  const { theme } = useTheme();
+  const isDark = theme === "dark";
+
+  const handleChange = (text) => {
+    setTracking(text);
+    if (onUpdate) onUpdate(orderId, text);
+  };
+
+  return (
+    <TextInput
+      style={[styles.trackingInput, isDark && styles.inputDark]}
+      placeholder="Трек"
+      placeholderTextColor={isDark ? "#999" : "#888"}
+      value={tracking}
+      onChangeText={handleChange}
+    />
+  );
+});
 
 // ==============================
 // APP
@@ -788,7 +812,7 @@ export default function App() {
     );
   };
 
-  // ---- АДМИН-ПАНЕЛЬ (с таблицей) ----
+  // ---- АДМИН-ПАНЕЛЬ (с таблицей и TrackingInput) ----
   const AdminPanel = () => {
     const { theme } = useTheme();
     const isDark = theme === "dark";
@@ -809,21 +833,9 @@ export default function App() {
       setStatusModalVisible(false);
     };
 
-    const TrackingInput = ({ orderId, initialValue }) => {
-      const [tracking, setTracking] = useState(initialValue || "");
-      const updateTrackingLocal = (text) => {
-        setTracking(text);
-        updateTracking(orderId, text);
-      };
-      return (
-        <TextInput
-          style={[styles.trackingInput, isDark && styles.inputDark]}
-          placeholder="Трек"
-          placeholderTextColor={isDark ? "#999" : "#888"}
-          value={tracking}
-          onChangeText={updateTrackingLocal}
-        />
-      );
+    // Используем внешний компонент для трек-номера
+    const handleTrackingUpdate = (orderId, text) => {
+      updateTracking(orderId, text);
     };
 
     return (
@@ -847,30 +859,41 @@ export default function App() {
 
             <View style={[styles.tableContainer, isDark && styles.tableContainerDark]}>
               <View style={styles.tableHeader}>
-                <Text style={[styles.tableHeaderText, isDark && styles.textDark]}>№</Text>
-                <Text style={[styles.tableHeaderText, isDark && styles.textDark]}>ФИО</Text>
-                <Text style={[styles.tableHeaderText, isDark && styles.textDark]}>Сумма</Text>
-                <Text style={[styles.tableHeaderText, isDark && styles.textDark]}>Трек</Text>
-                <Text style={[styles.tableHeaderText, isDark && styles.textDark]}>Статус</Text>
+                <Text style={[styles.tableHeaderText, isDark && styles.textDark, {flex: 0.6}]}>№</Text>
+                <Text style={[styles.tableHeaderText, isDark && styles.textDark, {flex: 2}]}>ФИО</Text>
+                <Text style={[styles.tableHeaderText, isDark && styles.textDark, {flex: 1}]}>Товары</Text>
+                <Text style={[styles.tableHeaderText, isDark && styles.textDark, {flex: 0.9}]}>Доставка</Text>
+                <Text style={[styles.tableHeaderText, isDark && styles.textDark, {flex: 1}]}>Итого</Text>
+                <Text style={[styles.tableHeaderText, isDark && styles.textDark, {flex: 1}]}>Трек</Text>
+                <Text style={[styles.tableHeaderText, isDark && styles.textDark, {flex: 1.2}]}>Статус</Text>
               </View>
-              {adminOrders.map(order => (
-                <View key={order.id} style={[styles.tableRow, isDark && styles.tableRowDark]}>
-                  <Text style={[styles.tableCell, isDark && styles.textDark]}>{order.id}</Text>
-                  <Text style={[styles.tableCell, isDark && styles.textDark]}>{order.fullName}</Text>
-                  <Text style={[styles.tableCell, isDark && styles.textDark]}>{money(order.finalTotal)}</Text>
-                  <View style={styles.trackingCell}>
-                    <TrackingInput orderId={order.id} initialValue={order.trackingNumber || ""} />
+              {adminOrders.map(order => {
+                const itemsSummary = order.items.map(i => i.name).join(', ');
+                return (
+                  <View key={order.id} style={[styles.tableRow, isDark && styles.tableRowDark]}>
+                    <Text style={[styles.tableCell, isDark && styles.textDark, {flex: 0.6}]}>{order.id}</Text>
+                    <Text style={[styles.tableCell, isDark && styles.textDark, {flex: 2}]} numberOfLines={1} ellipsizeMode="tail">{order.fullName}</Text>
+                    <Text style={[styles.tableCell, isDark && styles.textDark, {flex: 1}]} numberOfLines={1} ellipsizeMode="tail">{itemsSummary}</Text>
+                    <Text style={[styles.tableCell, isDark && styles.textDark, {flex: 0.9}]}>{money(order.deliveryPrice || 0)}</Text>
+                    <Text style={[styles.tableCell, isDark && styles.textDark, {flex: 1}]}>{money(order.finalTotal)}</Text>
+                    <View style={[styles.trackingCell, {flex: 1}]}>
+                      <TrackingInput
+                        orderId={order.id}
+                        initialValue={order.trackingNumber || ""}
+                        onUpdate={handleTrackingUpdate}
+                      />
+                    </View>
+                    <TouchableOpacity
+                      style={[styles.statusCell, {flex: 1.2}]}
+                      onPress={() => openStatusModal(order.id, order.status)}
+                    >
+                      <Text style={[styles.statusText, isDark && styles.textDark, {color: order.status === "Доставлен" ? "green" : "#333"}]}>
+                        {order.status}
+                      </Text>
+                    </TouchableOpacity>
                   </View>
-                  <TouchableOpacity
-                    style={styles.statusCell}
-                    onPress={() => openStatusModal(order.id, order.status)}
-                  >
-                    <Text style={[styles.statusText, isDark && styles.textDark, {color: order.status === "Доставлен" ? "green" : "#333"}]}>
-                      {order.status}
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              ))}
+                );
+              })}
             </View>
 
             <Modal visible={statusModalVisible} transparent animationType="fade">
@@ -972,6 +995,7 @@ export default function App() {
     );
   };
 
+  // ---- Модалка оформления заказа (показывает доставку отдельно) ----
   const OrderModal = () => {
     const [fullName, setFullName] = useState("");
     const [address, setAddress] = useState("");
@@ -1039,7 +1063,11 @@ export default function App() {
                 <Text style={[styles.summaryText, isDark && styles.textDark]}>Срок: {days} дн.</Text>
               </View>
               <View style={styles.totalRow}>
-                <Text style={[styles.totalLabel, isDark && styles.textDark]}>Итого к оплате:</Text>
+                <Text style={[styles.totalLabel, isDark && styles.textDark]}>Товары: {money(finalTotal)}</Text>
+                <Text style={[styles.totalLabel, isDark && styles.textDark]}>Доставка: {money(dp)}</Text>
+              </View>
+              <View style={styles.totalRow}>
+                <Text style={[styles.totalLabel, isDark && styles.textDark, {fontWeight: 'bold'}]}>Итого к оплате:</Text>
                 <Text style={[styles.totalAmount, isDark && styles.textDark]}>{money(orderTotal)}</Text>
               </View>
               <View style={styles.modalButtons}>
@@ -1053,7 +1081,7 @@ export default function App() {
     );
   };
 
-  // ---- Меню (закреплённое внизу) ----
+  // ---- Меню (закреплённое) ----
   const Menu = () => {
     const { theme } = useTheme();
     const isDark = theme === "dark";
@@ -1280,8 +1308,8 @@ const styles = StyleSheet.create({
   themeRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginVertical: 12 },
   themeLabel: { fontSize: 16 },
 
-  totalRow: { flexDirection: "row", justifyContent: "space-between", marginVertical: 12, paddingVertical: 8, borderTopWidth: 1, borderColor: "#ddd" },
-  totalLabel: { fontSize: 16, fontWeight: "600" },
+  totalRow: { flexDirection: "row", justifyContent: "space-between", marginVertical: 6, paddingVertical: 4, borderBottomWidth: 1, borderBottomColor: "#ddd" },
+  totalLabel: { fontSize: 16, fontWeight: "500" },
   totalAmount: { fontSize: 18, fontWeight: "900" },
 
   cartBadge: { fontSize: 16, fontWeight: "600", color: "#000" },
@@ -1299,7 +1327,6 @@ const styles = StyleSheet.create({
   },
   menuBadgeText: { color: '#fff', fontSize: 11, fontWeight: 'bold' },
 
-  // ЗАКРЕПЛЁННОЕ МЕНЮ
   menu: {
     position: 'absolute',
     bottom: 0,
@@ -1313,7 +1340,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-around",
     alignItems: "center",
     paddingBottom: 5,
-    zIndex: 1000, // поверх всего
+    zIndex: 1000,
   },
   menuDark: { backgroundColor: "#1a1a1a", borderColor: "#333" },
   menuText: { fontSize: 13, fontWeight: "bold", color: "#333" },
@@ -1325,18 +1352,19 @@ const styles = StyleSheet.create({
   loader: { textAlign: "center", padding: 8, color: "#777" },
   empty: { textAlign: "center", padding: 20, color: "#999" },
 
+  // Стили таблицы
   tableContainer: { backgroundColor: "#fff", borderRadius: 16, overflow: 'hidden', marginVertical: 10 },
   tableContainerDark: { backgroundColor: "#2a2a2a" },
-  tableHeader: { flexDirection: 'row', backgroundColor: "#111", paddingVertical: 10, paddingHorizontal: 6 },
-  tableHeaderText: { fontSize: 12, fontWeight: 'bold', color: "#fff", flex: 1, textAlign: 'center' },
-  tableRow: { flexDirection: 'row', paddingVertical: 10, paddingHorizontal: 6, borderBottomWidth: 1, borderBottomColor: "#eee", alignItems: 'center' },
+  tableHeader: { flexDirection: 'row', backgroundColor: "#111", paddingVertical: 8, paddingHorizontal: 6 },
+  tableHeaderText: { fontSize: 11, fontWeight: 'bold', color: "#fff", textAlign: 'center' },
+  tableRow: { flexDirection: 'row', paddingVertical: 8, paddingHorizontal: 6, borderBottomWidth: 1, borderBottomColor: "#eee", alignItems: 'center' },
   tableRowDark: { borderBottomColor: "#555" },
-  tableCell: { fontSize: 12, flex: 1, textAlign: 'center', paddingHorizontal: 2 },
-  trackingCell: { flex: 1, paddingHorizontal: 2 },
-  statusCell: { flex: 1, alignItems: 'center' },
-  statusText: { fontSize: 12, fontWeight: '600', color: "#333", backgroundColor: "#eee", paddingVertical: 4, paddingHorizontal: 8, borderRadius: 12 },
-  statusOption: { paddingVertical: 10, paddingHorizontal: 15, borderBottomWidth: 1, borderBottomColor: "#eee" },
+  tableCell: { fontSize: 11, textAlign: 'center', paddingHorizontal: 2 },
+  trackingCell: { paddingHorizontal: 2 },
+  statusCell: { alignItems: 'center' },
+  statusText: { fontSize: 11, fontWeight: '600', color: "#333", backgroundColor: "#eee", paddingVertical: 3, paddingHorizontal: 6, borderRadius: 10 },
+  statusOption: { paddingVertical: 8, paddingHorizontal: 15, borderBottomWidth: 1, borderBottomColor: "#eee" },
   statusOptionActive: { backgroundColor: "#111" },
-  statusOptionText: { fontSize: 16, textAlign: 'center' },
+  statusOptionText: { fontSize: 15, textAlign: 'center' },
   statusOptionTextActive: { color: "#fff" },
 });
