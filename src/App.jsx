@@ -482,71 +482,7 @@ export default function App() {
   const salesMap = {};
   adminOrders.forEach(o => { adminRevenue += o.finalTotal; o.items.forEach(i => { salesMap[i.id] = (salesMap[i.id] || 0) + 1; }); });
   const popular = Object.keys(salesMap).sort((a,b) => salesMap[b] - salesMap[a]).slice(0,5).map(id => products.find(p => p.id === parseInt(id))).filter(Boolean);
-
-  // ==============================
-  // КОМПОНЕНТЫ СТРАНИЦ
-  // ==============================
-
-      const SizeModal = () => {
-    const { theme } = useTheme();
-    const isDark = theme === "dark";
-    const sizes = sizeModalProduct?.sizes || [];
-
-    const handleAddWithSize = () => {
-      if (!tempSelectedSize) {
-        tg?.showAlert("Выберите размер");
-        return;
-      }
-
-      addCart({ ...sizeModalProduct, size: tempSelectedSize });
-
-      setSizeModalVisible(false);
-      setSizeModalProduct(null);
-      setTempSelectedSize(null);
-
-      tg?.showAlert(`✅ ${sizeModalProduct?.brand} ${sizeModalProduct?.name}\nРазмер ${tempSelectedSize} добавлен в корзину`);
-    };
-
-    return (
-      <Modal 
-        transparent 
-        visible={sizeModalVisible} 
-        animationType="none" 
-        onRequestClose={() => setSizeModalVisible(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalView, isDark && styles.modalViewDark]}>
-            <Text style={[styles.modalTitle, isDark && styles.textDark]}>Выберите размер</Text>
-            <Text style={[styles.modalSubtitle, isDark && styles.textDark]}>
-              {sizeModalProduct?.brand} {sizeModalProduct?.name}
-            </Text>
-
-            <View style={styles.sizeGrid}>
-              {sizes.map(s => (
-                <TouchableOpacity
-                  key={s}
-                  style={[styles.sizeOption, tempSelectedSize === s && styles.sizeOptionActive]}
-                  onPress={() => setTempSelectedSize(s)}
-                >
-                  <Text style={[styles.sizeOptionText, tempSelectedSize === s && styles.sizeOptionTextActive]}>{s}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            <View style={styles.modalButtons}>
-              <TouchableOpacity style={styles.modalCancel} onPress={() => setSizeModalVisible(false)}>
-                <Text>Отмена</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.modalConfirm} onPress={handleAddWithSize}>
-                <Text style={styles.buttonText}>Добавить</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-    );
-  };
-
+      
   const ProductCard = ({ item }) => {
     const isFav = favorites.some(x => x.id === item.id);
     const { theme } = useTheme();
@@ -657,13 +593,15 @@ export default function App() {
     const hasPurchased = orderHistory.some(order => 
       order.status === "Доставлен" && order.items.some(i => i.id === selectedProduct.id)
     );
-    const handleAddToCart = () => {
-      if (!selectedSize) {
-        Alert.alert("Выберите размер");
-        return;
+        const handleAddToCart = () => {
+      if (item.sizes && item.sizes.length > 0) {
+        const defaultSize = item.sizes[0]; // берём первый размер
+        addCart({ ...item, size: defaultSize });
+        tg?.showAlert(`✅ ${item.brand} ${item.name}\nРазмер ${defaultSize} добавлен в корзину`);
+      } else {
+        tg?.showAlert("Товар добавлен в корзину");
+        addCart(item);
       }
-      addCart({ ...selectedProduct, size: selectedSize });
-      Alert.alert("Добавлено", "Товар в корзине");
     };
     const submitRating = () => {
       if (rating === 0) { Alert.alert("Ошибка", "Поставьте оценку"); return; }
