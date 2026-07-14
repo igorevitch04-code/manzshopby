@@ -82,7 +82,7 @@ const loadFromCloud = async (key) => {
 };
 
 // ==============================
-// ВНЕШНИЙ КОМПОНЕНТ ДЛЯ ТРЕК-НОМЕРА (чтобы не пересоздавался)
+// TrackingInput (мемоизированный)
 // ==============================
 const TrackingInput = memo(({ orderId, initialValue, onUpdate }) => {
   const [tracking, setTracking] = useState(initialValue || "");
@@ -812,7 +812,7 @@ export default function App() {
     );
   };
 
-  // ---- АДМИН-ПАНЕЛЬ (с таблицей и TrackingInput) ----
+  // ---- АДМИН-ПАНЕЛЬ ----
   const AdminPanel = () => {
     const { theme } = useTheme();
     const isDark = theme === "dark";
@@ -833,7 +833,6 @@ export default function App() {
       setStatusModalVisible(false);
     };
 
-    // Используем внешний компонент для трек-номера
     const handleTrackingUpdate = (orderId, text) => {
       updateTracking(orderId, text);
     };
@@ -995,7 +994,7 @@ export default function App() {
     );
   };
 
-  // ---- Модалка оформления заказа (показывает доставку отдельно) ----
+  // ---- Оформление заказа ----
   const OrderModal = () => {
     const [fullName, setFullName] = useState("");
     const [address, setAddress] = useState("");
@@ -1114,7 +1113,7 @@ export default function App() {
   };
 
   // ==============================
-  // РЕНДЕР
+  // РЕНДЕР (с фиксацией высоты)
   // ==============================
   let content;
   if (page === "home") content = <Home />;
@@ -1126,7 +1125,7 @@ export default function App() {
 
   return (
     <ThemeContext.Provider value={{ theme, toggleTheme }}>
-      <View style={{ flex: 1, backgroundColor: theme === "dark" ? "#1a1a1a" : "#F7F7F5" }}>
+      <View style={{ flex: 1, height: '100%', width: '100%', backgroundColor: theme === "dark" ? "#1a1a1a" : "#F7F7F5" }}>
         {content}
         <Menu />
         <OrderModal />
@@ -1352,7 +1351,6 @@ const styles = StyleSheet.create({
   loader: { textAlign: "center", padding: 8, color: "#777" },
   empty: { textAlign: "center", padding: 20, color: "#999" },
 
-  // Стили таблицы
   tableContainer: { backgroundColor: "#fff", borderRadius: 16, overflow: 'hidden', marginVertical: 10 },
   tableContainerDark: { backgroundColor: "#2a2a2a" },
   tableHeader: { flexDirection: 'row', backgroundColor: "#111", paddingVertical: 8, paddingHorizontal: 6 },
