@@ -3,14 +3,11 @@ import {
   View, Text, StyleSheet, TouchableOpacity, Image, ScrollView, Alert,
   TextInput, Clipboard, FlatList, Modal, Share, Switch
 } from "react-native";
-import AsyncStorage from "./AsyncStorage";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const ThemeContext = createContext();
 const useTheme = () => useContext(ThemeContext);
 
-// ==============================
-// Telegram User
-// ==============================
 const getTelegramUser = () => {
   try {
     const tg = typeof window !== "undefined" && window.Telegram && window.Telegram.WebApp;
@@ -26,14 +23,8 @@ const getTelegramUser = () => {
 const money = (v) => v.toLocaleString("ru-RU") + " Br";
 const getBrands = (products) => [...new Set(products.map(p => p.brand))];
 
-// ==============================
-// ADMIN ID (замените на свои)
-// ==============================
 const ADMIN_IDS = [778715828, 987654321];
 
-// ==============================
-// DEFAULT PRODUCTS
-// ==============================
 const DEFAULT_PRODUCTS = [
   { id: 1, brand: "NIKE", name: "Dunk Low Panda", price: 18990, oldPrice: null, image: "https://images.unsplash.com/photo-1542291026-7eec264c27ff", sales: 120, ratings: [], averageRating: 0, description: "Классические Nike Dunk Low Panda.", sizes: ["40","41","42","43","44"] },
   { id: 2, brand: "ADIDAS", name: "Ozweego Core Black", price: 21990, oldPrice: null, image: "https://images.unsplash.com/photo-1600185365483-26d7a4cc7519", sales: 95, ratings: [], averageRating: 0, description: "Adidas Ozweego с массивной подошвой.", sizes: ["41","42","43"] },
@@ -50,13 +41,57 @@ const LEVELS = [
 ];
 const ORDER_STATUSES = ["Ожидает подтверждения", "Принят", "На сборке", "Доставляется", "Готов к выдаче"];
 
+// ==============================
+// Вспомогательные функции для CloudStorage
+// ==============================
+const getCloudStorage = () => {
+  if (typeof window !== "undefined" && window.Telegram?.WebApp?.CloudStorage) {
+    return window.Telegram.WebApp.CloudStorage;
+  }
+  return null;
+};
+
+const saveToCloud = async (key, data) => {
+  const cloud = getCloudStorage();
+  if (cloud) {
+    try {
+      await new Promise((resolve, reject) => {
+        cloud.setItem(key, JSON.stringify(data), (err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+    } catch (e) {
+      console.warn("CloudStorage save error:", e);
+    }
+  }
+};
+
+const loadFromCloud = async (key) => {
+  const cloud = getCloudStorage();
+  if (cloud) {
+    try {
+      const value = await new Promise((resolve, reject) => {
+        cloud.getItem(key, (err, val) => {
+          if (err) reject(err);
+          else resolve(val);
+        });
+      });
+      return value ? JSON.parse(value) : null;
+    } catch (e) {
+      console.warn("CloudStorage load error:", e);
+      return null;
+    }
+  }
+  return null;
+};
+
 export default function App() {
   const user = getTelegramUser();
   const [theme, setTheme] = useState("light");
   const toggleTheme = () => setTheme(t => t === "light" ? "dark" : "light");
   const isAdmin = ADMIN_IDS.includes(user.id);
 
-  // Основные состояния
   const [page, setPage] = useState("home");
   const [cart, setCart] = useState([]);
   const [favorites, setFavorites] = useState([]);
@@ -84,62 +119,137 @@ export default function App() {
   const [promoCodes, setPromoCodes] = useState([]);
   const [usedFreeDelivery, setUsedFreeDelivery] = useState([]);
 
-  // Модалка выбора размера в каталоге
   const [sizeModalVisible, setSizeModalVisible] = useState(false);
   const [sizeModalProduct, setSizeModalProduct] = useState(null);
   const [tempSelectedSize, setTempSelectedSize] = useState(null);
 
   const STORAGE_KEYS = {
-    cart: "@krost_cart", favorites: "@krost_favorites", orders: "@krost_orders",
-    bonus: "@krost_bonus", orderHistory: "@krost_orderHistory", products: "@krost_products",
-    theme: "@krost_theme", adminOrders: "@krost_adminOrders",
-    lastOrderNumber: "@krost_lastOrderNumber", users: "@krost_users",
-    promoCodes: "@krost_promoCodes", usedFreeDelivery: "@krost_usedFreeDelivery"
+    cart: "@krost_cart",
+    favorites: "@krost_favorites",
+    orders: "@krost_orders",
+    bonus: "@krost_bonus",
+    orderHistory: "@krost_orderHistory",
+    products: "@krost_products",
+    theme: "@krost_theme",
+    adminOrders: "@krost_adminOrders",
+    lastOrderNumber: "@krost_lastOrderNumber",
+    users: "@krost_users",
+    promoCodes: "@krost_promoCodes",
+    usedFreeDelivery: "@krost_usedFreeDelivery"
   };
 
-  // Загрузка
+  // Облачные ключи (префикс, чтобы не конфликтовать с другими приложениями)
+  const CLOUD_KEYS = {
+    cart: "krost_cart",
+    favorites: "krost_favorites",
+    orders: "krost_orders",
+    bonus: "krost_bonus",
+    orderHistory: "krost_orderHistory",
+    lastOrderNumber: "krost_lastOrderNumber",
+    usedFreeDelivery: "krost_usedFreeDelivery"
+  };
+
+  // ==============================
+  // Загрузка из AsyncStorage и CloudStorage
+  // ==============================
   useEffect(() => {
-    const load = async () => {
+    const loadAll = async () => {
       try {
+        // Сначала загружаем из AsyncStorage (локально)
         const [c, f, o, b, h, p, t, a, ln, u, pc, ufd] = await AsyncStorage.multiGet([
           STORAGE_KEYS.cart, STORAGE_KEYS.favorites, STORAGE_KEYS.orders, STORAGE_KEYS.bonus,
           STORAGE_KEYS.orderHistory, STORAGE_KEYS.products, STORAGE_KEYS.theme, STORAGE_KEYS.adminOrders,
           STORAGE_KEYS.lastOrderNumber, STORAGE_KEYS.users, STORAGE_KEYS.promoCodes, STORAGE_KEYS.usedFreeDelivery
         ]);
-        if (c[1]) setCart(JSON.parse(c[1]));
-        if (f[1]) setFavorites(JSON.parse(f[1]));
-        if (o[1]) setOrders(JSON.parse(o[1]));
-        if (b[1]) setBonusBalance(JSON.parse(b[1]));
-        if (h[1]) setOrderHistory(JSON.parse(h[1]));
-        if (p[1]) setProducts(JSON.parse(p[1]));
-        if (t[1]) setTheme(JSON.parse(t[1]));
-        if (a[1]) setAdminOrders(JSON.parse(a[1]));
-        if (ln[1]) setLastOrderNumber(JSON.parse(ln[1]));
-        else { setLastOrderNumber(3340); await AsyncStorage.setItem(STORAGE_KEYS.lastOrderNumber, JSON.stringify(3340)); }
-        if (u[1]) setUsers(JSON.parse(u[1]));
-        else { setUsers([user]); await AsyncStorage.setItem(STORAGE_KEYS.users, JSON.stringify([user])); }
-        if (pc[1]) setPromoCodes(JSON.parse(pc[1]));
-        else { setPromoCodes([]); await AsyncStorage.setItem(STORAGE_KEYS.promoCodes, JSON.stringify([])); }
-        if (ufd[1]) setUsedFreeDelivery(JSON.parse(ufd[1]));
-        else { setUsedFreeDelivery([]); await AsyncStorage.setItem(STORAGE_KEYS.usedFreeDelivery, JSON.stringify([])); }
-      } catch (e) {}
+        let localCart = c[1] ? JSON.parse(c[1]) : [];
+        let localFavorites = f[1] ? JSON.parse(f[1]) : [];
+        let localOrders = o[1] ? JSON.parse(o[1]) : 0;
+        let localBonus = b[1] ? JSON.parse(b[1]) : 0;
+        let localOrderHistory = h[1] ? JSON.parse(h[1]) : [];
+        let localProducts = p[1] ? JSON.parse(p[1]) : DEFAULT_PRODUCTS;
+        let localTheme = t[1] ? JSON.parse(t[1]) : "light";
+        let localAdminOrders = a[1] ? JSON.parse(a[1]) : [];
+        let localLastOrderNumber = ln[1] ? JSON.parse(ln[1]) : 3340;
+        let localUsers = u[1] ? JSON.parse(u[1]) : [];
+        let localPromoCodes = pc[1] ? JSON.parse(pc[1]) : [];
+        let localUsedFreeDelivery = ufd[1] ? JSON.parse(ufd[1]) : [];
+
+        // Загружаем из CloudStorage (если есть) и объединяем / перезаписываем
+        const cloudCart = await loadFromCloud(CLOUD_KEYS.cart);
+        const cloudFavorites = await loadFromCloud(CLOUD_KEYS.favorites);
+        const cloudOrders = await loadFromCloud(CLOUD_KEYS.orders);
+        const cloudBonus = await loadFromCloud(CLOUD_KEYS.bonus);
+        const cloudOrderHistory = await loadFromCloud(CLOUD_KEYS.orderHistory);
+        const cloudLastOrderNumber = await loadFromCloud(CLOUD_KEYS.lastOrderNumber);
+        const cloudUsedFreeDelivery = await loadFromCloud(CLOUD_KEYS.usedFreeDelivery);
+
+        // Если в облаке есть данные – используем их (они актуальнее на других устройствах)
+        if (cloudCart !== null) localCart = cloudCart;
+        if (cloudFavorites !== null) localFavorites = cloudFavorites;
+        if (cloudOrders !== null) localOrders = cloudOrders;
+        if (cloudBonus !== null) localBonus = cloudBonus;
+        if (cloudOrderHistory !== null) localOrderHistory = cloudOrderHistory;
+        if (cloudLastOrderNumber !== null) localLastOrderNumber = cloudLastOrderNumber;
+        if (cloudUsedFreeDelivery !== null) localUsedFreeDelivery = cloudUsedFreeDelivery;
+
+        // Устанавливаем состояния
+        setCart(localCart);
+        setFavorites(localFavorites);
+        setOrders(localOrders);
+        setBonusBalance(localBonus);
+        setOrderHistory(localOrderHistory);
+        setProducts(localProducts);
+        setTheme(localTheme);
+        setAdminOrders(localAdminOrders);
+        setLastOrderNumber(localLastOrderNumber);
+        setUsers(localUsers);
+        setPromoCodes(localPromoCodes);
+        setUsedFreeDelivery(localUsedFreeDelivery);
+      } catch (e) {
+        console.warn("Ошибка загрузки данных", e);
+      }
     };
-    load();
+    loadAll();
   }, []);
 
-  // Сохранение
-  useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.cart, JSON.stringify(cart)); }, [cart]);
-  useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.favorites, JSON.stringify(favorites)); }, [favorites]);
-  useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.orders, JSON.stringify(orders)); }, [orders]);
-  useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.bonus, JSON.stringify(bonusBalance)); }, [bonusBalance]);
-  useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.orderHistory, JSON.stringify(orderHistory)); }, [orderHistory]);
+  // ==============================
+  // Сохранение в AsyncStorage и CloudStorage при каждом изменении
+  // ==============================
+  useEffect(() => {
+    AsyncStorage.setItem(STORAGE_KEYS.cart, JSON.stringify(cart));
+    saveToCloud(CLOUD_KEYS.cart, cart);
+  }, [cart]);
+  useEffect(() => {
+    AsyncStorage.setItem(STORAGE_KEYS.favorites, JSON.stringify(favorites));
+    saveToCloud(CLOUD_KEYS.favorites, favorites);
+  }, [favorites]);
+  useEffect(() => {
+    AsyncStorage.setItem(STORAGE_KEYS.orders, JSON.stringify(orders));
+    saveToCloud(CLOUD_KEYS.orders, orders);
+  }, [orders]);
+  useEffect(() => {
+    AsyncStorage.setItem(STORAGE_KEYS.bonus, JSON.stringify(bonusBalance));
+    saveToCloud(CLOUD_KEYS.bonus, bonusBalance);
+  }, [bonusBalance]);
+  useEffect(() => {
+    AsyncStorage.setItem(STORAGE_KEYS.orderHistory, JSON.stringify(orderHistory));
+    saveToCloud(CLOUD_KEYS.orderHistory, orderHistory);
+  }, [orderHistory]);
+  useEffect(() => {
+    AsyncStorage.setItem(STORAGE_KEYS.lastOrderNumber, JSON.stringify(lastOrderNumber));
+    saveToCloud(CLOUD_KEYS.lastOrderNumber, lastOrderNumber);
+  }, [lastOrderNumber]);
+  useEffect(() => {
+    AsyncStorage.setItem(STORAGE_KEYS.usedFreeDelivery, JSON.stringify(usedFreeDelivery));
+    saveToCloud(CLOUD_KEYS.usedFreeDelivery, usedFreeDelivery);
+  }, [usedFreeDelivery]);
+
+  // Сохранение остальных данных (которые не синхронизируются между устройствами, но нужны локально)
   useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.products, JSON.stringify(products)); }, [products]);
   useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.theme, JSON.stringify(theme)); }, [theme]);
   useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.adminOrders, JSON.stringify(adminOrders)); }, [adminOrders]);
-  useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.lastOrderNumber, JSON.stringify(lastOrderNumber)); }, [lastOrderNumber]);
   useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.users, JSON.stringify(users)); }, [users]);
   useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.promoCodes, JSON.stringify(promoCodes)); }, [promoCodes]);
-  useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.usedFreeDelivery, JSON.stringify(usedFreeDelivery)); }, [usedFreeDelivery]);
 
   // Обновление пользователей
   useEffect(() => {
@@ -148,18 +258,18 @@ export default function App() {
     }
   }, [user]);
 
-  // Уровни
+  // ==============================
+  // Уровни и прочие вычисления
+  // ==============================
   const currentLevel = LEVELS.find(l => orders >= l.min && orders <= l.max) || LEVELS[0];
   const nextLevel = LEVELS[LEVELS.indexOf(currentLevel) + 1];
   let progress = 100;
   if (nextLevel) progress = Math.min(100, Math.floor(((orders - currentLevel.min) / (nextLevel.min - currentLevel.min)) * 100));
   const referral = `https://t.me/krost_shop_bot?start=${user.id}`;
 
-  // Корзина
   const addCart = (item) => setCart([...cart, item]);
   const removeCart = (idx) => setCart(cart.filter((_, i) => i !== idx));
 
-  // Избранное
   const toggleFavorite = (item) => {
     favorites.some(x => x.id === item.id)
       ? setFavorites(favorites.filter(x => x.id !== item.id))
@@ -183,9 +293,7 @@ export default function App() {
     return { total, discount, usedBonus, finalTotal };
   };
 
-  // Бесплатная доставка
   const isFreeDeliveryEligible = (phone, fullName) => {
-    const key = phone.trim() + fullName.trim();
     return !usedFreeDelivery.some(item => item.phone === phone.trim() && item.fullName === fullName.trim());
   };
 
@@ -222,7 +330,6 @@ export default function App() {
     );
   };
 
-  // Отзывы
   const addRating = (productId, rating, comment) => {
     setProducts(prev => prev.map(p => {
       if (p.id === productId) {
@@ -245,7 +352,6 @@ export default function App() {
     return products.filter(p => brands.includes(p.brand) && !lastOrder.items.some(i => i.id === p.id)).slice(0, 4);
   };
 
-  // Фильтрация
   const filtered = products.filter(p => {
     const matchName = p.name.toLowerCase().includes(searchQuery.toLowerCase()) || p.brand.toLowerCase().includes(searchQuery.toLowerCase());
     const matchBrand = selectedBrand ? p.brand === selectedBrand : true;
@@ -264,7 +370,6 @@ export default function App() {
     if (page === "catalog") { setCurrentPage(1); setLoadingMore(false); }
   }, [page, searchQuery, selectedBrand, minPrice, maxPrice]);
 
-  // Админка
   const toggleAdmin = () => {
     if (!isAdmin) { Alert.alert("Доступ запрещён", "У вас нет прав администратора"); return; }
     setShowAdmin(!showAdmin);
@@ -301,7 +406,6 @@ export default function App() {
     setBroadcastText("");
   };
 
-  // Промокоды в админке
   const addPromoCode = () => {
     const code = prompt("Введите код (например, SAVE10)");
     if (!code) return;
@@ -329,7 +433,6 @@ export default function App() {
   // КОМПОНЕНТЫ
   // ==============================
 
-  // Модалка выбора размера (всегда рендерится, visible управляет отображением)
   const SizeModal = () => {
     const { theme } = useTheme();
     const isDark = theme === "dark";
@@ -346,7 +449,12 @@ export default function App() {
       Alert.alert("Добавлено", `Товар добавлен в корзину (размер ${tempSelectedSize})`);
     };
     return (
-      <Modal transparent visible={sizeModalVisible} animationType="fade" onRequestClose={() => setSizeModalVisible(false)}>
+      <Modal
+        transparent
+        visible={sizeModalVisible}
+        animationType="fade"
+        onRequestClose={() => setSizeModalVisible(false)}
+      >
         <View style={styles.modalOverlay}>
           <View style={[styles.modalView, isDark && styles.modalViewDark]}>
             <Text style={[styles.modalTitle, isDark && styles.textDark]}>Выберите размер</Text>
@@ -376,14 +484,11 @@ export default function App() {
     );
   };
 
-  // ProductCard – размер обязателен
   const ProductCard = ({ item }) => {
     const isFav = favorites.some(x => x.id === item.id);
     const { theme } = useTheme();
     const isDark = theme === "dark";
     const handleAddToCart = () => {
-      // Отладочный алерт – убедимся, что функция вызывается
-      Alert.alert("Добавление", `Вы нажали "В корзину" для ${item.name}`);
       if (item.sizes && item.sizes.length > 0) {
         setSizeModalProduct(item);
         setTempSelectedSize(null);
@@ -411,13 +516,12 @@ export default function App() {
     );
   };
 
-  // Home
   const Home = () => {
     const popularItems = [...products].sort((a,b) => b.sales - a.sales).slice(0,4);
     const recommended = getRecommended();
     const { theme } = useTheme(); const isDark = theme === "dark";
     return (
-      <ScrollView style={[styles.page, isDark && styles.pageDark]}>
+      <ScrollView style={[styles.page, isDark && styles.pageDark]} contentContainerStyle={styles.scrollContent}>
         <TouchableOpacity onLongPress={toggleAdmin}>
           <Text style={[styles.logo, isDark && styles.textDark]}>KROST</Text>
         </TouchableOpacity>
@@ -440,11 +544,11 @@ export default function App() {
             </View>
           </>
         )}
+        <View style={{ height: 20 }} />
       </ScrollView>
     );
   };
 
-  // Catalog
   const Catalog = () => {
     const brands = getBrands(products);
     const { theme } = useTheme(); const isDark = theme === "dark";
@@ -472,7 +576,7 @@ export default function App() {
           keyExtractor={item => item.id.toString()}
           numColumns={2}
           columnWrapperStyle={styles.grid}
-          contentContainerStyle={{ paddingBottom: 90 }}
+          contentContainerStyle={{ paddingBottom: 20 }}
           onEndReached={loadMore}
           onEndReachedThreshold={0.5}
           ListFooterComponent={loadingMore ? <Text style={[styles.loader, isDark && styles.textDark]}>Загрузка...</Text> : null}
@@ -482,7 +586,6 @@ export default function App() {
     );
   };
 
-  // ProductPage
   const ProductPage = () => {
     if (!selectedProduct) return null;
     const { theme } = useTheme(); const isDark = theme === "dark";
@@ -504,7 +607,7 @@ export default function App() {
       Alert.alert("Спасибо", "Отзыв добавлен");
     };
     return (
-      <ScrollView style={[styles.page, isDark && styles.pageDark]}>
+      <ScrollView style={[styles.page, isDark && styles.pageDark]} contentContainerStyle={styles.scrollContent}>
         <View style={styles.productHeader}>
           <TouchableOpacity onPress={() => setPage("catalog")}>
             <Text style={[styles.back, isDark && styles.textDark]}>← Назад</Text>
@@ -561,15 +664,15 @@ export default function App() {
             </TouchableOpacity>
           </View>
         )}
+        <View style={{ height: 20 }} />
       </ScrollView>
     );
   };
 
-  // Favorites
   const Favorites = () => {
     const { theme } = useTheme(); const isDark = theme === "dark";
     return (
-      <ScrollView style={[styles.page, isDark && styles.pageDark]}>
+      <ScrollView style={[styles.page, isDark && styles.pageDark]} contentContainerStyle={styles.scrollContent}>
         <Text style={[styles.pageTitle, isDark && styles.textDark]}>Избранное</Text>
         {favorites.length === 0 ? (
           <Text style={[styles.empty, isDark && styles.textDark]}>Нет сохраненных товаров</Text>
@@ -578,11 +681,11 @@ export default function App() {
             {favorites.map(item => <ProductCard key={item.id} item={item} />)}
           </View>
         )}
+        <View style={{ height: 20 }} />
       </ScrollView>
     );
   };
 
-  // Cart – с локальным состоянием для промокода
   const Cart = () => {
     const { theme } = useTheme();
     const isDark = theme === "dark";
@@ -602,7 +705,7 @@ export default function App() {
     };
 
     return (
-      <ScrollView style={[styles.page, isDark && styles.pageDark]} keyboardShouldPersistTaps="handled">
+      <ScrollView style={[styles.page, isDark && styles.pageDark]} contentContainerStyle={styles.scrollContent}>
         <Text style={[styles.pageTitle, isDark && styles.textDark]}>
           Корзина{cart.length > 0 && <Text style={styles.cartBadge}> ({cart.length})</Text>}
         </Text>
@@ -652,15 +755,15 @@ export default function App() {
             </TouchableOpacity>
           </>
         )}
+        <View style={{ height: 20 }} />
       </ScrollView>
     );
   };
 
-  // Profile
   const Profile = () => {
     const { theme, toggleTheme } = useTheme(); const isDark = theme === "dark";
     return (
-      <ScrollView style={[styles.page, isDark && styles.pageDark]}>
+      <ScrollView style={[styles.page, isDark && styles.pageDark]} contentContainerStyle={styles.scrollContent}>
         <Text style={[styles.pageTitle, isDark && styles.textDark]}>Профиль</Text>
         <Text style={[styles.userName, isDark && styles.textDark]}>Привет, {user.name} 👋</Text>
         {isAdmin && (
@@ -726,11 +829,11 @@ export default function App() {
             </View>
           ))
         )}
+        <View style={{ height: 20 }} />
       </ScrollView>
     );
   };
 
-  // AdminPanel
   const AdminPanel = () => {
     const { theme } = useTheme(); const isDark = theme === "dark";
     if (!showAdmin || !isAdmin) return null;
@@ -845,7 +948,6 @@ export default function App() {
     );
   };
 
-  // OrderModal
   const OrderModal = () => {
     const [fullName, setFullName] = useState("");
     const [address, setAddress] = useState("");
@@ -927,22 +1029,34 @@ export default function App() {
     );
   };
 
-  // Menu
+  // ---- Меню (фиксированное, без эмодзи, жирный шрифт) ----
   const Menu = () => {
-    const { theme } = useTheme(); const isDark = theme === "dark";
+    const { theme } = useTheme();
+    const isDark = theme === "dark";
     return (
       <View style={[styles.menu, isDark && styles.menuDark]}>
-        <TouchableOpacity onPress={() => setPage("home")}><Text>🏠</Text><Text style={[isDark && styles.textDark]}>Главная</Text></TouchableOpacity>
-        <TouchableOpacity onPress={() => setPage("catalog")}><Text>👟</Text><Text style={[isDark && styles.textDark]}>Каталог</Text></TouchableOpacity>
-        <TouchableOpacity onPress={() => setPage("favorites")}><Text>♡</Text><Text style={[isDark && styles.textDark]}>Избранное</Text></TouchableOpacity>
-        <TouchableOpacity onPress={() => setPage("cart")}>
-          <View style={{position: 'relative'}}>
-            <Text>🛒</Text>
-            {cart.length > 0 && <View style={styles.menuBadge}><Text style={styles.menuBadgeText}>{cart.length}</Text></View>}
-          </View>
-          <Text style={[isDark && styles.textDark]}>Корзина</Text>
+        <TouchableOpacity onPress={() => setPage("home")}>
+          <Text style={[styles.menuText, isDark && styles.textDark]}>Главная</Text>
         </TouchableOpacity>
-        <TouchableOpacity onPress={() => setPage("profile")}><Text>👤</Text><Text style={[isDark && styles.textDark]}>Я</Text></TouchableOpacity>
+        <TouchableOpacity onPress={() => setPage("catalog")}>
+          <Text style={[styles.menuText, isDark && styles.textDark]}>Каталог</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => setPage("favorites")}>
+          <Text style={[styles.menuText, isDark && styles.textDark]}>Избранное</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => setPage("cart")}>
+          <View style={{ position: 'relative' }}>
+            <Text style={[styles.menuText, isDark && styles.textDark]}>Корзина</Text>
+            {cart.length > 0 && (
+              <View style={styles.menuBadge}>
+                <Text style={styles.menuBadgeText}>{cart.length}</Text>
+              </View>
+            )}
+          </View>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => setPage("profile")}>
+          <Text style={[styles.menuText, isDark && styles.textDark]}>Я</Text>
+        </TouchableOpacity>
       </View>
     );
   };
@@ -975,165 +1089,246 @@ export default function App() {
 // СТИЛИ (полный набор)
 // ==============================
 const styles = StyleSheet.create({
-  page: { flex: 1, padding: 18, paddingBottom: 90 },
+  // Основные страницы
+  page: {
+    flex: 1,
+    backgroundColor: "#F7F7F5",
+    padding: 14,
+    paddingBottom: 80,
+  },
   pageDark: { backgroundColor: "#1a1a1a" },
   textDark: { color: "#fff" },
   inputDark: { backgroundColor: "#333", color: "#fff", borderColor: "#555" },
   cardDark: { backgroundColor: "#2a2a2a" },
-  logo: { fontSize: 42, fontWeight: "900", marginTop: 25 },
-  description: { color: "#777", marginTop: 5 },
-  pageTitle: { fontSize: 32, fontWeight: "900", marginTop: 25, marginBottom: 15 },
-  sectionTitle: { fontSize: 25, fontWeight: "900", marginTop: 25, marginBottom: 15 },
-  banner: { backgroundColor: "#111", padding: 30, borderRadius: 35, marginTop: 25 },
-  bannerTitle: { fontSize: 36, fontWeight: "900", color: "#fff" },
-  bannerButton: { backgroundColor: "#fff", padding: 15, borderRadius: 25, marginTop: 20, alignSelf: "flex-start" },
+  scrollContent: { paddingBottom: 10 },
+
+  // Логотип и описания
+  logo: { fontSize: 30, fontWeight: "900", marginTop: 18 },
+  description: { color: "#777", marginTop: 4, fontSize: 14 },
+  pageTitle: { fontSize: 24, fontWeight: "900", marginTop: 18, marginBottom: 12 },
+  sectionTitle: { fontSize: 20, fontWeight: "900", marginTop: 18, marginBottom: 12 },
+
+  // Баннер
+  banner: { backgroundColor: "#111", padding: 20, borderRadius: 28, marginTop: 18 },
+  bannerTitle: { fontSize: 26, fontWeight: "900", color: "#fff" },
+  bannerButton: { backgroundColor: "#fff", padding: 10, borderRadius: 20, marginTop: 15, alignSelf: "flex-start" },
+
+  // Сетка и карточки
   grid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between" },
-  card: { width: "48%", backgroundColor: "#fff", borderRadius: 25, padding: 10, marginBottom: 15 },
-  image: { height: 150, width: "100%", borderRadius: 20 },
-  bigImage: { width: "100%", height: 350, borderRadius: 30 },
-  favorite: { position: "absolute", right: 15, top: 15 },
-  favoriteText: { fontSize: 24 },
-  brand: { fontSize: 12, color: "#777", marginTop: 10 },
-  productName: { fontSize: 16, fontWeight: "800", marginTop: 5 },
-  price: { fontSize: 22, fontWeight: "900", marginTop: 5 },
-  oldPrice: { textDecorationLine: "line-through", color: "#999" },
-  smallButton: { backgroundColor: "#111", padding: 10, borderRadius: 18, marginTop: 10 },
-  buttonText: { color: "#fff", textAlign: "center", fontWeight: "800" },
-  bigTitle: { fontSize: 30, fontWeight: "900" },
-  bigPrice: { fontSize: 35, fontWeight: "900" },
-  oldPriceBig: { textDecorationLine: "line-through", color: "#999", fontSize: 20 },
-  buyButton: { backgroundColor: "#111", padding: 18, borderRadius: 25, marginTop: 20 },
-  cartItem: { backgroundColor: "#fff", padding: 15, borderRadius: 25, flexDirection: "row", marginBottom: 15 },
+  card: { width: "48%", backgroundColor: "#fff", borderRadius: 20, padding: 8, marginBottom: 12 },
+  image: { height: 120, width: "100%", borderRadius: 16 },
+  bigImage: { width: "100%", height: 250, borderRadius: 24 },
+  favorite: { position: "absolute", right: 12, top: 12 },
+  favoriteText: { fontSize: 20 },
+
+  // Тексты
+  brand: { fontSize: 11, color: "#777", marginTop: 6 },
+  productName: { fontSize: 14, fontWeight: "800", marginTop: 4 },
+  price: { fontSize: 18, fontWeight: "900", marginTop: 3 },
+  oldPrice: { textDecorationLine: "line-through", color: "#999", fontSize: 13 },
+  oldPriceBig: { textDecorationLine: "line-through", color: "#999", fontSize: 16 },
+  bigTitle: { fontSize: 24, fontWeight: "900" },
+  bigPrice: { fontSize: 28, fontWeight: "900" },
+
+  // Кнопки
+  smallButton: { backgroundColor: "#111", padding: 8, borderRadius: 16, marginTop: 8 },
+  buyButton: { backgroundColor: "#111", padding: 14, borderRadius: 22, marginTop: 16 },
+  buttonText: { color: "#fff", textAlign: "center", fontWeight: "800", fontSize: 13 },
+
+  // Корзина
+  cartItem: { backgroundColor: "#fff", padding: 12, borderRadius: 20, flexDirection: "row", marginBottom: 12 },
   cartItemDark: { backgroundColor: "#2a2a2a" },
-  cartImage: { width: 90, height: 90, borderRadius: 20, marginRight: 15 },
-  remove: { color: "red", marginTop: 10 },
-  total: { fontSize: 28, fontWeight: "900" },
-  balanceCard: { backgroundColor: "#111", padding: 30, borderRadius: 35 },
+  cartImage: { width: 70, height: 70, borderRadius: 16, marginRight: 12 },
+  remove: { color: "red", marginTop: 6, fontSize: 13 },
+  total: { fontSize: 24, fontWeight: "900" },
+  finalTotal: { fontSize: 20, fontWeight: "900", marginTop: 4 },
+  discountText: { fontSize: 16, color: "green", marginTop: 4 },
+
+  // Бонусы, профиль
+  balanceCard: { backgroundColor: "#111", padding: 24, borderRadius: 28 },
   balanceLabel: { color: "#fff" },
-  balanceValue: { color: "#fff", fontSize: 45, fontWeight: "900" },
+  balanceValue: { color: "#fff", fontSize: 36, fontWeight: "900" },
   balanceInfo: { color: "#fff" },
-  userName: { fontSize: 20 },
-  referralBox: { backgroundColor: "#fff", padding: 20, borderRadius: 30 },
+  userName: { fontSize: 18 },
+
+  // Рефералка
+  referralBox: { backgroundColor: "#fff", padding: 16, borderRadius: 24 },
   referralBoxDark: { backgroundColor: "#2a2a2a" },
-  referralText: { marginBottom: 15 },
-  copyButton: { backgroundColor: "#111", padding: 15, borderRadius: 20 },
-  currentLevel: { backgroundColor: "#111", padding: 25, borderRadius: 30 },
-  currentLevelTitle: { fontSize: 30, fontWeight: "900", color: "#fff" },
-  currentInfo: { color: "#fff", marginTop: 8 },
-  progressBackground: { height: 10, backgroundColor: "#555", borderRadius: 10, marginTop: 15 },
-  progress: { height: 10, backgroundColor: "#fff", borderRadius: 10 },
-  levelCard: { backgroundColor: "#fff", padding: 22, borderRadius: 30, marginBottom: 15 },
+  referralText: { marginBottom: 12, fontSize: 13 },
+  copyButton: { backgroundColor: "#111", padding: 12, borderRadius: 18 },
+
+  // Уровни
+  currentLevel: { backgroundColor: "#111", padding: 20, borderRadius: 24 },
+  currentLevelTitle: { fontSize: 24, fontWeight: "900", color: "#fff" },
+  currentInfo: { color: "#fff", marginTop: 6, fontSize: 14 },
+  progressBackground: { height: 8, backgroundColor: "#555", borderRadius: 8, marginTop: 12 },
+  progress: { height: 8, backgroundColor: "#fff", borderRadius: 8 },
+  levelCard: { backgroundColor: "#fff", padding: 18, borderRadius: 24, marginBottom: 12 },
   levelCardDark: { backgroundColor: "#2a2a2a" },
   activeLevel: { backgroundColor: "#111" },
-  levelName: { fontSize: 22, fontWeight: "900" },
-  levelInfo: { marginTop: 5 },
+  levelName: { fontSize: 18, fontWeight: "900" },
+  levelInfo: { marginTop: 4, fontSize: 14 },
   activeText: { color: "#fff" },
-  menu: { height: 75, backgroundColor: "#fff", borderTopWidth: 1, borderColor: "#ddd", flexDirection: "row", justifyContent: "space-around", alignItems: "center" },
-  menuDark: { backgroundColor: "#1a1a1a", borderColor: "#333" },
-  back: { fontSize: 18, marginBottom: 15, color: "#555" },
-  shareBtn: { fontSize: 24, marginBottom: 15 },
-  productHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  sizeBox: { marginTop: 20 },
-  sizeTitle: { fontSize: 16, fontWeight: "600", marginBottom: 10 },
-  sizes: { flexDirection: "row", flexWrap: "wrap" },
-  size: { width: 50, height: 50, borderRadius: 25, backgroundColor: "#eee", justifyContent: "center", alignItems: "center", marginRight: 10, marginBottom: 10 },
-  sizeActive: { backgroundColor: "#111" },
-  sizeTextActive: { color: "#fff" },
-  searchInput: { backgroundColor: "#fff", padding: 12, borderRadius: 25, marginBottom: 15, fontSize: 16 },
-  filterScroll: { flexDirection: "row", marginBottom: 15, height: 50, flexShrink: 0, flexGrow: 0 },
-  filterContent: { alignItems: "center" },
-  filterChip: { paddingHorizontal: 18, paddingVertical: 8, borderRadius: 20, backgroundColor: "#eee", marginRight: 10, alignSelf: "flex-start", flexShrink: 0, flexGrow: 0 },
-  filterChipActive: { backgroundColor: "#111" },
-  filterChipTextActive: { color: "#fff" },
-  priceFilter: { flexDirection: "row", marginBottom: 15 },
-  priceInput: { flex: 1, backgroundColor: "#fff", padding: 10, borderRadius: 20, marginRight: 10, fontSize: 16 },
-  loader: { textAlign: "center", padding: 10, color: "#777" },
-  empty: { textAlign: "center", padding: 30, color: "#999" },
-  sizeText: { fontSize: 14, color: "#555", marginTop: 2 },
-  bonusInfo: { fontSize: 16, color: "#2e7d32", marginTop: 5 },
+
+  // История заказов
+  orderCard: { backgroundColor: "#fff", padding: 14, borderRadius: 18, marginBottom: 12 },
+  orderCardDark: { backgroundColor: "#2a2a2a" },
+  orderId: { fontSize: 15, fontWeight: "800" },
+  orderDate: { color: "#777", marginTop: 2, fontSize: 12 },
+  orderStatus: { fontWeight: "600", marginTop: 4, fontSize: 14 },
+  orderTotal: { fontWeight: "700", marginTop: 4, fontSize: 16 },
+  orderItem: { fontSize: 13, marginLeft: 8 },
+  orderMore: { fontSize: 12, color: "#777", marginLeft: 8 },
+  trackingText: { fontSize: 13, color: "#0066cc", marginTop: 2 },
+
+  // Модальные окна
   modalOverlay: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "rgba(0,0,0,0.5)" },
   modalScrollView: { flexGrow: 1, justifyContent: "center", paddingVertical: 20 },
-  modalView: { width: "90%", backgroundColor: "#fff", borderRadius: 30, padding: 25, alignItems: "stretch", alignSelf: "center" },
+  modalView: { width: "90%", backgroundColor: "#fff", borderRadius: 28, padding: 20, alignItems: "stretch", alignSelf: "center" },
   modalViewDark: { backgroundColor: "#2a2a2a" },
-  modalTitle: { fontSize: 22, fontWeight: "900", marginBottom: 20, textAlign: "center" },
-  modalSubtitle: { fontSize: 16, textAlign: "center", marginBottom: 15, color: "#666" },
-  modalInput: { borderWidth: 1, borderColor: "#ddd", borderRadius: 15, padding: 12, marginBottom: 15, fontSize: 16 },
-  bonusCheckbox: { flexDirection: "row", alignItems: "center", marginBottom: 20 },
-  bonusCheckboxText: { fontSize: 16, fontWeight: "600" },
-  modalButtons: { flexDirection: "row", justifyContent: "space-between", marginTop: 10 },
-  modalCancel: { padding: 12, borderRadius: 20, backgroundColor: "#eee", flex: 0.4, alignItems: "center" },
-  modalConfirm: { padding: 12, borderRadius: 20, backgroundColor: "#111", flex: 0.5, alignItems: "center" },
-  deliveryLabel: { fontSize: 16, fontWeight: "600", marginBottom: 10 },
-  deliveryOptions: { flexDirection: "row", justifyContent: "space-between", marginBottom: 20 },
-  deliveryOption: { flex: 1, padding: 12, borderRadius: 15, backgroundColor: "#eee", marginHorizontal: 5, alignItems: "center" },
+  modalTitle: { fontSize: 20, fontWeight: "900", marginBottom: 16, textAlign: "center" },
+  modalSubtitle: { fontSize: 15, textAlign: "center", marginBottom: 12, color: "#666" },
+  modalInput: { borderWidth: 1, borderColor: "#ddd", borderRadius: 14, padding: 10, marginBottom: 12, fontSize: 15 },
+  modalButtons: { flexDirection: "row", justifyContent: "space-between", marginTop: 12 },
+  modalCancel: { padding: 10, borderRadius: 18, backgroundColor: "#eee", flex: 0.4, alignItems: "center" },
+  modalConfirm: { padding: 10, borderRadius: 18, backgroundColor: "#111", flex: 0.5, alignItems: "center" },
+
+  // Доставка
+  deliveryLabel: { fontSize: 15, fontWeight: "600", marginBottom: 8 },
+  deliveryOptions: { flexDirection: "row", justifyContent: "space-between", marginBottom: 16 },
+  deliveryOption: { flex: 1, padding: 10, borderRadius: 14, backgroundColor: "#eee", marginHorizontal: 4, alignItems: "center" },
   deliveryOptionActive: { backgroundColor: "#111" },
   deliveryOptionTextActive: { color: "#fff" },
-  deliveryDetail: { fontSize: 12, color: "#666", marginTop: 4 },
-  deliveryNote: { fontSize: 11, color: "#999", marginTop: 2 },
-  deliverySummary: { backgroundColor: "#f0f0f0", padding: 10, borderRadius: 12, marginBottom: 15, flexDirection: "row", justifyContent: "space-between" },
+  deliveryDetail: { fontSize: 11, color: "#666", marginTop: 3 },
+  deliveryNote: { fontSize: 10, color: "#999", marginTop: 2 },
+  deliverySummary: { backgroundColor: "#f0f0f0", padding: 8, borderRadius: 10, marginBottom: 12, flexDirection: "row", justifyContent: "space-between" },
   deliverySummaryDark: { backgroundColor: "#333" },
-  summaryText: { fontSize: 14, fontWeight: "500" },
-  promoBox: { flexDirection: "row", marginVertical: 10 },
-  promoInput: { flex: 1, borderWidth: 1, borderColor: "#ddd", borderRadius: 20, padding: 10, marginRight: 10 },
-  promoButton: { backgroundColor: "#111", padding: 10, borderRadius: 20, justifyContent: "center" },
-  discountText: { fontSize: 18, color: "green", marginTop: 5 },
-  finalTotal: { fontSize: 24, fontWeight: "900", marginTop: 5 },
-  orderCard: { backgroundColor: "#fff", padding: 15, borderRadius: 20, marginBottom: 15 },
-  orderCardDark: { backgroundColor: "#2a2a2a" },
-  orderId: { fontSize: 16, fontWeight: "800" },
-  orderDate: { color: "#777", marginTop: 3 },
-  orderStatus: { fontWeight: "600", marginTop: 5 },
-  orderTotal: { fontWeight: "700", marginTop: 5 },
-  orderItem: { fontSize: 14, marginLeft: 10 },
-  orderMore: { fontSize: 12, color: "#777", marginLeft: 10 },
-  themeRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginVertical: 15 },
-  themeLabel: { fontSize: 18 },
-  closeAdmin: { marginBottom: 20, alignSelf: "flex-end" },
-  closeAdminText: { fontSize: 16, fontWeight: "600" },
-  adminStat: { fontSize: 18, marginVertical: 5 },
-  adminItem: { fontSize: 14, marginVertical: 3 },
-  statusButtons: { flexDirection: "row", flexWrap: "wrap", marginTop: 10 },
-  statusBtn: { padding: 6, borderRadius: 15, backgroundColor: "#eee", marginRight: 8, marginBottom: 5 },
-  statusBtnActive: { backgroundColor: "#111" },
-  statusBtnText: { fontSize: 12 },
-  statusBtnTextActive: { color: "#fff" },
-  addBtn: { backgroundColor: "#111", padding: 15, borderRadius: 25, alignItems: "center", marginVertical: 15 },
-  productEdit: { backgroundColor: "#fff", padding: 15, borderRadius: 20, marginBottom: 10 },
-  productEditDark: { backgroundColor: "#2a2a2a" },
-  editInput: { borderWidth: 1, borderColor: "#ddd", borderRadius: 10, padding: 8, marginBottom: 8, fontSize: 14 },
-  saveBtn: { backgroundColor: "#111", padding: 10, borderRadius: 20, alignItems: "center" },
-  editActions: { flexDirection: "row", marginTop: 5 },
-  editAction: { fontSize: 20, marginRight: 15 },
-  ratingDisplay: { fontSize: 16, marginVertical: 5 },
-  reviewItem: { backgroundColor: "#f0f0f0", padding: 10, borderRadius: 15, marginBottom: 10 },
-  reviewItemDark: { backgroundColor: "#333" },
-  reviewRating: { fontSize: 16 },
-  reviewComment: { fontSize: 14, marginTop: 3 },
-  reviewDate: { fontSize: 12, color: "#777", marginTop: 3 },
-  noReviews: { fontStyle: "italic", marginVertical: 10 },
-  reviewForm: { marginTop: 20, padding: 15, backgroundColor: "#f9f9f9", borderRadius: 20 },
-  reviewFormDark: { backgroundColor: "#2a2a2a" },
-  reviewFormTitle: { fontSize: 18, fontWeight: "600", marginBottom: 10 },
-  stars: { flexDirection: "row", marginBottom: 10 },
-  star: { fontSize: 30, marginRight: 5 },
-  starActive: { color: "#f5c518" },
-  reviewInput: { borderWidth: 1, borderColor: "#ddd", borderRadius: 15, padding: 10, marginBottom: 10 },
-  submitReview: { backgroundColor: "#111", padding: 12, borderRadius: 20, alignItems: "center" },
-  totalRow: { flexDirection: "row", justifyContent: "space-between", marginVertical: 15, paddingVertical: 10, borderTopWidth: 1, borderColor: "#ddd" },
-  totalLabel: { fontSize: 18, fontWeight: "600" },
-  totalAmount: { fontSize: 22, fontWeight: "900" },
-  cartBadge: { fontSize: 18, fontWeight: "600", color: "#000" },
-  menuBadge: { position: 'absolute', top: -8, right: -12, backgroundColor: '#ff3b30', borderRadius: 10, minWidth: 20, height: 20, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 4 },
-  menuBadgeText: { color: '#fff', fontSize: 12, fontWeight: 'bold' },
-  adminButton: { backgroundColor: "#111", padding: 12, borderRadius: 20, marginVertical: 10, alignSelf: "flex-start" },
-  descriptionText: { fontSize: 14, color: "#555", marginVertical: 5 },
-  trackingText: { fontSize: 14, color: "#0066cc", marginTop: 3 },
-  trackingInput: { borderWidth: 1, borderColor: "#ddd", borderRadius: 10, padding: 6, flex: 1, marginRight: 8, fontSize: 14 },
-  broadcastInput: { borderWidth: 1, borderColor: "#ddd", borderRadius: 15, padding: 12, marginBottom: 15, minHeight: 80, fontSize: 16 },
-  broadcastBtn: { backgroundColor: "#111", padding: 15, borderRadius: 25, alignItems: "center", marginBottom: 30 },
-  sizeGrid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", marginVertical: 15 },
-  sizeOption: { width: 60, height: 60, borderRadius: 30, backgroundColor: "#eee", justifyContent: "center", alignItems: "center", margin: 8 },
+  summaryText: { fontSize: 13, fontWeight: "500" },
+
+  // Промокод
+  promoBox: { flexDirection: "row", marginVertical: 8 },
+  promoInput: { flex: 1, borderWidth: 1, borderColor: "#ddd", borderRadius: 18, padding: 8, marginRight: 8, fontSize: 14 },
+  promoButton: { backgroundColor: "#111", padding: 8, borderRadius: 18, justifyContent: "center" },
+
+  // Бонус-чекбокс
+  bonusCheckbox: { flexDirection: "row", alignItems: "center", marginVertical: 8 },
+  bonusCheckboxText: { fontSize: 14, fontWeight: "600" },
+
+  // Поиск и фильтры
+  searchInput: { backgroundColor: "#fff", padding: 10, borderRadius: 22, marginBottom: 12, fontSize: 14 },
+  filterScroll: { flexDirection: "row", marginBottom: 12, height: 44, flexShrink: 0, flexGrow: 0 },
+  filterContent: { alignItems: "center" },
+  filterChip: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 16, backgroundColor: "#eee", marginRight: 8, alignSelf: "flex-start", flexShrink: 0, flexGrow: 0 },
+  filterChipActive: { backgroundColor: "#111" },
+  filterChipTextActive: { color: "#fff" },
+  priceFilter: { flexDirection: "row", marginBottom: 12 },
+  priceInput: { flex: 1, backgroundColor: "#fff", padding: 8, borderRadius: 18, marginRight: 8, fontSize: 14 },
+
+  // Выбор размера
+  sizeBox: { marginTop: 16 },
+  sizeTitle: { fontSize: 15, fontWeight: "600", marginBottom: 8 },
+  sizes: { flexDirection: "row", flexWrap: "wrap" },
+  size: { width: 44, height: 44, borderRadius: 22, backgroundColor: "#eee", justifyContent: "center", alignItems: "center", marginRight: 8, marginBottom: 8 },
+  sizeActive: { backgroundColor: "#111" },
+  sizeTextActive: { color: "#fff" },
+  sizeGrid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", marginVertical: 12 },
+  sizeOption: { width: 52, height: 52, borderRadius: 26, backgroundColor: "#eee", justifyContent: "center", alignItems: "center", margin: 6 },
   sizeOptionActive: { backgroundColor: "#111" },
-  sizeOptionText: { fontSize: 18, fontWeight: "600" },
+  sizeOptionText: { fontSize: 16, fontWeight: "600" },
   sizeOptionTextActive: { color: "#fff" },
+  sizeText: { fontSize: 13, color: "#555", marginTop: 2 },
+
+  // Админка
+  adminButton: { backgroundColor: "#111", padding: 10, borderRadius: 18, marginVertical: 8, alignSelf: "flex-start" },
+  closeAdmin: { marginBottom: 16, alignSelf: "flex-end" },
+  closeAdminText: { fontSize: 15, fontWeight: "600" },
+  adminStat: { fontSize: 16, marginVertical: 4 },
+  adminItem: { fontSize: 13, marginVertical: 2 },
+  statusButtons: { flexDirection: "row", flexWrap: "wrap", marginTop: 8 },
+  statusBtn: { padding: 5, borderRadius: 12, backgroundColor: "#eee", marginRight: 6, marginBottom: 4 },
+  statusBtnActive: { backgroundColor: "#111" },
+  statusBtnText: { fontSize: 11 },
+  statusBtnTextActive: { color: "#fff" },
+  addBtn: { backgroundColor: "#111", padding: 12, borderRadius: 20, alignItems: "center", marginVertical: 10 },
+  productEdit: { backgroundColor: "#fff", padding: 12, borderRadius: 16, marginBottom: 10 },
+  productEditDark: { backgroundColor: "#2a2a2a" },
+  editInput: { borderWidth: 1, borderColor: "#ddd", borderRadius: 8, padding: 6, marginBottom: 6, fontSize: 13 },
+  saveBtn: { backgroundColor: "#111", padding: 8, borderRadius: 16, alignItems: "center" },
+  editActions: { flexDirection: "row", marginTop: 4 },
+  editAction: { fontSize: 18, marginRight: 12 },
+  trackingInput: { borderWidth: 1, borderColor: "#ddd", borderRadius: 8, padding: 4, flex: 1, marginRight: 6, fontSize: 13 },
+  broadcastInput: { borderWidth: 1, borderColor: "#ddd", borderRadius: 14, padding: 10, marginBottom: 12, minHeight: 60, fontSize: 14 },
+  broadcastBtn: { backgroundColor: "#111", padding: 12, borderRadius: 20, alignItems: "center", marginBottom: 20 },
+
+  // Отзывы
+  ratingDisplay: { fontSize: 14, marginVertical: 4 },
+  reviewItem: { backgroundColor: "#f0f0f0", padding: 8, borderRadius: 12, marginBottom: 8 },
+  reviewItemDark: { backgroundColor: "#333" },
+  reviewRating: { fontSize: 14 },
+  reviewComment: { fontSize: 13, marginTop: 2 },
+  reviewDate: { fontSize: 11, color: "#777", marginTop: 2 },
+  noReviews: { fontStyle: "italic", marginVertical: 8, fontSize: 14 },
+  reviewForm: { marginTop: 16, padding: 12, backgroundColor: "#f9f9f9", borderRadius: 16 },
+  reviewFormDark: { backgroundColor: "#2a2a2a" },
+  reviewFormTitle: { fontSize: 16, fontWeight: "600", marginBottom: 8 },
+  stars: { flexDirection: "row", marginBottom: 8 },
+  star: { fontSize: 28, marginRight: 4 },
+  starActive: { color: "#f5c518" },
+  reviewInput: { borderWidth: 1, borderColor: "#ddd", borderRadius: 12, padding: 8, marginBottom: 8 },
+  submitReview: { backgroundColor: "#111", padding: 10, borderRadius: 16, alignItems: "center" },
+
+  // Тема
+  themeRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginVertical: 12 },
+  themeLabel: { fontSize: 16 },
+
+  // Карточка итога
+  totalRow: { flexDirection: "row", justifyContent: "space-between", marginVertical: 12, paddingVertical: 8, borderTopWidth: 1, borderColor: "#ddd" },
+  totalLabel: { fontSize: 16, fontWeight: "600" },
+  totalAmount: { fontSize: 18, fontWeight: "900" },
+
+  // Бейджи
+  cartBadge: { fontSize: 16, fontWeight: "600", color: "#000" },
+  menuBadge: {
+    position: 'absolute',
+    top: -10,
+    right: -14,
+    backgroundColor: '#ff3b30',
+    borderRadius: 10,
+    minWidth: 18,
+    height: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 4,
+  },
+  menuBadgeText: { color: '#fff', fontSize: 11, fontWeight: 'bold' },
+
+  // Меню (фиксированное)
+  menu: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 65,
+    backgroundColor: "#fff",
+    borderTopWidth: 1,
+    borderColor: "#ddd",
+    flexDirection: "row",
+    justifyContent: "space-around",
+    alignItems: "center",
+    paddingBottom: 5,
+  },
+  menuDark: { backgroundColor: "#1a1a1a", borderColor: "#333" },
+  menuText: {
+    fontSize: 13,
+    fontWeight: "bold", // Жирный шрифт
+    color: "#333",
+  },
+
+  // Прочие мелочи
+  back: { fontSize: 16, marginBottom: 12, color: "#555" },
+  shareBtn: { fontSize: 22, marginBottom: 12 },
+  productHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  descriptionText: { fontSize: 13, color: "#555", marginVertical: 4 },
+  loader: { textAlign: "center", padding: 8, color: "#777" },
+  empty: { textAlign: "center", padding: 20, color: "#999" },
 });
