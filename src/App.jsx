@@ -25,7 +25,7 @@ const getTelegramUser = () => {
 
 const money = (v) => v.toLocaleString("ru-RU") + " Br";
 const getBrands = (products) => [...new Set(products.map(p => p.brand))];
-const ADMIN_IDS = [778715828, 987654321];
+const ADMIN_IDS = [123456789, 987654321];
 
 const DEFAULT_PRODUCTS = [
   { id: 1, brand: "NIKE", name: "Dunk Low Panda", price: 18990, oldPrice: null, image: "https://images.unsplash.com/photo-1542291026-7eec264c27ff", sales: 120, ratings: [], averageRating: 0, description: "Классические Nike Dunk Low Panda.", sizes: ["40","41","42","43","44"] },
@@ -84,7 +84,7 @@ const loadFromCloud = async (key) => {
 };
 
 // ==============================
-// TrackingInput (мемоизированный)
+// TrackingInput
 // ==============================
 const TrackingInput = memo(({ orderId, initialValue, onUpdate }) => {
   const [tracking, setTracking] = useState(initialValue || "");
@@ -412,7 +412,7 @@ export default function App() {
   const popular = Object.keys(salesMap).sort((a,b) => salesMap[b] - salesMap[a]).slice(0,5).map(id => products.find(p => p.id === parseInt(id))).filter(Boolean);
 
   // ==============================
-  // КОМПОНЕНТЫ
+  // КОМПОНЕНТЫ СТРАНИЦ
   // ==============================
 
   const SizeModal = () => {
@@ -1070,30 +1070,38 @@ export default function App() {
     );
   };
 
-  // ---- Меню (без кнопки "Главная") ----
+  // ---- Меню (новый стиль, как на фото 2) ----
   const Menu = () => {
     const { theme } = useTheme();
     const isDark = theme === "dark";
+    const isActive = (p) => page === p;
+    const activeColor = "#111";
+    const textColor = isDark ? "#fff" : "#333";
+
     return (
       <View style={[styles.menu, isDark && styles.menuDark]}>
         <TouchableOpacity style={styles.menuButton} onPress={() => setPage("catalog")}>
-          <Text style={styles.menuText}>Каталог</Text>
+          <Text style={[styles.menuIcon, { color: isActive("catalog") ? activeColor : textColor }]}>👟</Text>
+          <Text style={[styles.menuText, { color: isActive("catalog") ? activeColor : textColor }]}>Каталог</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.menuButton} onPress={() => setPage("favorites")}>
-          <Text style={styles.menuText}>Избранное</Text>
+          <Text style={[styles.menuIcon, { color: isActive("favorites") ? activeColor : textColor }]}>♥</Text>
+          <Text style={[styles.menuText, { color: isActive("favorites") ? activeColor : textColor }]}>Избранное</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.menuButton} onPress={() => setPage("cart")}>
           <View style={{ position: 'relative' }}>
-            <Text style={styles.menuText}>Корзина</Text>
+            <Text style={[styles.menuIcon, { color: isActive("cart") ? activeColor : textColor }]}>🛒</Text>
             {cart.length > 0 && (
               <View style={styles.menuBadge}>
                 <Text style={styles.menuBadgeText}>{cart.length}</Text>
               </View>
             )}
           </View>
+          <Text style={[styles.menuText, { color: isActive("cart") ? activeColor : textColor }]}>Корзина</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.menuButton} onPress={() => setPage("profile")}>
-          <Text style={styles.menuText}>Я</Text>
+          <Text style={[styles.menuIcon, { color: isActive("profile") ? activeColor : textColor }]}>👤</Text>
+          <Text style={[styles.menuText, { color: isActive("profile") ? activeColor : textColor }]}>Я</Text>
         </TouchableOpacity>
       </View>
     );
@@ -1318,19 +1326,21 @@ const styles = StyleSheet.create({
 
   cartBadge: { fontSize: 16, fontWeight: "600", color: "#000" },
 
+  // НОВОЕ МЕНЮ
   menu: {
     position: 'fixed',
     bottom: 0,
     left: 0,
     right: 0,
-    height: 65,
+    height: 70,
     backgroundColor: '#fff',
     borderTopWidth: 1,
-    borderColor: '#ddd',
+    borderColor: '#eee',
     flexDirection: 'row',
     justifyContent: 'space-around',
     alignItems: 'center',
-    paddingBottom: 5,
+    paddingBottom: 8,
+    paddingTop: 4,
     zIndex: 1000,
   },
   menuDark: {
@@ -1338,20 +1348,23 @@ const styles = StyleSheet.create({
     borderColor: '#333',
   },
   menuButton: {
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 20,
-    backgroundColor: '#111',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  menuIcon: {
+    fontSize: 22,
+    marginBottom: 2,
   },
   menuText: {
-    fontSize: 13,
-    fontWeight: 'bold',
-    color: '#fff',
+    fontSize: 11,
+    fontWeight: '500',
   },
   menuBadge: {
     position: 'absolute',
-    top: -10,
-    right: -14,
+    top: -6,
+    right: -10,
     backgroundColor: '#ff3b30',
     borderRadius: 10,
     minWidth: 18,
@@ -1362,17 +1375,11 @@ const styles = StyleSheet.create({
   },
   menuBadgeText: {
     color: '#fff',
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: 'bold',
   },
 
-  back: { fontSize: 16, marginBottom: 12, color: "#555" },
-  shareBtn: { fontSize: 22, marginBottom: 12 },
-  productHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  descriptionText: { fontSize: 13, color: "#555", marginVertical: 4 },
-  loader: { textAlign: "center", padding: 8, color: "#777" },
-  empty: { textAlign: "center", padding: 20, color: "#999" },
-
+  // Стили таблицы
   tableContainer: { backgroundColor: "#fff", borderRadius: 16, overflow: 'hidden', marginVertical: 5 },
   tableContainerDark: { backgroundColor: "#2a2a2a" },
   tableHeader: { flexDirection: 'row', backgroundColor: "#111", paddingVertical: 8, paddingHorizontal: 6 },
