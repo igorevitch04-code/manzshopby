@@ -1083,8 +1083,11 @@ export default function App() {
 
   useEffect(() => {
     if (!orderModalVisible) {
-      setFullName(""); setAddress(""); setPhone(""); 
-      setDelivery("europost"); setUseFreeDelivery(false);
+      setFullName("");
+      setAddress("");
+      setPhone("");
+      setDelivery("europost");
+      setUseFreeDelivery(false);
     }
   }, [orderModalVisible]);
 
@@ -1132,7 +1135,11 @@ export default function App() {
 
   const inputStyle = [
     styles.modalInput,
-    isDark && { backgroundColor: '#2a2a2a', color: '#ffffff', borderColor: '#555' }
+    isDark && { 
+      backgroundColor: '#2a2a2a', 
+      color: '#ffffff', 
+      borderColor: '#555' 
+    }
   ];
 
   return (
@@ -1142,14 +1149,78 @@ export default function App() {
           <View style={[styles.modalView, isDark && styles.modalViewDark]}>
             <Text style={[styles.modalTitle, isDark && styles.textDark]}>Оформление заказа</Text>
 
-            {/* ... доставка (оставь как было) */}
+            <Text style={[styles.deliveryLabel, isDark && styles.textDark]}>Способ доставки</Text>
+            <View style={styles.deliveryOptions}>
+              <TouchableOpacity 
+                style={[styles.deliveryOption, delivery === "europost" && styles.deliveryOptionActive]} 
+                onPress={() => setDelivery("europost")}
+              >
+                <Text style={delivery === "europost" && styles.deliveryOptionTextActive}>ЕвроПочта</Text>
+                <Text style={styles.deliveryDetail}>8-12 руб • 4-5 дней</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={[styles.deliveryOption, delivery === "courier" && styles.deliveryOptionActive]} 
+                onPress={() => setDelivery("courier")}
+              >
+                <Text style={delivery === "courier" && styles.deliveryOptionTextActive}>Курьер</Text>
+                <Text style={styles.deliveryDetail}>10 руб • 2-3 дня</Text>
+                <Text style={styles.deliveryNote}>Менеджер свяжется</Text>
+              </TouchableOpacity>
+            </View>
 
-            <TextInput style={inputStyle} placeholder="ФИО" placeholderTextColor={isDark ? "#999" : "#888"} value={fullName} onChangeText={setFullName} />
-            <TextInput style={inputStyle} placeholder={delivery === "europost" ? "Адрес и номер отделения" : "Адрес доставки"} placeholderTextColor={isDark ? "#999" : "#888"} value={address} onChangeText={setAddress} />
-            <TextInput style={inputStyle} placeholder="Телефон" placeholderTextColor={isDark ? "#999" : "#888"} value={phone} onChangeText={setPhone} keyboardType="phone-pad" />
+            <TextInput
+              style={inputStyle}
+              placeholder="ФИО"
+              placeholderTextColor={isDark ? "#999" : "#888"}
+              value={fullName}
+              onChangeText={setFullName}
+            />
+            <TextInput
+              style={inputStyle}
+              placeholder={delivery === "europost" ? "Адрес и номер отделения" : "Адрес доставки"}
+              placeholderTextColor={isDark ? "#999" : "#888"}
+              value={address}
+              onChangeText={setAddress}
+            />
+            <TextInput
+              style={inputStyle}
+              placeholder="Телефон"
+              placeholderTextColor={isDark ? "#999" : "#888"}
+              value={phone}
+              onChangeText={setPhone}
+              keyboardType="phone-pad"
+            />
 
-            {/* Остальной код модалки (бесплатная доставка, итого и кнопки) — оставь как было */}
-            {/* ... */}
+            {showFreeDeliveryOption && (
+              <TouchableOpacity style={styles.bonusCheckbox} onPress={() => setUseFreeDelivery(!useFreeDelivery)}>
+                <Text style={[styles.bonusCheckboxText, isDark && styles.textDark]}>
+                  {useFreeDelivery ? "☑" : "☐"} Бесплатная доставка (первый заказ)
+                </Text>
+              </TouchableOpacity>
+            )}
+
+            <View style={[styles.deliverySummary, isDark && styles.deliverySummaryDark]}>
+              <Text style={[styles.summaryText, isDark && styles.textDark]}>Доставка: {label} — {dp} руб</Text>
+              <Text style={[styles.summaryText, isDark && styles.textDark]}>Срок: {days} дн.</Text>
+            </View>
+
+            <View style={styles.totalRow}>
+              <Text style={[styles.totalLabel, isDark && styles.textDark]}>Товары: {money(finalTotal)}</Text>
+              <Text style={[styles.totalLabel, isDark && styles.textDark]}>Доставка: {money(dp)}</Text>
+            </View>
+            <View style={styles.totalRow}>
+              <Text style={[styles.totalLabel, isDark && styles.textDark, {fontWeight: 'bold'}]}>Итого к оплате:</Text>
+              <Text style={[styles.totalAmount, isDark && styles.textDark]}>{money(orderTotal)}</Text>
+            </View>
+
+            <View style={styles.modalButtons}>
+              <TouchableOpacity style={styles.modalCancel} onPress={closeOrderModal}>
+                <Text>Отмена</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.modalConfirm} onPress={handlePlace}>
+                <Text style={styles.buttonText}>Подтвердить</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </ScrollView>
       </View>
