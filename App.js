@@ -444,20 +444,25 @@ export default function App() {
     const isFav = favorites.some(x => x.id === item.id);
     const { theme } = useTheme();
     const isDark = theme === "dark";
-    const handleAddToCart = () => {
+        const handleAddToCart = () => {
       if (!item.sizes || item.sizes.length === 0) {
         addCart(item);
         tg?.showAlert("✅ Товар добавлен в корзину");
         return;
       }
 
-      const buttons = item.sizes.map(size => ({
-        text: size,
-        onClick: () => {
-          addCart({ ...item, size });
-          tg?.showAlert(`✅ ${item.brand} ${item.name}\nРазмер: ${size}`);
-        }
-      }));
+      tg?.showPopup({
+        title: "Выберите размер",
+        message: `${item.brand} ${item.name}`,
+        buttons: item.sizes.map(size => ({
+          text: size,
+          onClick: () => {
+            addCart({ ...item, size: size });
+            tg?.showAlert(`✅ ${item.brand} ${item.name}\nРазмер ${size} добавлен в корзину`);
+          }
+        })).concat([{ text: "Отмена", type: "cancel" }])
+      });
+    };
 
       tg?.showPopup({
         title: "Выберите размер",
