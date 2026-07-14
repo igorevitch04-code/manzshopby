@@ -25,7 +25,7 @@ const getTelegramUser = () => {
 
 const money = (v) => v.toLocaleString("ru-RU") + " Br";
 const getBrands = (products) => [...new Set(products.map(p => p.brand))];
-const ADMIN_IDS = [778715828, 987654321];
+const ADMIN_IDS = [7787158289, 987654321]; // замените на свои
 
 const DEFAULT_PRODUCTS = [
   { id: 1, brand: "NIKE", name: "Dunk Low Panda", price: 18990, oldPrice: null, image: "https://images.unsplash.com/photo-1542291026-7eec264c27ff", sales: 120, ratings: [], averageRating: 0, description: "Классические Nike Dunk Low Panda.", sizes: ["40","41","42","43","44"] },
@@ -84,7 +84,7 @@ const loadFromCloud = async (key) => {
 };
 
 // ==============================
-// TrackingInput
+// TrackingInput (мемоизированный)
 // ==============================
 const TrackingInput = memo(({ orderId, initialValue, onUpdate }) => {
   const [tracking, setTracking] = useState(initialValue || "");
@@ -258,7 +258,22 @@ export default function App() {
       : setFavorites([...favorites, item]);
   };
 
-  const copyReferral = () => { Clipboard.setString(referral); Alert.alert("Готово", "Ссылка скопирована"); };
+  // Копирование ссылки (исправлено)
+  const copyReferral = () => {
+    const link = referral;
+    if (navigator?.clipboard) {
+      navigator.clipboard.writeText(link).then(() => {
+        Alert.alert("Готово", "Ссылка скопирована");
+      }).catch(() => {
+        Clipboard.setString(link);
+        Alert.alert("Готово", "Ссылка скопирована");
+      });
+    } else {
+      Clipboard.setString(link);
+      Alert.alert("Готово", "Ссылка скопирована");
+    }
+  };
+
   const openOrderModal = () => setOrderModalVisible(true);
   const closeOrderModal = () => { setOrderModalVisible(false); setUseBonus(false); setPromoCode(""); };
 
@@ -377,10 +392,14 @@ export default function App() {
   const changeStatus = useCallback((orderId, newStatus) => {
     setAdminOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o));
     setOrderHistory(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o));
+    Alert.alert("Статус обновлён", `Заказ #${orderId} теперь имеет статус "${newStatus}"`);
   }, []);
   const updateTracking = useCallback((orderId, trackingNumber) => {
     setAdminOrders(prev => prev.map(o => o.id === orderId ? { ...o, trackingNumber } : o));
     setOrderHistory(prev => prev.map(o => o.id === orderId ? { ...o, trackingNumber } : o));
+    if (trackingNumber) {
+      Alert.alert("Трек-номер добавлен", `Для заказа #${orderId} добавлен трек-номер: ${trackingNumber}`);
+    }
   }, []);
   const sendBroadcast = () => {
     if (!broadcastText.trim()) { Alert.alert("Ошибка", "Введите текст"); return; }
@@ -568,7 +587,10 @@ export default function App() {
     const { theme } = useTheme(); const isDark = theme === "dark";
     const [rating, setRating] = useState(0);
     const [comment, setComment] = useState("");
-    const hasPurchased = orderHistory.some(order => order.items.some(i => i.id === selectedProduct.id));
+    // Отзывы только после статуса "Доставлен"
+    const hasPurchased = orderHistory.some(order => 
+      order.status === "Доставлен" && order.items.some(i => i.id === selectedProduct.id)
+    );
     const handleAddToCart = () => {
       if (!selectedSize) {
         Alert.alert("Выберите размер");
@@ -742,7 +764,7 @@ export default function App() {
     return (
       <ScrollView style={[styles.page, isDark && styles.pageDark]} contentContainerStyle={styles.scrollContent}>
         <Text style={[styles.pageTitle, isDark && styles.textDark]}>Профиль</Text>
-        <Text style={[styles.userName, isDark && styles.textDark]}>Привет, {user.name} 👋</Text>
+        {/* Убрана строка "Привет, Имя" */}
         {isAdmin && (
           <TouchableOpacity style={styles.adminButton} onPress={() => setShowAdmin(true)}>
             <Text style={styles.buttonText}>⚙️ Админ-панель</Text>
@@ -766,18 +788,19 @@ export default function App() {
         </View>
         <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Ваш уровень</Text>
         <View style={styles.currentLevel}>
-          <Text style={styles.currentLevelTitle}>{currentLevel.name}</Text>
-          <Text style={styles.currentInfo}>Заказов: {orders}</Text>
-          <Text style={styles.currentInfo}>Кэшбэк: {currentLevel.cashback}%</Text>
+          <Text style={styles.currentLevelTitle}>Уровень клиента</Text>
+          <Text style={styles.currentInfo}>Вы заказали: {orders} заказов</Text>
+          <Text style={styles.currentInfo}>Ваш кэшбэк: {currentLevel.cashback}%</Text>
           {nextLevel && (
             <>
-              <Text style={styles.currentInfo}>До {nextLevel.name}:</Text>
-              <Text style={styles.currentInfo}>Осталось {nextLevel.min - orders} заказов</Text>
-              <View style={styles.progressBackground}><View style={[styles.progress, { width: `${progress}%` }]} /></View>
-              <Text style={styles.currentInfo}>{progress}%</Text>
+              <Text style={styles.currentInfo}>До следующего уровня: {nextLevel.min - orders} заказов</Text>
+              <View style={styles.progressBackground}>
+                <View style={[styles.progress, { width: `${progress}%` }]} />
+              </View>
+              <Text style={styles.currentInfo}>{progress}% выполнено</Text>
             </>
           )}
-          {!nextLevel && <Text style={styles.currentInfo}>Максимальный уровень</Text>}
+          {!nextLevel && <Text style={styles.currentInfo}>Максимальный уровень достигнут</Text>}
         </View>
         <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Все уровни</Text>
         {LEVELS.map(item => (
@@ -984,7 +1007,7 @@ export default function App() {
     );
   };
 
-  // ---- Оформление заказа ----
+  // ---- Оформление заказа (исправленное) ----
   const OrderModal = () => {
     const [fullName, setFullName] = useState("");
     const [address, setAddress] = useState("");
@@ -1006,7 +1029,12 @@ export default function App() {
     const orderTotal = finalTotal + dp;
     const handlePlace = () => {
       if (!fullName.trim() || !address.trim() || !phone.trim()) {
-        Alert.alert("Ошибка", "Заполните все поля");
+        Alert.alert("Ошибка", "Заполните все поля, включая номер телефона");
+        return;
+      }
+      // Проверка телефона: минимум 7 цифр
+      if (phone.replace(/\D/g, '').length < 7) {
+        Alert.alert("Ошибка", "Введите корректный номер телефона (минимум 7 цифр)");
         return;
       }
       if (useFreeDelivery && !isFreeDeliveryEligible(phone, fullName)) {
@@ -1070,39 +1098,37 @@ export default function App() {
     );
   };
 
-  // ---- Меню (новый стиль, как на фото 2) ----
+  // ---- Меню (с активной вкладкой) ----
   const Menu = () => {
     const { theme } = useTheme();
     const isDark = theme === "dark";
-    const isActive = (p) => page === p;
-    const activeColor = "#111";
-    const textColor = isDark ? "#fff" : "#333";
+    const renderButton = (label, icon, target) => {
+      const isActive = page === target;
+      const bgColor = isActive ? '#111' : 'transparent';
+      const textColor = isActive ? '#fff' : (isDark ? '#fff' : '#333');
+      const iconColor = isActive ? '#fff' : (isDark ? '#fff' : '#333');
+
+      return (
+        <TouchableOpacity style={styles.menuButton} onPress={() => setPage(target)}>
+          <View style={[styles.menuItem, isActive && styles.menuItemActive]}>
+            <Text style={[styles.menuIcon, { color: iconColor }]}>{icon}</Text>
+            <Text style={[styles.menuText, { color: textColor }]}>{label}</Text>
+          </View>
+          {target === 'cart' && cart.length > 0 && (
+            <View style={styles.menuBadge}>
+              <Text style={styles.menuBadgeText}>{cart.length}</Text>
+            </View>
+          )}
+        </TouchableOpacity>
+      );
+    };
 
     return (
       <View style={[styles.menu, isDark && styles.menuDark]}>
-        <TouchableOpacity style={styles.menuButton} onPress={() => setPage("catalog")}>
-          <Text style={[styles.menuIcon, { color: isActive("catalog") ? activeColor : textColor }]}>👟</Text>
-          <Text style={[styles.menuText, { color: isActive("catalog") ? activeColor : textColor }]}>Каталог</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.menuButton} onPress={() => setPage("favorites")}>
-          <Text style={[styles.menuIcon, { color: isActive("favorites") ? activeColor : textColor }]}>♥</Text>
-          <Text style={[styles.menuText, { color: isActive("favorites") ? activeColor : textColor }]}>Избранное</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.menuButton} onPress={() => setPage("cart")}>
-          <View style={{ position: 'relative' }}>
-            <Text style={[styles.menuIcon, { color: isActive("cart") ? activeColor : textColor }]}>🛒</Text>
-            {cart.length > 0 && (
-              <View style={styles.menuBadge}>
-                <Text style={styles.menuBadgeText}>{cart.length}</Text>
-              </View>
-            )}
-          </View>
-          <Text style={[styles.menuText, { color: isActive("cart") ? activeColor : textColor }]}>Корзина</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.menuButton} onPress={() => setPage("profile")}>
-          <Text style={[styles.menuIcon, { color: isActive("profile") ? activeColor : textColor }]}>👤</Text>
-          <Text style={[styles.menuText, { color: isActive("profile") ? activeColor : textColor }]}>Я</Text>
-        </TouchableOpacity>
+        {renderButton('Каталог', '👟', 'catalog')}
+        {renderButton('Избранное', '♥', 'favorites')}
+        {renderButton('Корзина', '🛒', 'cart')}
+        {renderButton('Я', '👤', 'profile')}
       </View>
     );
   };
@@ -1326,7 +1352,7 @@ const styles = StyleSheet.create({
 
   cartBadge: { fontSize: 16, fontWeight: "600", color: "#000" },
 
-  // НОВОЕ МЕНЮ
+  // Меню
   menu: {
     position: 'fixed',
     bottom: 0,
@@ -1350,8 +1376,18 @@ const styles = StyleSheet.create({
   menuButton: {
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 8,
+    paddingHorizontal: 4,
     paddingVertical: 2,
+  },
+  menuItem: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+  },
+  menuItemActive: {
+    backgroundColor: '#111',
   },
   menuIcon: {
     fontSize: 22,
@@ -1379,7 +1415,7 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
 
-  // Стили таблицы
+  // Таблица
   tableContainer: { backgroundColor: "#fff", borderRadius: 16, overflow: 'hidden', marginVertical: 5 },
   tableContainerDark: { backgroundColor: "#2a2a2a" },
   tableHeader: { flexDirection: 'row', backgroundColor: "#111", paddingVertical: 8, paddingHorizontal: 6 },
