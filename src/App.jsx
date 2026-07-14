@@ -493,71 +493,66 @@ export default function App() {
   // КОМПОНЕНТЫ СТРАНИЦ
   // ==============================
 
-  const SizeModal = () => {
-  const { theme } = useTheme();
-  const isDark = theme === "dark";
-  const sizes = sizeModalProduct?.sizes || [];
+    const SizeModal = () => {
+    const { theme } = useTheme();
+    const isDark = theme === "dark";
+    const sizes = sizeModalProduct?.sizes || [];
 
-  const handleAddWithSize = () => {
-    if (!tempSelectedSize) {
-      Alert.alert("Ошибка", "Выберите размер");
-      return;
-    }
+    const handleAddWithSize = () => {
+      if (!tempSelectedSize) {
+        Alert.alert("Ошибка", "Выберите размер");
+        return;
+      }
 
-    addCart({ ...sizeModalProduct, size: tempSelectedSize });
+      addCart({ ...sizeModalProduct, size: tempSelectedSize });
 
-    setSizeModalVisible(false);
-    setSizeModalProduct(null);
-    setTempSelectedSize(null);
+      setSizeModalVisible(false);
+      setSizeModalProduct(null);
+      setTempSelectedSize(null);
 
-    Alert.alert(
-      "✅ Добавлено в корзину",
-      `${sizeModalProduct?.brand} ${sizeModalProduct?.name}\nРазмер: ${tempSelectedSize}`,
-      [{ text: "OK" }]
-    );
-  };
+      // Более быстрое уведомление
+      Alert.alert("✅ Готово", `${sizeModalProduct?.brand} ${sizeModalProduct?.name} (размер ${tempSelectedSize}) добавлен в корзину`);
+    };
 
-  return (
-    <Modal 
-      transparent 
-      visible={sizeModalVisible} 
-      animationType="none"   // ← Изменено на none
-      onRequestClose={() => setSizeModalVisible(false)}
-    >
-      <View style={styles.modalOverlay}>
-        <View style={[styles.modalView, isDark && styles.modalViewDark]}>
-          <Text style={[styles.modalTitle, isDark && styles.textDark]}>Выберите размер</Text>
-          <Text style={[styles.modalSubtitle, isDark && styles.textDark]}>
-            {sizeModalProduct?.brand} {sizeModalProduct?.name}
-          </Text>
+    return (
+      <Modal 
+        transparent 
+        visible={sizeModalVisible} 
+        animationType="none" 
+        onRequestClose={() => setSizeModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalView, isDark && styles.modalViewDark]}>
+            <Text style={[styles.modalTitle, isDark && styles.textDark]}>Выберите размер</Text>
+            <Text style={[styles.modalSubtitle, isDark && styles.textDark]}>
+              {sizeModalProduct?.brand} {sizeModalProduct?.name}
+            </Text>
 
-          <View style={styles.sizeGrid}>
-            {sizes.map(s => (
-              <TouchableOpacity
-                key={s}
-                style={[styles.sizeOption, tempSelectedSize === s && styles.sizeOptionActive]}
-                onPress={() => setTempSelectedSize(s)}
-              >
-                <Text style={[styles.sizeOptionText, tempSelectedSize === s && styles.sizeOptionTextActive]}>
-                  {s}
-                </Text>
+            <View style={styles.sizeGrid}>
+              {sizes.map(s => (
+                <TouchableOpacity
+                  key={s}
+                  style={[styles.sizeOption, tempSelectedSize === s && styles.sizeOptionActive]}
+                  onPress={() => setTempSelectedSize(s)}
+                >
+                  <Text style={[styles.sizeOptionText, tempSelectedSize === s && styles.sizeOptionTextActive]}>{s}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <View style={styles.modalButtons}>
+              <TouchableOpacity style={styles.modalCancel} onPress={() => setSizeModalVisible(false)}>
+                <Text>Отмена</Text>
               </TouchableOpacity>
-            ))}
-          </View>
-
-          <View style={styles.modalButtons}>
-            <TouchableOpacity style={styles.modalCancel} onPress={() => setSizeModalVisible(false)}>
-              <Text>Отмена</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.modalConfirm} onPress={handleAddWithSize}>
-              <Text style={styles.buttonText}>Добавить</Text>
-            </TouchableOpacity>
+              <TouchableOpacity style={styles.modalConfirm} onPress={handleAddWithSize}>
+                <Text style={styles.buttonText}>Добавить</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
-      </View>
-    </Modal>
-  );
-};
+      </Modal>
+    );
+  };
 
   const ProductCard = ({ item }) => {
     const isFav = favorites.some(x => x.id === item.id);
@@ -1087,7 +1082,7 @@ export default function App() {
 
   // ---- ОФОРМЛЕНИЕ ЗАКАЗА (исправленное: явные цвета для тёмной темы) ----
     // ---- ОФОРМЛЕНИЕ ЗАКАЗА ----
-  const OrderModal = () => {
+    const OrderModal = () => {
     const [fullName, setFullName] = useState("");
     const [address, setAddress] = useState("");
     const [phone, setPhone] = useState("");
@@ -1098,11 +1093,8 @@ export default function App() {
 
     useEffect(() => {
       if (!orderModalVisible) {
-        setFullName("");
-        setAddress("");
-        setPhone("");
-        setDelivery("europost");
-        setUseFreeDelivery(false);
+        setFullName(""); setAddress(""); setPhone(""); 
+        setDelivery("europost"); setUseFreeDelivery(false);
       }
     }, [orderModalVisible]);
 
@@ -1117,41 +1109,22 @@ export default function App() {
     const orderTotal = finalTotal + dp;
 
     const handlePlace = () => {
-      if (!fullName.trim()) {
-        Alert.alert("Ошибка", "Пожалуйста, укажите ФИО");
-        return;
-      }
-      if (!address.trim()) {
-        Alert.alert("Ошибка", "Пожалуйста, укажите адрес доставки");
-        return;
-      }
-      if (!phone.trim()) {
-        Alert.alert("Ошибка", "Пожалуйста, укажите номер телефона");
-        return;
-      }
+      if (!fullName.trim()) return Alert.alert("Ошибка", "Укажите ФИО");
+      if (!address.trim()) return Alert.alert("Ошибка", "Укажите адрес доставки");
+      if (!phone.trim()) return Alert.alert("Ошибка", "Укажите номер телефона");
 
       const phoneDigits = phone.replace(/\D/g, '');
-      if (phoneDigits.length < 7) {
-        Alert.alert("Ошибка", "Введите корректный номер телефона (минимум 7 цифр)");
-        return;
-      }
+      if (phoneDigits.length < 7) return Alert.alert("Ошибка", "Номер телефона слишком короткий");
 
       if (useFreeDelivery && !isFreeDeliveryEligible(phone, fullName)) {
-        Alert.alert("Ошибка", "Бесплатная доставка уже была использована с этими данными");
-        return;
+        return Alert.alert("Ошибка", "Бесплатная доставка уже использована");
       }
-      if (cart.length === 0) {
-        Alert.alert("Ошибка", "Корзина пуста");
-        return;
-      }
+      if (cart.length === 0) return Alert.alert("Ошибка", "Корзина пуста");
 
       placeOrderWithDetails({ fullName, address, phone, delivery, freeDelivery: useFreeDelivery });
     };
 
-    const inputStyle = [
-      styles.modalInput,
-      isDark && { backgroundColor: '#2a2a2a', color: '#ffffff', borderColor: '#555' }
-    ];
+    const inputStyle = [styles.modalInput, isDark && { backgroundColor: '#2a2a2a', color: '#ffffff', borderColor: '#555' }];
 
     return (
       <Modal transparent visible={orderModalVisible} onRequestClose={closeOrderModal} animationType="none">
@@ -1160,6 +1133,7 @@ export default function App() {
             <View style={[styles.modalView, isDark && styles.modalViewDark]}>
               <Text style={[styles.modalTitle, isDark && styles.textDark]}>Оформление заказа</Text>
 
+              {/* Доставка, поля ввода, итого — оставлены как было */}
               <Text style={[styles.deliveryLabel, isDark && styles.textDark]}>Способ доставки</Text>
               <View style={styles.deliveryOptions}>
                 <TouchableOpacity style={[styles.deliveryOption, delivery === "europost" && styles.deliveryOptionActive]} onPress={() => setDelivery("europost")}>
@@ -1169,7 +1143,6 @@ export default function App() {
                 <TouchableOpacity style={[styles.deliveryOption, delivery === "courier" && styles.deliveryOptionActive]} onPress={() => setDelivery("courier")}>
                   <Text style={delivery === "courier" && styles.deliveryOptionTextActive}>Курьер</Text>
                   <Text style={styles.deliveryDetail}>10 руб • 2-3 дня</Text>
-                  <Text style={styles.deliveryNote}>Менеджер свяжется</Text>
                 </TouchableOpacity>
               </View>
 
@@ -1179,9 +1152,7 @@ export default function App() {
 
               {showFreeDeliveryOption && (
                 <TouchableOpacity style={styles.bonusCheckbox} onPress={() => setUseFreeDelivery(!useFreeDelivery)}>
-                  <Text style={[styles.bonusCheckboxText, isDark && styles.textDark]}>
-                    {useFreeDelivery ? "☑" : "☐"} Бесплатная доставка (первый заказ)
-                  </Text>
+                  <Text style={[styles.bonusCheckboxText, isDark && styles.textDark]}>{useFreeDelivery ? "☑" : "☐"} Бесплатная доставка (первый заказ)</Text>
                 </TouchableOpacity>
               )}
 
@@ -1200,11 +1171,9 @@ export default function App() {
               </View>
 
               <View style={styles.modalButtons}>
-                <TouchableOpacity style={styles.modalCancel} onPress={closeOrderModal}>
-                  <Text>Отмена</Text>
-                </TouchableOpacity>
+                <TouchableOpacity style={styles.modalCancel} onPress={closeOrderModal}><Text>Отмена</Text></TouchableOpacity>
                 <TouchableOpacity style={styles.modalConfirm} onPress={handlePlace}>
-                  <Text style={styles.buttonText}>Подтвердить</Text>
+                  <Text style={styles.buttonText}>Подтвердить заказ</Text>
                 </TouchableOpacity>
               </View>
             </View>
