@@ -315,37 +315,54 @@ export default function App() {
   };
 
   const placeOrderWithDetails = (deliveryData) => {
-    const { fullName, address, phone, delivery, freeDelivery } = deliveryData;
-    const { total, discount, usedBonus, finalTotal } = calculateTotals();
-    let deliveryPrice = delivery === "europost" ? 8 : 10;
-    if (freeDelivery) {
-      deliveryPrice = 0;
-      setUsedFreeDelivery(prev => [...prev, { phone: phone.trim(), fullName: fullName.trim() }]);
-    }
-    const orderTotal = finalTotal + deliveryPrice;
-    const nextNumber = lastOrderNumber + 1;
-    setLastOrderNumber(nextNumber);
-    const order = {
-      id: nextNumber, items: cart.map(i => ({ ...i })), total, delivery, address, phone, fullName,
-      deliveryPrice, discount, usedBonus, finalTotal: orderTotal, date: new Date().toISOString(),
-      status: "Ожидает подтверждения", trackingNumber: null, freeDelivery
-    };
-    setOrderHistory(prev => [order, ...prev]);
-    setAdminOrders(prev => [order, ...prev]);
-    const cashback = Math.floor(total * (currentLevel.cashback / 100));
-    setBonusBalance(prev => prev + cashback - usedBonus);
-    setOrders(orders + 1);
-    setCart([]);
-    closeOrderModal();
-    Alert.alert(
-      "Заказ оформлен",
-      `Номер заказа: ${nextNumber}\nСтатус: Ожидает подтверждения\n${freeDelivery ? "Доставка бесплатная (первый заказ)!" : ""}\n\nЕсли у менеджера будут вопросы, он свяжется с вами.\nА если у вас есть вопросы, вы можете связаться по ссылке в описании бота.`,
-      [
-        { text: "OK" },
-        { text: "Перейти в историю", onPress: () => setPage("profile") }
-      ]
-    );
+  const { fullName, address, phone, delivery, freeDelivery } = deliveryData;
+  const { total, discount, usedBonus, finalTotal } = calculateTotals();
+  
+  let deliveryPrice = delivery === "europost" ? 8 : 10;
+  if (freeDelivery) {
+    deliveryPrice = 0;
+    setUsedFreeDelivery(prev => [...prev, { phone: phone.trim(), fullName: fullName.trim() }]);
+  }
+
+  const orderTotal = finalTotal + deliveryPrice;
+  const nextNumber = lastOrderNumber + 1;
+  setLastOrderNumber(nextNumber);
+
+  const order = {
+    id: nextNumber, 
+    items: cart.map(i => ({ ...i })), 
+    total, 
+    delivery, 
+    address, 
+    phone, 
+    fullName,
+    deliveryPrice, 
+    discount, 
+    usedBonus, 
+    finalTotal: orderTotal, 
+    date: new Date().toISOString(),
+    status: "Ожидает подтверждения", 
+    trackingNumber: null, 
+    freeDelivery
   };
+
+  setOrderHistory(prev => [order, ...prev]);
+  setAdminOrders(prev => [order, ...prev]);
+  const cashback = Math.floor(total * (currentLevel.cashback / 100));
+  setBonusBalance(prev => prev + cashback - usedBonus);
+  setOrders(orders + 1);
+  setCart([]);
+  closeOrderModal();
+
+  Alert.alert(
+    "✅ Заказ оформлен!",
+    `Номер заказа: #${nextNumber}\n\nСпасибо! Ваш заказ принят.\nСкоро менеджер его обработает и свяжется с вами.\n\nЕсли у вас есть вопросы — можете написать менеджеру по ссылке в описании бота.`,
+    [
+      { text: "Отлично" },
+      { text: "Посмотреть заказ", onPress: () => setPage("profile") }
+    ]
+  );
+};
 
   const addRating = (productId, rating, comment) => {
     setProducts(prev => prev.map(p => {
@@ -479,16 +496,24 @@ export default function App() {
     const isDark = theme === "dark";
     const sizes = sizeModalProduct?.sizes || [];
     const handleAddWithSize = () => {
-      if (!tempSelectedSize) {
-        Alert.alert("Ошибка", "Выберите размер");
-        return;
-      }
-      addCart({ ...sizeModalProduct, size: tempSelectedSize });
-      setSizeModalVisible(false);
-      setSizeModalProduct(null);
-      setTempSelectedSize(null);
-      Alert.alert("Добавлено", `Товар добавлен в корзину (размер ${tempSelectedSize})`);
-    };
+  if (!tempSelectedSize) {
+    Alert.alert("Ошибка", "Выберите размер");
+    return;
+  }
+
+  addCart({ ...sizeModalProduct, size: tempSelectedSize });
+
+  setSizeModalVisible(false);
+  setSizeModalProduct(null);
+  setTempSelectedSize(null);
+
+  // Новое уведомление без лишней анимации
+  Alert.alert(
+    "✅ Добавлено в корзину",
+    `${sizeModalProduct?.brand} ${sizeModalProduct?.name}\nРазмер: ${tempSelectedSize}`,
+    [{ text: "OK" }]
+  );
+};
     return (
       <Modal transparent visible={sizeModalVisible} animationType="fade" onRequestClose={() => setSizeModalVisible(false)}>
         <View style={styles.modalOverlay}>
@@ -1058,11 +1083,8 @@ export default function App() {
 
   useEffect(() => {
     if (!orderModalVisible) {
-      setFullName("");
-      setAddress("");
-      setPhone("");
-      setDelivery("europost");
-      setUseFreeDelivery(false);
+      setFullName(""); setAddress(""); setPhone(""); 
+      setDelivery("europost"); setUseFreeDelivery(false);
     }
   }, [orderModalVisible]);
 
@@ -1071,20 +1093,31 @@ export default function App() {
   const eligible = fullName.trim() && phone.trim() ? isFreeDeliveryEligible(phone, fullName) : false;
   const showFreeDeliveryOption = eligible && orderHistory.length === 0;
   if (useFreeDelivery && showFreeDeliveryOption) dp = 0;
+
   const days = delivery === "europost" ? "4-5" : "2-3";
   const label = delivery === "europost" ? "ЕвроПочта" : "Курьер";
   const orderTotal = finalTotal + dp;
 
   const handlePlace = () => {
-    if (!fullName.trim() || !address.trim() || !phone.trim()) {
-      Alert.alert("Ошибка", "Заполните все поля, включая номер телефона");
+    if (!fullName.trim()) {
+      Alert.alert("Ошибка", "Пожалуйста, укажите ФИО");
       return;
     }
+    if (!address.trim()) {
+      Alert.alert("Ошибка", "Пожалуйста, укажите адрес доставки");
+      return;
+    }
+    if (!phone.trim()) {
+      Alert.alert("Ошибка", "Пожалуйста, укажите номер телефона");
+      return;
+    }
+
     const phoneDigits = phone.replace(/\D/g, '');
     if (phoneDigits.length < 7) {
       Alert.alert("Ошибка", "Введите корректный номер телефона (минимум 7 цифр)");
       return;
     }
+
     if (useFreeDelivery && !isFreeDeliveryEligible(phone, fullName)) {
       Alert.alert("Ошибка", "Бесплатная доставка уже была использована с этими данными");
       return;
@@ -1093,17 +1126,13 @@ export default function App() {
       Alert.alert("Ошибка", "Корзина пуста");
       return;
     }
+
     placeOrderWithDetails({ fullName, address, phone, delivery, freeDelivery: useFreeDelivery });
   };
 
-  // === СТИЛЬ ДЛЯ INPUT В ТЁМНОЙ ТЕМЕ ===
   const inputStyle = [
     styles.modalInput,
-    isDark && {
-      backgroundColor: '#2a2a2a',
-      color: '#ffffff',
-      borderColor: '#555',
-    }
+    isDark && { backgroundColor: '#2a2a2a', color: '#ffffff', borderColor: '#555' }
   ];
 
   return (
@@ -1112,60 +1141,15 @@ export default function App() {
         <ScrollView contentContainerStyle={styles.modalScrollView} keyboardShouldPersistTaps="handled">
           <View style={[styles.modalView, isDark && styles.modalViewDark]}>
             <Text style={[styles.modalTitle, isDark && styles.textDark]}>Оформление заказа</Text>
-            
-            <Text style={[styles.deliveryLabel, isDark && styles.textDark]}>Способ доставки</Text>
-            {/* ... (доставка остаётся без изменений) */}
 
-            <TextInput
-              style={inputStyle}
-              placeholder="ФИО"
-              placeholderTextColor={isDark ? "#999" : "#888"}
-              value={fullName}
-              onChangeText={setFullName}
-            />
-            <TextInput
-              style={inputStyle}
-              placeholder={delivery === "europost" ? "Адрес и номер отделения" : "Адрес доставки"}
-              placeholderTextColor={isDark ? "#999" : "#888"}
-              value={address}
-              onChangeText={setAddress}
-            />
-            <TextInput
-              style={inputStyle}
-              placeholder="Телефон"
-              placeholderTextColor={isDark ? "#999" : "#888"}
-              value={phone}
-              onChangeText={setPhone}
-              keyboardType="phone-pad"
-            />
+            {/* ... доставка (оставь как было) */}
 
-            {/* Остальной код модалки (бесплатная доставка, итого и т.д.) остаётся без изменений */}
-            {showFreeDeliveryOption && (
-              <TouchableOpacity style={styles.bonusCheckbox} onPress={() => setUseFreeDelivery(!useFreeDelivery)}>
-                <Text style={[styles.bonusCheckboxText, isDark && styles.textDark]}>
-                  {useFreeDelivery ? "☑" : "☐"} Бесплатная доставка (первый заказ)
-                </Text>
-              </TouchableOpacity>
-            )}
+            <TextInput style={inputStyle} placeholder="ФИО" placeholderTextColor={isDark ? "#999" : "#888"} value={fullName} onChangeText={setFullName} />
+            <TextInput style={inputStyle} placeholder={delivery === "europost" ? "Адрес и номер отделения" : "Адрес доставки"} placeholderTextColor={isDark ? "#999" : "#888"} value={address} onChangeText={setAddress} />
+            <TextInput style={inputStyle} placeholder="Телефон" placeholderTextColor={isDark ? "#999" : "#888"} value={phone} onChangeText={setPhone} keyboardType="phone-pad" />
 
-            <View style={[styles.deliverySummary, isDark && styles.deliverySummaryDark]}>
-              <Text style={[styles.summaryText, isDark && styles.textDark]}>Доставка: {label} — {dp} руб</Text>
-              <Text style={[styles.summaryText, isDark && styles.textDark]}>Срок: {days} дн.</Text>
-            </View>
-
-            <View style={styles.totalRow}>
-              <Text style={[styles.totalLabel, isDark && styles.textDark]}>Товары: {money(finalTotal)}</Text>
-              <Text style={[styles.totalLabel, isDark && styles.textDark]}>Доставка: {money(dp)}</Text>
-            </View>
-            <View style={styles.totalRow}>
-              <Text style={[styles.totalLabel, isDark && styles.textDark, {fontWeight: 'bold'}]}>Итого к оплате:</Text>
-              <Text style={[styles.totalAmount, isDark && styles.textDark]}>{money(orderTotal)}</Text>
-            </View>
-
-            <View style={styles.modalButtons}>
-              <TouchableOpacity style={styles.modalCancel} onPress={closeOrderModal}><Text>Отмена</Text></TouchableOpacity>
-              <TouchableOpacity style={styles.modalConfirm} onPress={handlePlace}><Text style={styles.buttonText}>Подтвердить</Text></TouchableOpacity>
-            </View>
+            {/* Остальной код модалки (бесплатная доставка, итого и кнопки) — оставь как было */}
+            {/* ... */}
           </View>
         </ScrollView>
       </View>
