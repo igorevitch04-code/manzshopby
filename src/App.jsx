@@ -247,7 +247,8 @@ export default function App() {
   const nextLevel = LEVELS[LEVELS.indexOf(currentLevel) + 1];
   let progress = 100;
   if (nextLevel) progress = Math.min(100, Math.floor(((orders - currentLevel.min) / (nextLevel.min - currentLevel.min)) * 100));
-  const referral = `https://t.me/krost_shop_bot?start=${user.id}`;
+  // ИСПРАВЛЕНА РЕФЕРАЛЬНАЯ ССЫЛКА
+  const referral = `https://t.me/manzshop_bot?start=${user.id}`;
 
   const addCart = (item) => setCart([...cart, item]);
   const removeCart = (idx) => setCart(cart.filter((_, i) => i !== idx));
@@ -339,7 +340,7 @@ export default function App() {
   };
 
   const shareProduct = async (product) => {
-    try { await Share.share({ message: `${product.brand} ${product.name} - ${money(product.price)}\nhttps://t.me/krost_shop_bot?start=product_${product.id}` }); } catch (e) {}
+    try { await Share.share({ message: `${product.brand} ${product.name} - ${money(product.price)}\nhttps://t.me/manzshop_bot?start=product_${product.id}` }); } catch (e) {}
   };
 
   const getRecommended = () => {
@@ -587,7 +588,6 @@ export default function App() {
     const { theme } = useTheme(); const isDark = theme === "dark";
     const [rating, setRating] = useState(0);
     const [comment, setComment] = useState("");
-    // Отзывы только после статуса "Доставлен"
     const hasPurchased = orderHistory.some(order => 
       order.status === "Доставлен" && order.items.some(i => i.id === selectedProduct.id)
     );
@@ -1028,12 +1028,14 @@ export default function App() {
     const label = delivery === "europost" ? "ЕвроПочта" : "Курьер";
     const orderTotal = finalTotal + dp;
     const handlePlace = () => {
+      // Проверка полей
       if (!fullName.trim() || !address.trim() || !phone.trim()) {
         Alert.alert("Ошибка", "Заполните все поля, включая номер телефона");
         return;
       }
       // Проверка телефона: минимум 7 цифр
-      if (phone.replace(/\D/g, '').length < 7) {
+      const phoneDigits = phone.replace(/\D/g, '');
+      if (phoneDigits.length < 7) {
         Alert.alert("Ошибка", "Введите корректный номер телефона (минимум 7 цифр)");
         return;
       }
@@ -1050,7 +1052,7 @@ export default function App() {
     return (
       <Modal transparent visible={orderModalVisible} onRequestClose={closeOrderModal} animationType="none">
         <View style={styles.modalOverlay}>
-          <ScrollView contentContainerStyle={styles.modalScrollView}>
+          <ScrollView contentContainerStyle={styles.modalScrollView} keyboardShouldPersistTaps="handled">
             <View style={[styles.modalView, isDark && styles.modalViewDark]}>
               <Text style={[styles.modalTitle, isDark && styles.textDark]}>Оформление заказа</Text>
               <Text style={[styles.deliveryLabel, isDark && styles.textDark]}>Способ доставки</Text>
@@ -1065,9 +1067,28 @@ export default function App() {
                   <Text style={styles.deliveryNote}>Менеджер свяжется</Text>
                 </TouchableOpacity>
               </View>
-              <TextInput style={[styles.modalInput, isDark && styles.inputDark]} placeholder="ФИО" placeholderTextColor={isDark ? "#999" : "#888"} value={fullName} onChangeText={setFullName} />
-              <TextInput style={[styles.modalInput, isDark && styles.inputDark]} placeholder={delivery === "europost" ? "Адрес и номер отделения" : "Адрес доставки"} placeholderTextColor={isDark ? "#999" : "#888"} value={address} onChangeText={setAddress} />
-              <TextInput style={[styles.modalInput, isDark && styles.inputDark]} placeholder="Телефон" placeholderTextColor={isDark ? "#999" : "#888"} value={phone} onChangeText={setPhone} keyboardType="phone-pad" />
+              <TextInput 
+                style={[styles.modalInput, isDark && styles.inputDark]} 
+                placeholder="ФИО" 
+                placeholderTextColor={isDark ? "#999" : "#888"} 
+                value={fullName} 
+                onChangeText={setFullName} 
+              />
+              <TextInput 
+                style={[styles.modalInput, isDark && styles.inputDark]} 
+                placeholder={delivery === "europost" ? "Адрес и номер отделения" : "Адрес доставки"} 
+                placeholderTextColor={isDark ? "#999" : "#888"} 
+                value={address} 
+                onChangeText={setAddress} 
+              />
+              <TextInput 
+                style={[styles.modalInput, isDark && styles.inputDark]} 
+                placeholder="Телефон" 
+                placeholderTextColor={isDark ? "#999" : "#888"} 
+                value={phone} 
+                onChangeText={setPhone} 
+                keyboardType="phone-pad" 
+              />
               {showFreeDeliveryOption && (
                 <TouchableOpacity style={styles.bonusCheckbox} onPress={() => setUseFreeDelivery(!useFreeDelivery)}>
                   <Text style={[styles.bonusCheckboxText, isDark && styles.textDark]}>
@@ -1104,9 +1125,8 @@ export default function App() {
     const isDark = theme === "dark";
     const renderButton = (label, icon, target) => {
       const isActive = page === target;
-      const bgColor = isActive ? '#111' : 'transparent';
-      const textColor = isActive ? '#fff' : (isDark ? '#fff' : '#333');
       const iconColor = isActive ? '#fff' : (isDark ? '#fff' : '#333');
+      const textColor = isActive ? '#fff' : (isDark ? '#fff' : '#333');
 
       return (
         <TouchableOpacity style={styles.menuButton} onPress={() => setPage(target)}>
@@ -1182,7 +1202,11 @@ const styles = StyleSheet.create({
   },
   pageDark: { backgroundColor: "#1a1a1a" },
   textDark: { color: "#fff" },
-  inputDark: { backgroundColor: "#333", color: "#fff", borderColor: "#555" },
+  inputDark: {
+    backgroundColor: '#333',
+    color: '#fff',
+    borderColor: '#555',
+  },
   cardDark: { backgroundColor: "#2a2a2a" },
   scrollContent: { paddingBottom: 10 },
 
@@ -1226,7 +1250,6 @@ const styles = StyleSheet.create({
   balanceLabel: { color: "#fff" },
   balanceValue: { color: "#fff", fontSize: 36, fontWeight: "900" },
   balanceInfo: { color: "#fff" },
-  userName: { fontSize: 18 },
 
   referralBox: { backgroundColor: "#fff", padding: 16, borderRadius: 24 },
   referralBoxDark: { backgroundColor: "#2a2a2a" },
