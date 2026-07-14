@@ -8,9 +8,6 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 const ThemeContext = createContext();
 const useTheme = () => useContext(ThemeContext);
 
-// ==============================
-// Вспомогательные функции
-// ==============================
 const getTelegramUser = () => {
   try {
     const tg = typeof window !== "undefined" && window.Telegram && window.Telegram.WebApp;
@@ -25,8 +22,7 @@ const getTelegramUser = () => {
 
 const money = (v) => v.toLocaleString("ru-RU") + " Br";
 const getBrands = (products) => [...new Set(products.map(p => p.brand))];
-
-const ADMIN_IDS = [778715828, 987654321]; // замените на свои
+const ADMIN_IDS = [778715828, 987654321];
 
 const DEFAULT_PRODUCTS = [
   { id: 1, brand: "NIKE", name: "Dunk Low Panda", price: 18990, oldPrice: null, image: "https://images.unsplash.com/photo-1542291026-7eec264c27ff", sales: 120, ratings: [], averageRating: 0, description: "Классические Nike Dunk Low Panda.", sizes: ["40","41","42","43","44"] },
@@ -85,18 +81,16 @@ const loadFromCloud = async (key) => {
 };
 
 // ==============================
-// Компонент ввода трек-номера (мемоизированный)
+// TrackingInput
 // ==============================
 const TrackingInput = memo(({ orderId, initialValue, onUpdate }) => {
   const [tracking, setTracking] = useState(initialValue || "");
   const { theme } = useTheme();
   const isDark = theme === "dark";
-
   const handleChange = (text) => {
     setTracking(text);
     if (onUpdate) onUpdate(orderId, text);
   };
-
   return (
     <TextInput
       style={[styles.trackingInput, isDark && styles.inputDark]}
@@ -109,7 +103,7 @@ const TrackingInput = memo(({ orderId, initialValue, onUpdate }) => {
 });
 
 // ==============================
-// ГЛАВНЫЙ КОМПОНЕНТ APP
+// ОСНОВНОЙ КОМПОНЕНТ APP
 // ==============================
 export default function App() {
   const user = getTelegramUser();
@@ -172,7 +166,6 @@ export default function App() {
     usedFreeDelivery: "krost_usedFreeDelivery"
   };
 
-  // Загрузка
   useEffect(() => {
     const loadAll = async () => {
       try {
@@ -227,7 +220,6 @@ export default function App() {
     loadAll();
   }, []);
 
-  // Сохранение
   useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.cart, JSON.stringify(cart)); saveToCloud(CLOUD_KEYS.cart, cart); }, [cart]);
   useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.favorites, JSON.stringify(favorites)); saveToCloud(CLOUD_KEYS.favorites, favorites); }, [favorites]);
   useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.orders, JSON.stringify(orders)); saveToCloud(CLOUD_KEYS.orders, orders); }, [orders]);
@@ -379,10 +371,10 @@ export default function App() {
       return p;
     }));
   };
-  const changeStatus = (orderId, newStatus) => {
+  const changeStatus = useCallback((orderId, newStatus) => {
     setAdminOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o));
     setOrderHistory(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o));
-  };
+  }, []);
   const updateTracking = useCallback((orderId, trackingNumber) => {
     setAdminOrders(prev => prev.map(o => o.id === orderId ? { ...o, trackingNumber } : o));
     setOrderHistory(prev => prev.map(o => o.id === orderId ? { ...o, trackingNumber } : o));
@@ -417,7 +409,7 @@ export default function App() {
   const popular = Object.keys(salesMap).sort((a,b) => salesMap[b] - salesMap[a]).slice(0,5).map(id => products.find(p => p.id === parseInt(id))).filter(Boolean);
 
   // ==============================
-  // КОМПОНЕНТЫ
+  // КОМПОНЕНТЫ СТРАНИЦ
   // ==============================
 
   const SizeModal = () => {
@@ -918,7 +910,6 @@ export default function App() {
               </View>
             </Modal>
 
-            {/* Остальные разделы админки */}
             <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Управление промокодами</Text>
             <TouchableOpacity style={styles.addBtn} onPress={addPromoCode}>
               <Text style={styles.buttonText}>+ Добавить промокод</Text>
@@ -1077,24 +1068,24 @@ export default function App() {
     );
   };
 
-  // ---- Меню (фиксированное) ----
+  // ---- Меню (с красивыми кнопками) ----
   const Menu = () => {
     const { theme } = useTheme();
     const isDark = theme === "dark";
     return (
       <View style={[styles.menu, isDark && styles.menuDark]}>
-        <TouchableOpacity onPress={() => setPage("home")}>
-          <Text style={[styles.menuText, isDark && styles.textDark]}>Главная</Text>
+        <TouchableOpacity style={styles.menuButton} onPress={() => setPage("home")}>
+          <Text style={styles.menuText}>Главная</Text>
         </TouchableOpacity>
-        <TouchableOpacity onPress={() => setPage("catalog")}>
-          <Text style={[styles.menuText, isDark && styles.textDark]}>Каталог</Text>
+        <TouchableOpacity style={styles.menuButton} onPress={() => setPage("catalog")}>
+          <Text style={styles.menuText}>Каталог</Text>
         </TouchableOpacity>
-        <TouchableOpacity onPress={() => setPage("favorites")}>
-          <Text style={[styles.menuText, isDark && styles.textDark]}>Избранное</Text>
+        <TouchableOpacity style={styles.menuButton} onPress={() => setPage("favorites")}>
+          <Text style={styles.menuText}>Избранное</Text>
         </TouchableOpacity>
-        <TouchableOpacity onPress={() => setPage("cart")}>
+        <TouchableOpacity style={styles.menuButton} onPress={() => setPage("cart")}>
           <View style={{ position: 'relative' }}>
-            <Text style={[styles.menuText, isDark && styles.textDark]}>Корзина</Text>
+            <Text style={styles.menuText}>Корзина</Text>
             {cart.length > 0 && (
               <View style={styles.menuBadge}>
                 <Text style={styles.menuBadgeText}>{cart.length}</Text>
@@ -1102,8 +1093,8 @@ export default function App() {
             )}
           </View>
         </TouchableOpacity>
-        <TouchableOpacity onPress={() => setPage("profile")}>
-          <Text style={[styles.menuText, isDark && styles.textDark]}>Я</Text>
+        <TouchableOpacity style={styles.menuButton} onPress={() => setPage("profile")}>
+          <Text style={styles.menuText}>Я</Text>
         </TouchableOpacity>
       </View>
     );
@@ -1122,8 +1113,10 @@ export default function App() {
 
   return (
     <ThemeContext.Provider value={{ theme, toggleTheme }}>
-      <View style={{ flex: 1, height: '100vh', width: '100%', backgroundColor: theme === "dark" ? "#1a1a1a" : "#F7F7F5" }}>
-        {content}
+      <View style={styles.root}>
+        <View style={styles.contentContainer}>
+          {content}
+        </View>
         <Menu />
         <OrderModal />
         <AdminPanel />
@@ -1137,7 +1130,20 @@ export default function App() {
 // СТИЛИ
 // ==============================
 const styles = StyleSheet.create({
-  page: { flex: 1, backgroundColor: "#F7F7F5", padding: 14, paddingBottom: 80 },
+  root: {
+    flex: 1,
+    height: '100%',
+    width: '100%',
+    backgroundColor: '#F7F7F5',
+  },
+  contentContainer: {
+    flex: 1,
+  },
+  page: {
+    flex: 1,
+    backgroundColor: "#F7F7F5",
+    padding: 14,
+  },
   pageDark: { backgroundColor: "#1a1a1a" },
   textDark: { color: "#fff" },
   inputDark: { backgroundColor: "#333", color: "#fff", borderColor: "#555" },
@@ -1309,6 +1315,32 @@ const styles = StyleSheet.create({
   totalAmount: { fontSize: 18, fontWeight: "900" },
 
   cartBadge: { fontSize: 16, fontWeight: "600", color: "#000" },
+
+  menu: {
+    height: 65,
+    backgroundColor: "#fff",
+    borderTopWidth: 1,
+    borderColor: "#ddd",
+    flexDirection: "row",
+    justifyContent: "space-around",
+    alignItems: "center",
+    paddingBottom: 5,
+  },
+  menuDark: {
+    backgroundColor: "#1a1a1a",
+    borderColor: "#333",
+  },
+  menuButton: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 20,
+    backgroundColor: "#111",
+  },
+  menuText: {
+    fontSize: 13,
+    fontWeight: "bold",
+    color: "#fff",
+  },
   menuBadge: {
     position: 'absolute',
     top: -10,
@@ -1321,25 +1353,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 4,
   },
-  menuBadgeText: { color: '#fff', fontSize: 11, fontWeight: 'bold' },
-
-  menu: {
-    position: 'fixed',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    height: 65,
-    backgroundColor: "#fff",
-    borderTopWidth: 1,
-    borderColor: "#ddd",
-    flexDirection: "row",
-    justifyContent: "space-around",
-    alignItems: "center",
-    paddingBottom: 5,
-    zIndex: 1000,
+  menuBadgeText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: 'bold',
   },
-  menuDark: { backgroundColor: "#1a1a1a", borderColor: "#333" },
-  menuText: { fontSize: 13, fontWeight: "bold", color: "#333" },
 
   back: { fontSize: 16, marginBottom: 12, color: "#555" },
   shareBtn: { fontSize: 22, marginBottom: 12 },
