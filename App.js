@@ -434,87 +434,36 @@ export default function App() {
   // ==============================
 
   const SizeModal = () => {
-    const { theme } = useTheme();
-    const isDark = theme === "dark";
-    const sizes = sizeModalProduct?.sizes || [];
-    const handleAddWithSize = () => {
-      if (!tempSelectedSize) {
-        Alert.alert("Ошибка", "Выберите размер");
-        return;
-      }
-      addCart({ ...sizeModalProduct, size: tempSelectedSize });
-      setSizeModalVisible(false);
-      setSizeModalProduct(null);
-      setTempSelectedSize(null);
-      Alert.alert("Добавлено", `Товар добавлен в корзину (размер ${tempSelectedSize})`);
-    };
-    return (
-      <Modal
-        transparent
-        visible={sizeModalVisible}
-        animationType="fade"
-        onRequestClose={() => setSizeModalVisible(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalView, isDark && styles.modalViewDark]}>
-            <Text style={[styles.modalTitle, isDark && styles.textDark]}>Выберите размер</Text>
-            <Text style={[styles.modalSubtitle, isDark && styles.textDark]}>{sizeModalProduct?.brand} {sizeModalProduct?.name}</Text>
-            <View style={styles.sizeGrid}>
-              {sizes.map(s => (
-                <TouchableOpacity
-                  key={s}
-                  style={[styles.sizeOption, tempSelectedSize === s && styles.sizeOptionActive]}
-                  onPress={() => setTempSelectedSize(s)}
-                >
-                  <Text style={[styles.sizeOptionText, tempSelectedSize === s && styles.sizeOptionTextActive]}>{s}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-            <View style={styles.modalButtons}>
-              <TouchableOpacity style={styles.modalCancel} onPress={() => setSizeModalVisible(false)}>
-                <Text>Отмена</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.modalConfirm} onPress={handleAddWithSize}>
-                <Text style={styles.buttonText}>Добавить</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-    );
+    // Этот компонент больше не нужен как Modal, но оставляем состояние
+    // Выбор размера будет через tg.showPopup
+    return null;
   };
 
   const ProductCard = ({ item }) => {
     const isFav = favorites.some(x => x.id === item.id);
     const { theme } = useTheme();
     const isDark = theme === "dark";
-    const handleAddToCart = () => {
-      if (item.sizes && item.sizes.length > 0) {
-        setSizeModalProduct(item);
-        setTempSelectedSize(null);
-        setSizeModalVisible(true);
-      } else {
-        Alert.alert("Ошибка", "У этого товара нет доступных размеров");
+        const handleAddToCart = () => {
+      if (!item.sizes || item.sizes.length === 0) {
+        addCart(item);
+        tg?.showAlert("✅ Товар добавлен в корзину");
+        return;
       }
+
+      const buttons = item.sizes.map(size => ({
+        text: size,
+        onClick: () => {
+          addCart({ ...item, size });
+          tg?.showAlert(`✅ ${item.brand} ${item.name}\nРазмер ${size} добавлен в корзину`);
+        }
+      }));
+
+      tg?.showPopup({
+        title: "Выберите размер",
+        message: `${item.brand} ${item.name}`,
+        buttons: [...buttons, { text: "Отмена", type: "cancel" }]
+      });
     };
-    return (
-      <View style={[styles.card, isDark && styles.cardDark]}>
-        <TouchableOpacity onPress={() => { setSelectedProduct(item); setSelectedSize(null); setPage("product"); }}>
-          <Image source={{ uri: item.image }} style={styles.image} />
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.favorite} onPress={() => toggleFavorite(item)}>
-          <Text style={styles.favoriteText}>{isFav ? "♥" : "♡"}</Text>
-        </TouchableOpacity>
-        <Text style={[styles.brand, isDark && styles.textDark]}>{item.brand}</Text>
-        <Text style={[styles.productName, isDark && styles.textDark]}>{item.name}</Text>
-        {item.oldPrice && <Text style={styles.oldPrice}>{money(item.oldPrice)}</Text>}
-        <Text style={[styles.price, isDark && styles.textDark]}>{money(item.price)}</Text>
-        <TouchableOpacity style={styles.smallButton} onPress={handleAddToCart}>
-          <Text style={styles.buttonText}>В корзину</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  };
 
   const Home = () => {
     const popularItems = [...products].sort((a,b) => b.sales - a.sales).slice(0,4);
