@@ -1168,7 +1168,6 @@ export default function App() {
         <Menu />
         <OrderModal />
         <AdminPanel />
-        <SizeModal />
       </View>
     </ThemeContext.Provider>
   );
