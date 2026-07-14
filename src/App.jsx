@@ -8,6 +8,9 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 const ThemeContext = createContext();
 const useTheme = () => useContext(ThemeContext);
 
+// ==============================
+// Вспомогательные функции
+// ==============================
 const getTelegramUser = () => {
   try {
     const tg = typeof window !== "undefined" && window.Telegram && window.Telegram.WebApp;
@@ -23,7 +26,7 @@ const getTelegramUser = () => {
 const money = (v) => v.toLocaleString("ru-RU") + " Br";
 const getBrands = (products) => [...new Set(products.map(p => p.brand))];
 
-const ADMIN_IDS = [778715828, 987654321];
+const ADMIN_IDS = [123456789, 987654321]; // замените на свои
 
 const DEFAULT_PRODUCTS = [
   { id: 1, brand: "NIKE", name: "Dunk Low Panda", price: 18990, oldPrice: null, image: "https://images.unsplash.com/photo-1542291026-7eec264c27ff", sales: 120, ratings: [], averageRating: 0, description: "Классические Nike Dunk Low Panda.", sizes: ["40","41","42","43","44"] },
@@ -82,7 +85,7 @@ const loadFromCloud = async (key) => {
 };
 
 // ==============================
-// TrackingInput (мемоизированный)
+// Компонент ввода трек-номера (мемоизированный)
 // ==============================
 const TrackingInput = memo(({ orderId, initialValue, onUpdate }) => {
   const [tracking, setTracking] = useState(initialValue || "");
@@ -106,7 +109,7 @@ const TrackingInput = memo(({ orderId, initialValue, onUpdate }) => {
 });
 
 // ==============================
-// APP
+// ГЛАВНЫЙ КОМПОНЕНТ APP
 // ==============================
 export default function App() {
   const user = getTelegramUser();
@@ -224,6 +227,7 @@ export default function App() {
     loadAll();
   }, []);
 
+  // Сохранение
   useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.cart, JSON.stringify(cart)); saveToCloud(CLOUD_KEYS.cart, cart); }, [cart]);
   useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.favorites, JSON.stringify(favorites)); saveToCloud(CLOUD_KEYS.favorites, favorites); }, [favorites]);
   useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.orders, JSON.stringify(orders)); saveToCloud(CLOUD_KEYS.orders, orders); }, [orders]);
@@ -379,10 +383,10 @@ export default function App() {
     setAdminOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o));
     setOrderHistory(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o));
   };
-  const updateTracking = (orderId, trackingNumber) => {
+  const updateTracking = useCallback((orderId, trackingNumber) => {
     setAdminOrders(prev => prev.map(o => o.id === orderId ? { ...o, trackingNumber } : o));
     setOrderHistory(prev => prev.map(o => o.id === orderId ? { ...o, trackingNumber } : o));
-  };
+  }, []);
   const sendBroadcast = () => {
     if (!broadcastText.trim()) { Alert.alert("Ошибка", "Введите текст"); return; }
     Alert.alert("Рассылка отправлена", `Сообщение: ${broadcastText}\nПолучателей: ${users.length}`);
@@ -812,7 +816,7 @@ export default function App() {
     );
   };
 
-  // ---- АДМИН-ПАНЕЛЬ ----
+  // ---- АДМИН-ПАНЕЛЬ (с горизонтальной прокруткой) ----
   const AdminPanel = () => {
     const { theme } = useTheme();
     const isDark = theme === "dark";
@@ -833,13 +837,13 @@ export default function App() {
       setStatusModalVisible(false);
     };
 
-    const handleTrackingUpdate = (orderId, text) => {
+    const handleTrackingUpdate = useCallback((orderId, text) => {
       updateTracking(orderId, text);
-    };
+    }, []);
 
     return (
       <Modal visible={showAdmin} animationType="slide" transparent={false}>
-        <View style={[styles.page, isDark && styles.pageDark, {paddingTop: 40}]}>
+        <View style={[styles.page, isDark && styles.pageDark, { paddingTop: 40 }]}>
           <TouchableOpacity onPress={() => setShowAdmin(false)} style={styles.closeAdmin}>
             <Text style={[styles.closeAdminText, isDark && styles.textDark]}>✕ Закрыть админку</Text>
           </TouchableOpacity>
@@ -854,47 +858,41 @@ export default function App() {
               <Text key={p.id} style={[styles.adminItem, isDark && styles.textDark]}>{p.brand} {p.name} — продано {salesMap[p.id] || 0} шт.</Text>
             )) : <Text style={[styles.empty, isDark && styles.textDark]}>Нет данных</Text>}
 
-            <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Управление заказами (таблица)</Text>
-
-            <View style={[styles.tableContainer, isDark && styles.tableContainerDark]}>
-              <View style={styles.tableHeader}>
-                <Text style={[styles.tableHeaderText, isDark && styles.textDark, {flex: 0.6}]}>№</Text>
-                <Text style={[styles.tableHeaderText, isDark && styles.textDark, {flex: 2}]}>ФИО</Text>
-                <Text style={[styles.tableHeaderText, isDark && styles.textDark, {flex: 1}]}>Товары</Text>
-                <Text style={[styles.tableHeaderText, isDark && styles.textDark, {flex: 0.9}]}>Доставка</Text>
-                <Text style={[styles.tableHeaderText, isDark && styles.textDark, {flex: 1}]}>Итого</Text>
-                <Text style={[styles.tableHeaderText, isDark && styles.textDark, {flex: 1}]}>Трек</Text>
-                <Text style={[styles.tableHeaderText, isDark && styles.textDark, {flex: 1.2}]}>Статус</Text>
-              </View>
-              {adminOrders.map(order => {
-                const itemsSummary = order.items.map(i => i.name).join(', ');
-                return (
+            <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Управление заказами</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={true} style={{ marginVertical: 5 }}>
+              <View style={[styles.tableContainer, isDark && styles.tableContainerDark]}>
+                <View style={styles.tableHeader}>
+                  <Text style={[styles.tableHeaderText, isDark && styles.textDark, { width: 60 }]}>№</Text>
+                  <Text style={[styles.tableHeaderText, isDark && styles.textDark, { width: 150 }]}>ФИО</Text>
+                  <Text style={[styles.tableHeaderText, isDark && styles.textDark, { width: 80 }]}>Доставка</Text>
+                  <Text style={[styles.tableHeaderText, isDark && styles.textDark, { width: 90 }]}>Итого</Text>
+                  <Text style={[styles.tableHeaderText, isDark && styles.textDark, { width: 100 }]}>Трек</Text>
+                  <Text style={[styles.tableHeaderText, isDark && styles.textDark, { width: 140 }]}>Статус</Text>
+                </View>
+                {adminOrders.map(order => (
                   <View key={order.id} style={[styles.tableRow, isDark && styles.tableRowDark]}>
-                    <Text style={[styles.tableCell, isDark && styles.textDark, {flex: 0.6}]}>{order.id}</Text>
-                    <Text style={[styles.tableCell, isDark && styles.textDark, {flex: 2}]} numberOfLines={1} ellipsizeMode="tail">{order.fullName}</Text>
-                    <Text style={[styles.tableCell, isDark && styles.textDark, {flex: 1}]} numberOfLines={1} ellipsizeMode="tail">{itemsSummary}</Text>
-                    <Text style={[styles.tableCell, isDark && styles.textDark, {flex: 0.9}]}>{money(order.deliveryPrice || 0)}</Text>
-                    <Text style={[styles.tableCell, isDark && styles.textDark, {flex: 1}]}>{money(order.finalTotal)}</Text>
-                    <View style={[styles.trackingCell, {flex: 1}]}>
+                    <Text style={[styles.tableCell, isDark && styles.textDark, { width: 60 }]}>{order.id}</Text>
+                    <Text style={[styles.tableCell, isDark && styles.textDark, { width: 150 }]} numberOfLines={1} ellipsizeMode="tail">{order.fullName}</Text>
+                    <Text style={[styles.tableCell, isDark && styles.textDark, { width: 80 }]}>{money(order.deliveryPrice || 0)}</Text>
+                    <Text style={[styles.tableCell, isDark && styles.textDark, { width: 90 }]}>{money(order.finalTotal)}</Text>
+                    <View style={{ width: 100, paddingHorizontal: 2 }}>
                       <TrackingInput
                         orderId={order.id}
                         initialValue={order.trackingNumber || ""}
                         onUpdate={handleTrackingUpdate}
                       />
                     </View>
-                    <TouchableOpacity
-                      style={[styles.statusCell, {flex: 1.2}]}
-                      onPress={() => openStatusModal(order.id, order.status)}
-                    >
-                      <Text style={[styles.statusText, isDark && styles.textDark, {color: order.status === "Доставлен" ? "green" : "#333"}]}>
+                    <TouchableOpacity style={{ width: 140, alignItems: 'center' }} onPress={() => openStatusModal(order.id, order.status)}>
+                      <Text style={[styles.statusText, isDark && styles.textDark, { color: order.status === "Доставлен" ? "green" : "#333" }]}>
                         {order.status}
                       </Text>
                     </TouchableOpacity>
                   </View>
-                );
-              })}
-            </View>
+                ))}
+              </View>
+            </ScrollView>
 
+            {/* Модалка статуса */}
             <Modal visible={statusModalVisible} transparent animationType="fade">
               <View style={styles.modalOverlay}>
                 <View style={[styles.modalView, isDark && styles.modalViewDark]}>
@@ -905,9 +903,7 @@ export default function App() {
                       style={[styles.statusOption, selectedStatus === s && styles.statusOptionActive]}
                       onPress={() => setSelectedStatus(s)}
                     >
-                      <Text style={[styles.statusOptionText, selectedStatus === s && styles.statusOptionTextActive]}>
-                        {s}
-                      </Text>
+                      <Text style={[styles.statusOptionText, selectedStatus === s && styles.statusOptionTextActive]}>{s}</Text>
                     </TouchableOpacity>
                   ))}
                   <View style={styles.modalButtons}>
@@ -922,6 +918,7 @@ export default function App() {
               </View>
             </Modal>
 
+            {/* Остальные разделы админки */}
             <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Управление промокодами</Text>
             <TouchableOpacity style={styles.addBtn} onPress={addPromoCode}>
               <Text style={styles.buttonText}>+ Добавить промокод</Text>
@@ -1080,7 +1077,7 @@ export default function App() {
     );
   };
 
-  // ---- Меню (закреплённое) ----
+  // ---- Меню (фиксированное) ----
   const Menu = () => {
     const { theme } = useTheme();
     const isDark = theme === "dark";
@@ -1113,7 +1110,7 @@ export default function App() {
   };
 
   // ==============================
-  // РЕНДЕР (с фиксацией высоты)
+  // РЕНДЕР
   // ==============================
   let content;
   if (page === "home") content = <Home />;
@@ -1125,7 +1122,7 @@ export default function App() {
 
   return (
     <ThemeContext.Provider value={{ theme, toggleTheme }}>
-      <View style={{ flex: 1, height: '100%', width: '100%', backgroundColor: theme === "dark" ? "#1a1a1a" : "#F7F7F5" }}>
+      <View style={{ flex: 1, height: '100vh', width: '100%', backgroundColor: theme === "dark" ? "#1a1a1a" : "#F7F7F5" }}>
         {content}
         <Menu />
         <OrderModal />
@@ -1284,7 +1281,7 @@ const styles = StyleSheet.create({
   saveBtn: { backgroundColor: "#111", padding: 8, borderRadius: 16, alignItems: "center" },
   editActions: { flexDirection: "row", marginTop: 4 },
   editAction: { fontSize: 18, marginRight: 12 },
-  trackingInput: { borderWidth: 1, borderColor: "#ddd", borderRadius: 6, padding: 4, fontSize: 12, textAlign: 'center' },
+  trackingInput: { borderWidth: 1, borderColor: "#ddd", borderRadius: 6, padding: 4, fontSize: 12, textAlign: 'center', minWidth: 80 },
   broadcastInput: { borderWidth: 1, borderColor: "#ddd", borderRadius: 14, padding: 10, marginBottom: 12, minHeight: 60, fontSize: 14 },
   broadcastBtn: { backgroundColor: "#111", padding: 12, borderRadius: 20, alignItems: "center", marginBottom: 20 },
 
@@ -1327,7 +1324,7 @@ const styles = StyleSheet.create({
   menuBadgeText: { color: '#fff', fontSize: 11, fontWeight: 'bold' },
 
   menu: {
-    position: 'absolute',
+    position: 'fixed',
     bottom: 0,
     left: 0,
     right: 0,
@@ -1351,15 +1348,13 @@ const styles = StyleSheet.create({
   loader: { textAlign: "center", padding: 8, color: "#777" },
   empty: { textAlign: "center", padding: 20, color: "#999" },
 
-  tableContainer: { backgroundColor: "#fff", borderRadius: 16, overflow: 'hidden', marginVertical: 10 },
+  tableContainer: { backgroundColor: "#fff", borderRadius: 16, overflow: 'hidden', marginVertical: 5 },
   tableContainerDark: { backgroundColor: "#2a2a2a" },
   tableHeader: { flexDirection: 'row', backgroundColor: "#111", paddingVertical: 8, paddingHorizontal: 6 },
   tableHeaderText: { fontSize: 11, fontWeight: 'bold', color: "#fff", textAlign: 'center' },
   tableRow: { flexDirection: 'row', paddingVertical: 8, paddingHorizontal: 6, borderBottomWidth: 1, borderBottomColor: "#eee", alignItems: 'center' },
   tableRowDark: { borderBottomColor: "#555" },
   tableCell: { fontSize: 11, textAlign: 'center', paddingHorizontal: 2 },
-  trackingCell: { paddingHorizontal: 2 },
-  statusCell: { alignItems: 'center' },
   statusText: { fontSize: 11, fontWeight: '600', color: "#333", backgroundColor: "#eee", paddingVertical: 3, paddingHorizontal: 6, borderRadius: 10 },
   statusOption: { paddingVertical: 8, paddingHorizontal: 15, borderBottomWidth: 1, borderBottomColor: "#eee" },
   statusOptionActive: { backgroundColor: "#111" },
