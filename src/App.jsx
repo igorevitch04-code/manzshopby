@@ -5,6 +5,8 @@ import {
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
+const tg = typeof window !== "undefined" && window.Telegram?.WebApp;
+
 const ThemeContext = createContext();
 const useTheme = () => useContext(ThemeContext);
 
@@ -356,15 +358,8 @@ export default function App() {
   closeOrderModal();
 
   // Красивое сообщение после заказа
-  Alert.alert(
-    "🎉 Заказ успешно оформлен!",
-    `Номер заказа: #${nextNumber}\n\nСпасибо за покупку! 🎉\nНаш менеджер скоро обработает заказ и свяжется с вами.\n\nЕсли есть вопросы — пишите менеджеру по ссылке в описании бота.`,
-    [
-      { text: "Отлично" },
-      { text: "Посмотреть заказы", onPress: () => setPage("profile") }
-    ]
-  );
-};
+    // В конце placeOrderWithDetails замени Alert.alert на:
+  tg?.showAlert(`🎉 Заказ #${nextNumber} успешно оформлен!\n\nМенеджер скоро свяжется с вами.`);
 
   const addRating = (productId, rating, comment) => {
     setProducts(prev => prev.map(p => {
@@ -493,14 +488,14 @@ export default function App() {
   // КОМПОНЕНТЫ СТРАНИЦ
   // ==============================
 
-    const SizeModal = () => {
+      const SizeModal = () => {
     const { theme } = useTheme();
     const isDark = theme === "dark";
     const sizes = sizeModalProduct?.sizes || [];
 
     const handleAddWithSize = () => {
       if (!tempSelectedSize) {
-        Alert.alert("Ошибка", "Выберите размер");
+        tg?.showAlert("Выберите размер");
         return;
       }
 
@@ -510,8 +505,7 @@ export default function App() {
       setSizeModalProduct(null);
       setTempSelectedSize(null);
 
-      // Более быстрое уведомление
-      Alert.alert("✅ Готово", `${sizeModalProduct?.brand} ${sizeModalProduct?.name} (размер ${tempSelectedSize}) добавлен в корзину`);
+      tg?.showAlert(`✅ ${sizeModalProduct?.brand} ${sizeModalProduct?.name}\nРазмер ${tempSelectedSize} добавлен в корзину`);
     };
 
     return (
@@ -1108,18 +1102,18 @@ export default function App() {
     const label = delivery === "europost" ? "ЕвроПочта" : "Курьер";
     const orderTotal = finalTotal + dp;
 
-    const handlePlace = () => {
-      if (!fullName.trim()) return Alert.alert("Ошибка", "Укажите ФИО");
-      if (!address.trim()) return Alert.alert("Ошибка", "Укажите адрес доставки");
-      if (!phone.trim()) return Alert.alert("Ошибка", "Укажите номер телефона");
+        const handlePlace = () => {
+      if (!fullName.trim()) return tg?.showAlert("Укажите ФИО");
+      if (!address.trim()) return tg?.showAlert("Укажите адрес доставки");
+      if (!phone.trim()) return tg?.showAlert("Укажите номер телефона");
 
       const phoneDigits = phone.replace(/\D/g, '');
-      if (phoneDigits.length < 7) return Alert.alert("Ошибка", "Номер телефона слишком короткий");
+      if (phoneDigits.length < 7) return tg?.showAlert("Номер телефона слишком короткий");
 
       if (useFreeDelivery && !isFreeDeliveryEligible(phone, fullName)) {
-        return Alert.alert("Ошибка", "Бесплатная доставка уже использована");
+        return tg?.showAlert("Бесплатная доставка уже использована");
       }
-      if (cart.length === 0) return Alert.alert("Ошибка", "Корзина пуста");
+      if (cart.length === 0) return tg?.showAlert("Корзина пуста");
 
       placeOrderWithDetails({ fullName, address, phone, delivery, freeDelivery: useFreeDelivery });
     };
