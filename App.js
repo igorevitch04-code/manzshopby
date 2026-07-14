@@ -5,6 +5,7 @@ import {
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
+const tg = typeof window !== "undefined" && window.Telegram?.WebApp;
 const ThemeContext = createContext();
 const useTheme = () => useContext(ThemeContext);
 
@@ -443,7 +444,7 @@ export default function App() {
     const isFav = favorites.some(x => x.id === item.id);
     const { theme } = useTheme();
     const isDark = theme === "dark";
-            const handleAddToCart = () => {
+    const handleAddToCart = () => {
       if (!item.sizes || item.sizes.length === 0) {
         addCart(item);
         tg?.showAlert("✅ Товар добавлен в корзину");
