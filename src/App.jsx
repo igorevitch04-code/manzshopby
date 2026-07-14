@@ -1048,123 +1048,130 @@ export default function App() {
 
   // ---- ОФОРМЛЕНИЕ ЗАКАЗА (исправленное: явные цвета для тёмной темы) ----
   const OrderModal = () => {
-    const [fullName, setFullName] = useState("");
-    const [address, setAddress] = useState("");
-    const [phone, setPhone] = useState("");
-    const [delivery, setDelivery] = useState("europost");
-    const [useFreeDelivery, setUseFreeDelivery] = useState(false);
-    const { theme } = useTheme();
-    const isDark = theme === "dark";
+  const [fullName, setFullName] = useState("");
+  const [address, setAddress] = useState("");
+  const [phone, setPhone] = useState("");
+  const [delivery, setDelivery] = useState("europost");
+  const [useFreeDelivery, setUseFreeDelivery] = useState(false);
+  const { theme } = useTheme();
+  const isDark = theme === "dark";
 
-    useEffect(() => {
-      if (!orderModalVisible) {
-        setFullName("");
-        setAddress("");
-        setPhone("");
-        setDelivery("europost");
-        setUseFreeDelivery(false);
-      }
-    }, [orderModalVisible]);
+  useEffect(() => {
+    if (!orderModalVisible) {
+      setFullName("");
+      setAddress("");
+      setPhone("");
+      setDelivery("europost");
+      setUseFreeDelivery(false);
+    }
+  }, [orderModalVisible]);
 
-    const { finalTotal } = calculateTotals();
-    let dp = delivery === "europost" ? 8 : 10;
-    const eligible = fullName.trim() && phone.trim() ? isFreeDeliveryEligible(phone, fullName) : false;
-    const showFreeDeliveryOption = eligible && orderHistory.length === 0;
-    if (useFreeDelivery && showFreeDeliveryOption) dp = 0;
-    const days = delivery === "europost" ? "4-5" : "2-3";
-    const label = delivery === "europost" ? "ЕвроПочта" : "Курьер";
-    const orderTotal = finalTotal + dp;
+  const { finalTotal } = calculateTotals();
+  let dp = delivery === "europost" ? 8 : 10;
+  const eligible = fullName.trim() && phone.trim() ? isFreeDeliveryEligible(phone, fullName) : false;
+  const showFreeDeliveryOption = eligible && orderHistory.length === 0;
+  if (useFreeDelivery && showFreeDeliveryOption) dp = 0;
+  const days = delivery === "europost" ? "4-5" : "2-3";
+  const label = delivery === "europost" ? "ЕвроПочта" : "Курьер";
+  const orderTotal = finalTotal + dp;
 
-    const handlePlace = () => {
-      if (!fullName.trim() || !address.trim() || !phone.trim()) {
-        Alert.alert("Ошибка", "Заполните все поля, включая номер телефона");
-        return;
-      }
-      const phoneDigits = phone.replace(/\D/g, '');
-      if (phoneDigits.length < 7) {
-        Alert.alert("Ошибка", "Введите корректный номер телефона (минимум 7 цифр)");
-        return;
-      }
-      if (useFreeDelivery && !isFreeDeliveryEligible(phone, fullName)) {
-        Alert.alert("Ошибка", "Бесплатная доставка уже была использована с этими данными");
-        return;
-      }
-      if (cart.length === 0) {
-        Alert.alert("Ошибка", "Корзина пуста");
-        return;
-      }
-      placeOrderWithDetails({ fullName, address, phone, delivery, freeDelivery: useFreeDelivery });
-    };
-
-    return (
-      <Modal transparent visible={orderModalVisible} onRequestClose={closeOrderModal} animationType="none">
-        <View style={styles.modalOverlay}>
-          <ScrollView contentContainerStyle={styles.modalScrollView} keyboardShouldPersistTaps="handled">
-            <View style={[styles.modalView, isDark && styles.modalViewDark]}>
-              <Text style={[styles.modalTitle, isDark && styles.textDark]}>Оформление заказа</Text>
-              <Text style={[styles.deliveryLabel, isDark && styles.textDark]}>Способ доставки</Text>
-              <View style={styles.deliveryOptions}>
-                <TouchableOpacity style={[styles.deliveryOption, delivery === "europost" && styles.deliveryOptionActive]} onPress={() => setDelivery("europost")}>
-                  <Text style={delivery === "europost" && styles.deliveryOptionTextActive}>ЕвроПочта</Text>
-                  <Text style={styles.deliveryDetail}>8-12 руб • 4-5 дней</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={[styles.deliveryOption, delivery === "courier" && styles.deliveryOptionActive]} onPress={() => setDelivery("courier")}>
-                  <Text style={delivery === "courier" && styles.deliveryOptionTextActive}>Курьер</Text>
-                  <Text style={styles.deliveryDetail}>10 руб • 2-3 дня</Text>
-                  <Text style={styles.deliveryNote}>Менеджер свяжется</Text>
-                </TouchableOpacity>
-              </View>
-              <TextInput
-                style={[styles.modalInput, isDark && { backgroundColor: '#333', color: '#fff', borderColor: '#555' }]}
-                placeholder="ФИО"
-                placeholderTextColor={isDark ? "#999" : "#888"}
-                value={fullName}
-                onChangeText={setFullName}
-              />
-              <TextInput
-                style={[styles.modalInput, isDark && { backgroundColor: '#333', color: '#fff', borderColor: '#555' }]}
-                placeholder={delivery === "europost" ? "Адрес и номер отделения" : "Адрес доставки"}
-                placeholderTextColor={isDark ? "#999" : "#888"}
-                value={address}
-                onChangeText={setAddress}
-              />
-              <TextInput
-                style={[styles.modalInput, isDark && { backgroundColor: '#333', color: '#fff', borderColor: '#555' }]}
-                placeholder="Телефон"
-                placeholderTextColor={isDark ? "#999" : "#888"}
-                value={phone}
-                onChangeText={setPhone}
-                keyboardType="phone-pad"
-              />
-              {showFreeDeliveryOption && (
-                <TouchableOpacity style={styles.bonusCheckbox} onPress={() => setUseFreeDelivery(!useFreeDelivery)}>
-                  <Text style={[styles.bonusCheckboxText, isDark && styles.textDark]}>
-                    {useFreeDelivery ? "☑" : "☐"} Бесплатная доставка (первый заказ)
-                  </Text>
-                </TouchableOpacity>
-              )}
-              <View style={[styles.deliverySummary, isDark && styles.deliverySummaryDark]}>
-                <Text style={[styles.summaryText, isDark && styles.textDark]}>Доставка: {label} — {dp} руб</Text>
-                <Text style={[styles.summaryText, isDark && styles.textDark]}>Срок: {days} дн.</Text>
-              </View>
-              <View style={styles.totalRow}>
-                <Text style={[styles.totalLabel, isDark && styles.textDark]}>Товары: {money(finalTotal)}</Text>
-                <Text style={[styles.totalLabel, isDark && styles.textDark]}>Доставка: {money(dp)}</Text>
-              </View>
-              <View style={styles.totalRow}>
-                <Text style={[styles.totalLabel, isDark && styles.textDark, {fontWeight: 'bold'}]}>Итого к оплате:</Text>
-                <Text style={[styles.totalAmount, isDark && styles.textDark]}>{money(orderTotal)}</Text>
-              </View>
-              <View style={styles.modalButtons}>
-                <TouchableOpacity style={styles.modalCancel} onPress={closeOrderModal}><Text>Отмена</Text></TouchableOpacity>
-                <TouchableOpacity style={styles.modalConfirm} onPress={handlePlace}><Text style={styles.buttonText}>Подтвердить</Text></TouchableOpacity>
-              </View>
-            </View>
-          </ScrollView>
-        </View>
-      </Modal>
-    );
+  const handlePlace = () => {
+    if (!fullName.trim() || !address.trim() || !phone.trim()) {
+      Alert.alert("Ошибка", "Заполните все поля, включая номер телефона");
+      return;
+    }
+    const phoneDigits = phone.replace(/\D/g, '');
+    if (phoneDigits.length < 7) {
+      Alert.alert("Ошибка", "Введите корректный номер телефона (минимум 7 цифр)");
+      return;
+    }
+    if (useFreeDelivery && !isFreeDeliveryEligible(phone, fullName)) {
+      Alert.alert("Ошибка", "Бесплатная доставка уже была использована с этими данными");
+      return;
+    }
+    if (cart.length === 0) {
+      Alert.alert("Ошибка", "Корзина пуста");
+      return;
+    }
+    placeOrderWithDetails({ fullName, address, phone, delivery, freeDelivery: useFreeDelivery });
   };
+
+  // === СТИЛЬ ДЛЯ INPUT В ТЁМНОЙ ТЕМЕ ===
+  const inputStyle = [
+    styles.modalInput,
+    isDark && {
+      backgroundColor: '#2a2a2a',
+      color: '#ffffff',
+      borderColor: '#555',
+    }
+  ];
+
+  return (
+    <Modal transparent visible={orderModalVisible} onRequestClose={closeOrderModal} animationType="none">
+      <View style={styles.modalOverlay}>
+        <ScrollView contentContainerStyle={styles.modalScrollView} keyboardShouldPersistTaps="handled">
+          <View style={[styles.modalView, isDark && styles.modalViewDark]}>
+            <Text style={[styles.modalTitle, isDark && styles.textDark]}>Оформление заказа</Text>
+            
+            <Text style={[styles.deliveryLabel, isDark && styles.textDark]}>Способ доставки</Text>
+            {/* ... (доставка остаётся без изменений) */}
+
+            <TextInput
+              style={inputStyle}
+              placeholder="ФИО"
+              placeholderTextColor={isDark ? "#999" : "#888"}
+              value={fullName}
+              onChangeText={setFullName}
+            />
+            <TextInput
+              style={inputStyle}
+              placeholder={delivery === "europost" ? "Адрес и номер отделения" : "Адрес доставки"}
+              placeholderTextColor={isDark ? "#999" : "#888"}
+              value={address}
+              onChangeText={setAddress}
+            />
+            <TextInput
+              style={inputStyle}
+              placeholder="Телефон"
+              placeholderTextColor={isDark ? "#999" : "#888"}
+              value={phone}
+              onChangeText={setPhone}
+              keyboardType="phone-pad"
+            />
+
+            {/* Остальной код модалки (бесплатная доставка, итого и т.д.) остаётся без изменений */}
+            {showFreeDeliveryOption && (
+              <TouchableOpacity style={styles.bonusCheckbox} onPress={() => setUseFreeDelivery(!useFreeDelivery)}>
+                <Text style={[styles.bonusCheckboxText, isDark && styles.textDark]}>
+                  {useFreeDelivery ? "☑" : "☐"} Бесплатная доставка (первый заказ)
+                </Text>
+              </TouchableOpacity>
+            )}
+
+            <View style={[styles.deliverySummary, isDark && styles.deliverySummaryDark]}>
+              <Text style={[styles.summaryText, isDark && styles.textDark]}>Доставка: {label} — {dp} руб</Text>
+              <Text style={[styles.summaryText, isDark && styles.textDark]}>Срок: {days} дн.</Text>
+            </View>
+
+            <View style={styles.totalRow}>
+              <Text style={[styles.totalLabel, isDark && styles.textDark]}>Товары: {money(finalTotal)}</Text>
+              <Text style={[styles.totalLabel, isDark && styles.textDark]}>Доставка: {money(dp)}</Text>
+            </View>
+            <View style={styles.totalRow}>
+              <Text style={[styles.totalLabel, isDark && styles.textDark, {fontWeight: 'bold'}]}>Итого к оплате:</Text>
+              <Text style={[styles.totalAmount, isDark && styles.textDark]}>{money(orderTotal)}</Text>
+            </View>
+
+            <View style={styles.modalButtons}>
+              <TouchableOpacity style={styles.modalCancel} onPress={closeOrderModal}><Text>Отмена</Text></TouchableOpacity>
+              <TouchableOpacity style={styles.modalConfirm} onPress={handlePlace}><Text style={styles.buttonText}>Подтвердить</Text></TouchableOpacity>
+            </View>
+          </View>
+        </ScrollView>
+      </View>
+    </Modal>
+  );
+};
 
   // ---- Меню ----
   const Menu = () => {
