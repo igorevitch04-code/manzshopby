@@ -42,7 +42,7 @@ const LEVELS = [
 const ORDER_STATUSES = ["Ожидает подтверждения", "Принят", "На сборке", "Доставляется", "Готов к выдаче"];
 
 // ==============================
-// Вспомогательные функции для CloudStorage
+// CloudStorage
 // ==============================
 const getCloudStorage = () => {
   if (typeof window !== "undefined" && window.Telegram?.WebApp?.CloudStorage) {
@@ -61,9 +61,7 @@ const saveToCloud = async (key, data) => {
           else resolve();
         });
       });
-    } catch (e) {
-      console.warn("CloudStorage save error:", e);
-    }
+    } catch (e) { console.warn("CloudStorage save error:", e); }
   }
 };
 
@@ -78,14 +76,14 @@ const loadFromCloud = async (key) => {
         });
       });
       return value ? JSON.parse(value) : null;
-    } catch (e) {
-      console.warn("CloudStorage load error:", e);
-      return null;
-    }
+    } catch (e) { console.warn("CloudStorage load error:", e); return null; }
   }
   return null;
 };
 
+// ==============================
+// APP
+// ==============================
 export default function App() {
   const user = getTelegramUser();
   const [theme, setTheme] = useState("light");
@@ -137,8 +135,6 @@ export default function App() {
     promoCodes: "@krost_promoCodes",
     usedFreeDelivery: "@krost_usedFreeDelivery"
   };
-
-  // Облачные ключи (префикс, чтобы не конфликтовать с другими приложениями)
   const CLOUD_KEYS = {
     cart: "krost_cart",
     favorites: "krost_favorites",
@@ -149,13 +145,10 @@ export default function App() {
     usedFreeDelivery: "krost_usedFreeDelivery"
   };
 
-  // ==============================
-  // Загрузка из AsyncStorage и CloudStorage
-  // ==============================
+  // Загрузка
   useEffect(() => {
     const loadAll = async () => {
       try {
-        // Сначала загружаем из AsyncStorage (локально)
         const [c, f, o, b, h, p, t, a, ln, u, pc, ufd] = await AsyncStorage.multiGet([
           STORAGE_KEYS.cart, STORAGE_KEYS.favorites, STORAGE_KEYS.orders, STORAGE_KEYS.bonus,
           STORAGE_KEYS.orderHistory, STORAGE_KEYS.products, STORAGE_KEYS.theme, STORAGE_KEYS.adminOrders,
@@ -174,7 +167,6 @@ export default function App() {
         let localPromoCodes = pc[1] ? JSON.parse(pc[1]) : [];
         let localUsedFreeDelivery = ufd[1] ? JSON.parse(ufd[1]) : [];
 
-        // Загружаем из CloudStorage (если есть) и объединяем / перезаписываем
         const cloudCart = await loadFromCloud(CLOUD_KEYS.cart);
         const cloudFavorites = await loadFromCloud(CLOUD_KEYS.favorites);
         const cloudOrders = await loadFromCloud(CLOUD_KEYS.orders);
@@ -183,7 +175,6 @@ export default function App() {
         const cloudLastOrderNumber = await loadFromCloud(CLOUD_KEYS.lastOrderNumber);
         const cloudUsedFreeDelivery = await loadFromCloud(CLOUD_KEYS.usedFreeDelivery);
 
-        // Если в облаке есть данные – используем их (они актуальнее на других устройствах)
         if (cloudCart !== null) localCart = cloudCart;
         if (cloudFavorites !== null) localFavorites = cloudFavorites;
         if (cloudOrders !== null) localOrders = cloudOrders;
@@ -192,7 +183,6 @@ export default function App() {
         if (cloudLastOrderNumber !== null) localLastOrderNumber = cloudLastOrderNumber;
         if (cloudUsedFreeDelivery !== null) localUsedFreeDelivery = cloudUsedFreeDelivery;
 
-        // Устанавливаем состояния
         setCart(localCart);
         setFavorites(localFavorites);
         setOrders(localOrders);
@@ -205,62 +195,31 @@ export default function App() {
         setUsers(localUsers);
         setPromoCodes(localPromoCodes);
         setUsedFreeDelivery(localUsedFreeDelivery);
-      } catch (e) {
-        console.warn("Ошибка загрузки данных", e);
-      }
+      } catch (e) { console.warn("Ошибка загрузки", e); }
     };
     loadAll();
   }, []);
 
-  // ==============================
-  // Сохранение в AsyncStorage и CloudStorage при каждом изменении
-  // ==============================
-  useEffect(() => {
-    AsyncStorage.setItem(STORAGE_KEYS.cart, JSON.stringify(cart));
-    saveToCloud(CLOUD_KEYS.cart, cart);
-  }, [cart]);
-  useEffect(() => {
-    AsyncStorage.setItem(STORAGE_KEYS.favorites, JSON.stringify(favorites));
-    saveToCloud(CLOUD_KEYS.favorites, favorites);
-  }, [favorites]);
-  useEffect(() => {
-    AsyncStorage.setItem(STORAGE_KEYS.orders, JSON.stringify(orders));
-    saveToCloud(CLOUD_KEYS.orders, orders);
-  }, [orders]);
-  useEffect(() => {
-    AsyncStorage.setItem(STORAGE_KEYS.bonus, JSON.stringify(bonusBalance));
-    saveToCloud(CLOUD_KEYS.bonus, bonusBalance);
-  }, [bonusBalance]);
-  useEffect(() => {
-    AsyncStorage.setItem(STORAGE_KEYS.orderHistory, JSON.stringify(orderHistory));
-    saveToCloud(CLOUD_KEYS.orderHistory, orderHistory);
-  }, [orderHistory]);
-  useEffect(() => {
-    AsyncStorage.setItem(STORAGE_KEYS.lastOrderNumber, JSON.stringify(lastOrderNumber));
-    saveToCloud(CLOUD_KEYS.lastOrderNumber, lastOrderNumber);
-  }, [lastOrderNumber]);
-  useEffect(() => {
-    AsyncStorage.setItem(STORAGE_KEYS.usedFreeDelivery, JSON.stringify(usedFreeDelivery));
-    saveToCloud(CLOUD_KEYS.usedFreeDelivery, usedFreeDelivery);
-  }, [usedFreeDelivery]);
+  useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.cart, JSON.stringify(cart)); saveToCloud(CLOUD_KEYS.cart, cart); }, [cart]);
+  useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.favorites, JSON.stringify(favorites)); saveToCloud(CLOUD_KEYS.favorites, favorites); }, [favorites]);
+  useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.orders, JSON.stringify(orders)); saveToCloud(CLOUD_KEYS.orders, orders); }, [orders]);
+  useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.bonus, JSON.stringify(bonusBalance)); saveToCloud(CLOUD_KEYS.bonus, bonusBalance); }, [bonusBalance]);
+  useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.orderHistory, JSON.stringify(orderHistory)); saveToCloud(CLOUD_KEYS.orderHistory, orderHistory); }, [orderHistory]);
+  useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.lastOrderNumber, JSON.stringify(lastOrderNumber)); saveToCloud(CLOUD_KEYS.lastOrderNumber, lastOrderNumber); }, [lastOrderNumber]);
+  useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.usedFreeDelivery, JSON.stringify(usedFreeDelivery)); saveToCloud(CLOUD_KEYS.usedFreeDelivery, usedFreeDelivery); }, [usedFreeDelivery]);
 
-  // Сохранение остальных данных (которые не синхронизируются между устройствами, но нужны локально)
   useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.products, JSON.stringify(products)); }, [products]);
   useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.theme, JSON.stringify(theme)); }, [theme]);
   useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.adminOrders, JSON.stringify(adminOrders)); }, [adminOrders]);
   useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.users, JSON.stringify(users)); }, [users]);
   useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.promoCodes, JSON.stringify(promoCodes)); }, [promoCodes]);
 
-  // Обновление пользователей
   useEffect(() => {
     if (user.id !== "guest" && !users.some(u => u.id === user.id)) {
       setUsers(prev => [...prev, user]);
     }
   }, [user]);
 
-  // ==============================
-  // Уровни и прочие вычисления
-  // ==============================
   const currentLevel = LEVELS.find(l => orders >= l.min && orders <= l.max) || LEVELS[0];
   const nextLevel = LEVELS[LEVELS.indexOf(currentLevel) + 1];
   let progress = 100;
@@ -449,12 +408,7 @@ export default function App() {
       Alert.alert("Добавлено", `Товар добавлен в корзину (размер ${tempSelectedSize})`);
     };
     return (
-      <Modal
-        transparent
-        visible={sizeModalVisible}
-        animationType="fade"
-        onRequestClose={() => setSizeModalVisible(false)}
-      >
+      <Modal transparent visible={sizeModalVisible} animationType="fade" onRequestClose={() => setSizeModalVisible(false)}>
         <View style={styles.modalOverlay}>
           <View style={[styles.modalView, isDark && styles.modalViewDark]}>
             <Text style={[styles.modalTitle, isDark && styles.textDark]}>Выберите размер</Text>
@@ -834,115 +788,188 @@ export default function App() {
     );
   };
 
+  // ---- ИСПРАВЛЕННАЯ АДМИН-ПАНЕЛЬ (с таблицей) ----
   const AdminPanel = () => {
-    const { theme } = useTheme(); const isDark = theme === "dark";
+    const { theme } = useTheme();
+    const isDark = theme === "dark";
     if (!showAdmin || !isAdmin) return null;
+
+    const [statusModalVisible, setStatusModalVisible] = useState(false);
+    const [selectedOrderId, setSelectedOrderId] = useState(null);
+    const [selectedStatus, setSelectedStatus] = useState("");
+
+    const openStatusModal = (orderId, currentStatus) => {
+      setSelectedOrderId(orderId);
+      setSelectedStatus(currentStatus);
+      setStatusModalVisible(true);
+    };
+
+    const changeStatusFromModal = () => {
+      changeStatus(selectedOrderId, selectedStatus);
+      setStatusModalVisible(false);
+    };
+
+    // Компонент для трек-номера (локальное состояние)
+    const TrackingInput = ({ orderId, initialValue }) => {
+      const [tracking, setTracking] = useState(initialValue || "");
+      const updateTrackingLocal = (text) => {
+        setTracking(text);
+        updateTracking(orderId, text);
+      };
+      return (
+        <TextInput
+          style={[styles.trackingInput, isDark && styles.inputDark]}
+          placeholder="Трек"
+          placeholderTextColor={isDark ? "#999" : "#888"}
+          value={tracking}
+          onChangeText={updateTrackingLocal}
+        />
+      );
+    };
+
     return (
       <Modal visible={showAdmin} animationType="slide" transparent={false}>
         <View style={[styles.page, isDark && styles.pageDark, {paddingTop: 40}]}>
           <TouchableOpacity onPress={() => setShowAdmin(false)} style={styles.closeAdmin}>
             <Text style={[styles.closeAdminText, isDark && styles.textDark]}>✕ Закрыть админку</Text>
           </TouchableOpacity>
-          <Text style={[styles.pageTitle, isDark && styles.textDark]}>Админ-панель</Text>
-          <Text style={[styles.adminStat, isDark && styles.textDark]}>Выручка: {money(adminRevenue)}</Text>
-          <Text style={[styles.adminStat, isDark && styles.textDark]}>Заказов: {adminOrders.length}</Text>
-          <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Популярные товары</Text>
-          {popular.length > 0 ? popular.map(p => (
-            <Text key={p.id} style={[styles.adminItem, isDark && styles.textDark]}>{p.brand} {p.name} — продано {salesMap[p.id] || 0} шт.</Text>
-          )) : <Text style={[styles.empty, isDark && styles.textDark]}>Нет данных</Text>}
 
-          <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Управление заказами</Text>
-          {adminOrders.map(order => (
-            <View key={order.id} style={[styles.orderCard, isDark && styles.orderCardDark]}>
-              <Text style={[styles.orderId, isDark && styles.textDark]}>#{order.id} — {order.fullName}</Text>
-              <Text style={[styles.orderStatus, isDark && styles.textDark]}>Статус: {order.status}</Text>
-              {order.delivery === "europost" && (
-                <View style={{flexDirection: 'row', alignItems: 'center', marginTop: 5}}>
-                  <TextInput
-                    style={[styles.trackingInput, isDark && styles.inputDark]}
-                    placeholder="Трек-номер"
-                    placeholderTextColor={isDark ? "#999" : "#888"}
-                    value={order.trackingNumber || ""}
-                    onChangeText={text => updateTracking(order.id, text)}
-                  />
-                </View>
-              )}
-              <View style={styles.statusButtons}>
-                {ORDER_STATUSES.map(s => (
-                  <TouchableOpacity key={s} style={[styles.statusBtn, order.status === s && styles.statusBtnActive]} onPress={() => changeStatus(order.id, s)}>
-                    <Text style={[styles.statusBtnText, order.status === s && styles.statusBtnTextActive]}>{s}</Text>
-                  </TouchableOpacity>
-                ))}
+          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 40 }}>
+            <Text style={[styles.pageTitle, isDark && styles.textDark]}>Админ-панель</Text>
+            <Text style={[styles.adminStat, isDark && styles.textDark]}>Выручка: {money(adminRevenue)}</Text>
+            <Text style={[styles.adminStat, isDark && styles.textDark]}>Заказов: {adminOrders.length}</Text>
+
+            <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Популярные товары</Text>
+            {popular.length > 0 ? popular.map(p => (
+              <Text key={p.id} style={[styles.adminItem, isDark && styles.textDark]}>{p.brand} {p.name} — продано {salesMap[p.id] || 0} шт.</Text>
+            )) : <Text style={[styles.empty, isDark && styles.textDark]}>Нет данных</Text>}
+
+            <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Управление заказами (таблица)</Text>
+
+            {/* Таблица заказов */}
+            <View style={[styles.tableContainer, isDark && styles.tableContainerDark]}>
+              <View style={styles.tableHeader}>
+                <Text style={[styles.tableHeaderText, isDark && styles.textDark]}>№</Text>
+                <Text style={[styles.tableHeaderText, isDark && styles.textDark]}>ФИО</Text>
+                <Text style={[styles.tableHeaderText, isDark && styles.textDark]}>Сумма</Text>
+                <Text style={[styles.tableHeaderText, isDark && styles.textDark]}>Трек</Text>
+                <Text style={[styles.tableHeaderText, isDark && styles.textDark]}>Статус</Text>
               </View>
-            </View>
-          ))}
-
-          <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Управление промокодами</Text>
-          <TouchableOpacity style={styles.addBtn} onPress={addPromoCode}>
-            <Text style={styles.buttonText}>+ Добавить промокод</Text>
-          </TouchableOpacity>
-          {promoCodes.map((promo, index) => (
-            <View key={index} style={[styles.productEdit, isDark && styles.productEditDark]}>
-              <Text style={[styles.productName, isDark && styles.textDark]}>
-                {promo.code} — {promo.discount}% {promo.active ? '✅' : '❌'}
-              </Text>
-              <Text style={[styles.brand, isDark && styles.textDark]}>{promo.description}</Text>
-              <View style={styles.editActions}>
-                <TouchableOpacity onPress={() => togglePromoActive(index)}>
-                  <Text style={[styles.editAction, {color: promo.active ? 'green' : 'red'}]}>
-                    {promo.active ? 'Деактивировать' : 'Активировать'}
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => deletePromoCode(index)}>
-                  <Text style={[styles.editAction, {color: 'red'}]}>🗑</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          ))}
-
-          <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Управление товарами</Text>
-          <TouchableOpacity style={styles.addBtn} onPress={addProduct}>
-            <Text style={styles.buttonText}>+ Добавить товар</Text>
-          </TouchableOpacity>
-          {products.map(p => (
-            <View key={p.id} style={[styles.productEdit, isDark && styles.productEditDark]}>
-              {editingProduct === p.id ? (
-                <>
-                  <TextInput style={[styles.editInput, isDark && styles.inputDark]} value={p.brand} onChangeText={t => updateProduct(p.id, "brand", t)} placeholder="Бренд" />
-                  <TextInput style={[styles.editInput, isDark && styles.inputDark]} value={p.name} onChangeText={t => updateProduct(p.id, "name", t)} placeholder="Название" />
-                  <TextInput style={[styles.editInput, isDark && styles.inputDark]} value={String(p.price)} onChangeText={t => updateProduct(p.id, "price", t)} placeholder="Цена" keyboardType="numeric" />
-                  <TextInput style={[styles.editInput, isDark && styles.inputDark]} value={p.image} onChangeText={t => updateProduct(p.id, "image", t)} placeholder="URL картинки" />
-                  <TextInput style={[styles.editInput, isDark && styles.inputDark]} value={p.description || ""} onChangeText={t => updateProduct(p.id, "description", t)} placeholder="Описание" multiline />
-                  <TextInput style={[styles.editInput, isDark && styles.inputDark]} value={p.sizes ? p.sizes.join(', ') : ""} onChangeText={t => updateProduct(p.id, "sizes", t)} placeholder="Размеры (через запятую)" />
-                  <TouchableOpacity style={styles.saveBtn} onPress={() => setEditingProduct(null)}>
-                    <Text style={styles.buttonText}>Сохранить</Text>
-                  </TouchableOpacity>
-                </>
-              ) : (
-                <>
-                  <Text style={[styles.productName, isDark && styles.textDark]}>{p.brand} {p.name}</Text>
-                  <Text style={[styles.price, isDark && styles.textDark]}>{money(p.price)}</Text>
-                  <View style={styles.editActions}>
-                    <TouchableOpacity onPress={() => setEditingProduct(p.id)}><Text style={styles.editAction}>✎</Text></TouchableOpacity>
-                    <TouchableOpacity onPress={() => deleteProduct(p.id)}><Text style={styles.editAction}>🗑</Text></TouchableOpacity>
+              {adminOrders.map(order => (
+                <View key={order.id} style={[styles.tableRow, isDark && styles.tableRowDark]}>
+                  <Text style={[styles.tableCell, isDark && styles.textDark]}>{order.id}</Text>
+                  <Text style={[styles.tableCell, isDark && styles.textDark]}>{order.fullName}</Text>
+                  <Text style={[styles.tableCell, isDark && styles.textDark]}>{money(order.finalTotal)}</Text>
+                  <View style={styles.trackingCell}>
+                    <TrackingInput orderId={order.id} initialValue={order.trackingNumber || ""} />
                   </View>
-                </>
-              )}
+                  <TouchableOpacity
+                    style={styles.statusCell}
+                    onPress={() => openStatusModal(order.id, order.status)}
+                  >
+                    <Text style={[styles.statusText, isDark && styles.textDark, {color: order.status === "Доставлен" ? "green" : "#333"}]}>
+                      {order.status}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              ))}
             </View>
-          ))}
 
-          <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Рассылка</Text>
-          <TextInput
-            style={[styles.broadcastInput, isDark && styles.inputDark]}
-            placeholder="Текст сообщения"
-            placeholderTextColor={isDark ? "#999" : "#888"}
-            value={broadcastText}
-            onChangeText={setBroadcastText}
-            multiline
-          />
-          <TouchableOpacity style={styles.broadcastBtn} onPress={sendBroadcast}>
-            <Text style={styles.buttonText}>📨 Отправить рассылку ({users.length} получателей)</Text>
-          </TouchableOpacity>
+            {/* Модалка выбора статуса */}
+            <Modal visible={statusModalVisible} transparent animationType="fade">
+              <View style={styles.modalOverlay}>
+                <View style={[styles.modalView, isDark && styles.modalViewDark]}>
+                  <Text style={[styles.modalTitle, isDark && styles.textDark]}>Изменить статус</Text>
+                  {ORDER_STATUSES.map(s => (
+                    <TouchableOpacity
+                      key={s}
+                      style={[styles.statusOption, selectedStatus === s && styles.statusOptionActive]}
+                      onPress={() => setSelectedStatus(s)}
+                    >
+                      <Text style={[styles.statusOptionText, selectedStatus === s && styles.statusOptionTextActive]}>
+                        {s}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                  <View style={styles.modalButtons}>
+                    <TouchableOpacity style={styles.modalCancel} onPress={() => setStatusModalVisible(false)}>
+                      <Text>Отмена</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.modalConfirm} onPress={changeStatusFromModal}>
+                      <Text style={styles.buttonText}>Сохранить</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </View>
+            </Modal>
+
+            <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Управление промокодами</Text>
+            <TouchableOpacity style={styles.addBtn} onPress={addPromoCode}>
+              <Text style={styles.buttonText}>+ Добавить промокод</Text>
+            </TouchableOpacity>
+            {promoCodes.map((promo, index) => (
+              <View key={index} style={[styles.productEdit, isDark && styles.productEditDark]}>
+                <Text style={[styles.productName, isDark && styles.textDark]}>
+                  {promo.code} — {promo.discount}% {promo.active ? '✅' : '❌'}
+                </Text>
+                <Text style={[styles.brand, isDark && styles.textDark]}>{promo.description}</Text>
+                <View style={styles.editActions}>
+                  <TouchableOpacity onPress={() => togglePromoActive(index)}>
+                    <Text style={[styles.editAction, {color: promo.active ? 'green' : 'red'}]}>
+                      {promo.active ? 'Деактивировать' : 'Активировать'}
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => deletePromoCode(index)}>
+                    <Text style={[styles.editAction, {color: 'red'}]}>🗑</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ))}
+
+            <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Управление товарами</Text>
+            <TouchableOpacity style={styles.addBtn} onPress={addProduct}>
+              <Text style={styles.buttonText}>+ Добавить товар</Text>
+            </TouchableOpacity>
+            {products.map(p => (
+              <View key={p.id} style={[styles.productEdit, isDark && styles.productEditDark]}>
+                {editingProduct === p.id ? (
+                  <>
+                    <TextInput style={[styles.editInput, isDark && styles.inputDark]} value={p.brand} onChangeText={t => updateProduct(p.id, "brand", t)} placeholder="Бренд" />
+                    <TextInput style={[styles.editInput, isDark && styles.inputDark]} value={p.name} onChangeText={t => updateProduct(p.id, "name", t)} placeholder="Название" />
+                    <TextInput style={[styles.editInput, isDark && styles.inputDark]} value={String(p.price)} onChangeText={t => updateProduct(p.id, "price", t)} placeholder="Цена" keyboardType="numeric" />
+                    <TextInput style={[styles.editInput, isDark && styles.inputDark]} value={p.image} onChangeText={t => updateProduct(p.id, "image", t)} placeholder="URL картинки" />
+                    <TextInput style={[styles.editInput, isDark && styles.inputDark]} value={p.description || ""} onChangeText={t => updateProduct(p.id, "description", t)} placeholder="Описание" multiline />
+                    <TextInput style={[styles.editInput, isDark && styles.inputDark]} value={p.sizes ? p.sizes.join(', ') : ""} onChangeText={t => updateProduct(p.id, "sizes", t)} placeholder="Размеры (через запятую)" />
+                    <TouchableOpacity style={styles.saveBtn} onPress={() => setEditingProduct(null)}>
+                      <Text style={styles.buttonText}>Сохранить</Text>
+                    </TouchableOpacity>
+                  </>
+                ) : (
+                  <>
+                    <Text style={[styles.productName, isDark && styles.textDark]}>{p.brand} {p.name}</Text>
+                    <Text style={[styles.price, isDark && styles.textDark]}>{money(p.price)}</Text>
+                    <View style={styles.editActions}>
+                      <TouchableOpacity onPress={() => setEditingProduct(p.id)}><Text style={styles.editAction}>✎</Text></TouchableOpacity>
+                      <TouchableOpacity onPress={() => deleteProduct(p.id)}><Text style={styles.editAction}>🗑</Text></TouchableOpacity>
+                    </View>
+                  </>
+                )}
+              </View>
+            ))}
+
+            <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Рассылка</Text>
+            <TextInput
+              style={[styles.broadcastInput, isDark && styles.inputDark]}
+              placeholder="Текст сообщения"
+              placeholderTextColor={isDark ? "#999" : "#888"}
+              value={broadcastText}
+              onChangeText={setBroadcastText}
+              multiline
+            />
+            <TouchableOpacity style={styles.broadcastBtn} onPress={sendBroadcast}>
+              <Text style={styles.buttonText}>📨 Отправить рассылку ({users.length} получателей)</Text>
+            </TouchableOpacity>
+          </ScrollView>
         </View>
       </Modal>
     );
@@ -1029,7 +1056,7 @@ export default function App() {
     );
   };
 
-  // ---- Меню (фиксированное, без эмодзи, жирный шрифт) ----
+  // ---- Меню ----
   const Menu = () => {
     const { theme } = useTheme();
     const isDark = theme === "dark";
@@ -1089,31 +1116,22 @@ export default function App() {
 // СТИЛИ (полный набор)
 // ==============================
 const styles = StyleSheet.create({
-  // Основные страницы
-  page: {
-    flex: 1,
-    backgroundColor: "#F7F7F5",
-    padding: 14,
-    paddingBottom: 80,
-  },
+  page: { flex: 1, backgroundColor: "#F7F7F5", padding: 14, paddingBottom: 80 },
   pageDark: { backgroundColor: "#1a1a1a" },
   textDark: { color: "#fff" },
   inputDark: { backgroundColor: "#333", color: "#fff", borderColor: "#555" },
   cardDark: { backgroundColor: "#2a2a2a" },
   scrollContent: { paddingBottom: 10 },
 
-  // Логотип и описания
   logo: { fontSize: 30, fontWeight: "900", marginTop: 18 },
   description: { color: "#777", marginTop: 4, fontSize: 14 },
   pageTitle: { fontSize: 24, fontWeight: "900", marginTop: 18, marginBottom: 12 },
   sectionTitle: { fontSize: 20, fontWeight: "900", marginTop: 18, marginBottom: 12 },
 
-  // Баннер
   banner: { backgroundColor: "#111", padding: 20, borderRadius: 28, marginTop: 18 },
   bannerTitle: { fontSize: 26, fontWeight: "900", color: "#fff" },
   bannerButton: { backgroundColor: "#fff", padding: 10, borderRadius: 20, marginTop: 15, alignSelf: "flex-start" },
 
-  // Сетка и карточки
   grid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between" },
   card: { width: "48%", backgroundColor: "#fff", borderRadius: 20, padding: 8, marginBottom: 12 },
   image: { height: 120, width: "100%", borderRadius: 16 },
@@ -1121,7 +1139,6 @@ const styles = StyleSheet.create({
   favorite: { position: "absolute", right: 12, top: 12 },
   favoriteText: { fontSize: 20 },
 
-  // Тексты
   brand: { fontSize: 11, color: "#777", marginTop: 6 },
   productName: { fontSize: 14, fontWeight: "800", marginTop: 4 },
   price: { fontSize: 18, fontWeight: "900", marginTop: 3 },
@@ -1130,12 +1147,10 @@ const styles = StyleSheet.create({
   bigTitle: { fontSize: 24, fontWeight: "900" },
   bigPrice: { fontSize: 28, fontWeight: "900" },
 
-  // Кнопки
   smallButton: { backgroundColor: "#111", padding: 8, borderRadius: 16, marginTop: 8 },
   buyButton: { backgroundColor: "#111", padding: 14, borderRadius: 22, marginTop: 16 },
   buttonText: { color: "#fff", textAlign: "center", fontWeight: "800", fontSize: 13 },
 
-  // Корзина
   cartItem: { backgroundColor: "#fff", padding: 12, borderRadius: 20, flexDirection: "row", marginBottom: 12 },
   cartItemDark: { backgroundColor: "#2a2a2a" },
   cartImage: { width: 70, height: 70, borderRadius: 16, marginRight: 12 },
@@ -1144,20 +1159,17 @@ const styles = StyleSheet.create({
   finalTotal: { fontSize: 20, fontWeight: "900", marginTop: 4 },
   discountText: { fontSize: 16, color: "green", marginTop: 4 },
 
-  // Бонусы, профиль
   balanceCard: { backgroundColor: "#111", padding: 24, borderRadius: 28 },
   balanceLabel: { color: "#fff" },
   balanceValue: { color: "#fff", fontSize: 36, fontWeight: "900" },
   balanceInfo: { color: "#fff" },
   userName: { fontSize: 18 },
 
-  // Рефералка
   referralBox: { backgroundColor: "#fff", padding: 16, borderRadius: 24 },
   referralBoxDark: { backgroundColor: "#2a2a2a" },
   referralText: { marginBottom: 12, fontSize: 13 },
   copyButton: { backgroundColor: "#111", padding: 12, borderRadius: 18 },
 
-  // Уровни
   currentLevel: { backgroundColor: "#111", padding: 20, borderRadius: 24 },
   currentLevelTitle: { fontSize: 24, fontWeight: "900", color: "#fff" },
   currentInfo: { color: "#fff", marginTop: 6, fontSize: 14 },
@@ -1170,7 +1182,6 @@ const styles = StyleSheet.create({
   levelInfo: { marginTop: 4, fontSize: 14 },
   activeText: { color: "#fff" },
 
-  // История заказов
   orderCard: { backgroundColor: "#fff", padding: 14, borderRadius: 18, marginBottom: 12 },
   orderCardDark: { backgroundColor: "#2a2a2a" },
   orderId: { fontSize: 15, fontWeight: "800" },
@@ -1181,7 +1192,6 @@ const styles = StyleSheet.create({
   orderMore: { fontSize: 12, color: "#777", marginLeft: 8 },
   trackingText: { fontSize: 13, color: "#0066cc", marginTop: 2 },
 
-  // Модальные окна
   modalOverlay: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "rgba(0,0,0,0.5)" },
   modalScrollView: { flexGrow: 1, justifyContent: "center", paddingVertical: 20 },
   modalView: { width: "90%", backgroundColor: "#fff", borderRadius: 28, padding: 20, alignItems: "stretch", alignSelf: "center" },
@@ -1193,7 +1203,6 @@ const styles = StyleSheet.create({
   modalCancel: { padding: 10, borderRadius: 18, backgroundColor: "#eee", flex: 0.4, alignItems: "center" },
   modalConfirm: { padding: 10, borderRadius: 18, backgroundColor: "#111", flex: 0.5, alignItems: "center" },
 
-  // Доставка
   deliveryLabel: { fontSize: 15, fontWeight: "600", marginBottom: 8 },
   deliveryOptions: { flexDirection: "row", justifyContent: "space-between", marginBottom: 16 },
   deliveryOption: { flex: 1, padding: 10, borderRadius: 14, backgroundColor: "#eee", marginHorizontal: 4, alignItems: "center" },
@@ -1205,16 +1214,13 @@ const styles = StyleSheet.create({
   deliverySummaryDark: { backgroundColor: "#333" },
   summaryText: { fontSize: 13, fontWeight: "500" },
 
-  // Промокод
   promoBox: { flexDirection: "row", marginVertical: 8 },
   promoInput: { flex: 1, borderWidth: 1, borderColor: "#ddd", borderRadius: 18, padding: 8, marginRight: 8, fontSize: 14 },
   promoButton: { backgroundColor: "#111", padding: 8, borderRadius: 18, justifyContent: "center" },
 
-  // Бонус-чекбокс
   bonusCheckbox: { flexDirection: "row", alignItems: "center", marginVertical: 8 },
   bonusCheckboxText: { fontSize: 14, fontWeight: "600" },
 
-  // Поиск и фильтры
   searchInput: { backgroundColor: "#fff", padding: 10, borderRadius: 22, marginBottom: 12, fontSize: 14 },
   filterScroll: { flexDirection: "row", marginBottom: 12, height: 44, flexShrink: 0, flexGrow: 0 },
   filterContent: { alignItems: "center" },
@@ -1224,7 +1230,6 @@ const styles = StyleSheet.create({
   priceFilter: { flexDirection: "row", marginBottom: 12 },
   priceInput: { flex: 1, backgroundColor: "#fff", padding: 8, borderRadius: 18, marginRight: 8, fontSize: 14 },
 
-  // Выбор размера
   sizeBox: { marginTop: 16 },
   sizeTitle: { fontSize: 15, fontWeight: "600", marginBottom: 8 },
   sizes: { flexDirection: "row", flexWrap: "wrap" },
@@ -1238,7 +1243,6 @@ const styles = StyleSheet.create({
   sizeOptionTextActive: { color: "#fff" },
   sizeText: { fontSize: 13, color: "#555", marginTop: 2 },
 
-  // Админка
   adminButton: { backgroundColor: "#111", padding: 10, borderRadius: 18, marginVertical: 8, alignSelf: "flex-start" },
   closeAdmin: { marginBottom: 16, alignSelf: "flex-end" },
   closeAdminText: { fontSize: 15, fontWeight: "600" },
@@ -1256,11 +1260,10 @@ const styles = StyleSheet.create({
   saveBtn: { backgroundColor: "#111", padding: 8, borderRadius: 16, alignItems: "center" },
   editActions: { flexDirection: "row", marginTop: 4 },
   editAction: { fontSize: 18, marginRight: 12 },
-  trackingInput: { borderWidth: 1, borderColor: "#ddd", borderRadius: 8, padding: 4, flex: 1, marginRight: 6, fontSize: 13 },
+  trackingInput: { borderWidth: 1, borderColor: "#ddd", borderRadius: 6, padding: 4, fontSize: 12, textAlign: 'center' },
   broadcastInput: { borderWidth: 1, borderColor: "#ddd", borderRadius: 14, padding: 10, marginBottom: 12, minHeight: 60, fontSize: 14 },
   broadcastBtn: { backgroundColor: "#111", padding: 12, borderRadius: 20, alignItems: "center", marginBottom: 20 },
 
-  // Отзывы
   ratingDisplay: { fontSize: 14, marginVertical: 4 },
   reviewItem: { backgroundColor: "#f0f0f0", padding: 8, borderRadius: 12, marginBottom: 8 },
   reviewItemDark: { backgroundColor: "#333" },
@@ -1277,16 +1280,13 @@ const styles = StyleSheet.create({
   reviewInput: { borderWidth: 1, borderColor: "#ddd", borderRadius: 12, padding: 8, marginBottom: 8 },
   submitReview: { backgroundColor: "#111", padding: 10, borderRadius: 16, alignItems: "center" },
 
-  // Тема
   themeRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginVertical: 12 },
   themeLabel: { fontSize: 16 },
 
-  // Карточка итога
   totalRow: { flexDirection: "row", justifyContent: "space-between", marginVertical: 12, paddingVertical: 8, borderTopWidth: 1, borderColor: "#ddd" },
   totalLabel: { fontSize: 16, fontWeight: "600" },
   totalAmount: { fontSize: 18, fontWeight: "900" },
 
-  // Бейджи
   cartBadge: { fontSize: 16, fontWeight: "600", color: "#000" },
   menuBadge: {
     position: 'absolute',
@@ -1302,7 +1302,6 @@ const styles = StyleSheet.create({
   },
   menuBadgeText: { color: '#fff', fontSize: 11, fontWeight: 'bold' },
 
-  // Меню (фиксированное)
   menu: {
     position: 'absolute',
     bottom: 0,
@@ -1318,17 +1317,28 @@ const styles = StyleSheet.create({
     paddingBottom: 5,
   },
   menuDark: { backgroundColor: "#1a1a1a", borderColor: "#333" },
-  menuText: {
-    fontSize: 13,
-    fontWeight: "bold", // Жирный шрифт
-    color: "#333",
-  },
+  menuText: { fontSize: 13, fontWeight: "bold", color: "#333" },
 
-  // Прочие мелочи
   back: { fontSize: 16, marginBottom: 12, color: "#555" },
   shareBtn: { fontSize: 22, marginBottom: 12 },
   productHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   descriptionText: { fontSize: 13, color: "#555", marginVertical: 4 },
   loader: { textAlign: "center", padding: 8, color: "#777" },
   empty: { textAlign: "center", padding: 20, color: "#999" },
+
+  // Стили для таблицы админки
+  tableContainer: { backgroundColor: "#fff", borderRadius: 16, overflow: 'hidden', marginVertical: 10 },
+  tableContainerDark: { backgroundColor: "#2a2a2a" },
+  tableHeader: { flexDirection: 'row', backgroundColor: "#111", paddingVertical: 10, paddingHorizontal: 6 },
+  tableHeaderText: { fontSize: 12, fontWeight: 'bold', color: "#fff", flex: 1, textAlign: 'center' },
+  tableRow: { flexDirection: 'row', paddingVertical: 10, paddingHorizontal: 6, borderBottomWidth: 1, borderBottomColor: "#eee", alignItems: 'center' },
+  tableRowDark: { borderBottomColor: "#555" },
+  tableCell: { fontSize: 12, flex: 1, textAlign: 'center', paddingHorizontal: 2 },
+  trackingCell: { flex: 1, paddingHorizontal: 2 },
+  statusCell: { flex: 1, alignItems: 'center' },
+  statusText: { fontSize: 12, fontWeight: '600', color: "#333", backgroundColor: "#eee", paddingVertical: 4, paddingHorizontal: 8, borderRadius: 12 },
+  statusOption: { paddingVertical: 10, paddingHorizontal: 15, borderBottomWidth: 1, borderBottomColor: "#eee" },
+  statusOptionActive: { backgroundColor: "#111" },
+  statusOptionText: { fontSize: 16, textAlign: 'center' },
+  statusOptionTextActive: { color: "#fff" },
 });
