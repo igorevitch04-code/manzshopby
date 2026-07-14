@@ -443,7 +443,7 @@ export default function App() {
     const isFav = favorites.some(x => x.id === item.id);
     const { theme } = useTheme();
     const isDark = theme === "dark";
-        const handleAddToCart = () => {
+            const handleAddToCart = () => {
       if (!item.sizes || item.sizes.length === 0) {
         addCart(item);
         tg?.showAlert("✅ Товар добавлен в корзину");
@@ -454,7 +454,7 @@ export default function App() {
         text: size,
         onClick: () => {
           addCart({ ...item, size });
-          tg?.showAlert(`✅ ${item.brand} ${item.name}\nРазмер ${size} добавлен в корзину`);
+          tg?.showAlert(`✅ ${item.brand} ${item.name}\nРазмер: ${size}`);
         }
       }));
 
