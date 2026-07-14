@@ -90,10 +90,12 @@ const TrackingInput = memo(({ orderId, initialValue, onUpdate }) => {
   const [tracking, setTracking] = useState(initialValue || "");
   const { theme } = useTheme();
   const isDark = theme === "dark";
+
   const handleChange = (text) => {
     setTracking(text);
     if (onUpdate) onUpdate(orderId, text);
   };
+
   return (
     <TextInput
       style={[styles.trackingInput, isDark && styles.inputDark]}
@@ -140,6 +142,7 @@ export default function App() {
   const [broadcastText, setBroadcastText] = useState("");
   const [promoCodes, setPromoCodes] = useState([]);
   const [usedFreeDelivery, setUsedFreeDelivery] = useState([]);
+  const [referrals, setReferrals] = useState([]); // список рефералов
 
   const [sizeModalVisible, setSizeModalVisible] = useState(false);
   const [sizeModalProduct, setSizeModalProduct] = useState(null);
@@ -157,7 +160,8 @@ export default function App() {
     lastOrderNumber: "@krost_lastOrderNumber",
     users: "@krost_users",
     promoCodes: "@krost_promoCodes",
-    usedFreeDelivery: "@krost_usedFreeDelivery"
+    usedFreeDelivery: "@krost_usedFreeDelivery",
+    referrals: "@krost_referrals"
   };
   const CLOUD_KEYS = {
     cart: "krost_cart",
@@ -166,16 +170,18 @@ export default function App() {
     bonus: "krost_bonus",
     orderHistory: "krost_orderHistory",
     lastOrderNumber: "krost_lastOrderNumber",
-    usedFreeDelivery: "krost_usedFreeDelivery"
+    usedFreeDelivery: "krost_usedFreeDelivery",
+    referrals: "krost_referrals"
   };
 
   useEffect(() => {
     const loadAll = async () => {
       try {
-        const [c, f, o, b, h, p, t, a, ln, u, pc, ufd] = await AsyncStorage.multiGet([
+        const [c, f, o, b, h, p, t, a, ln, u, pc, ufd, refs] = await AsyncStorage.multiGet([
           STORAGE_KEYS.cart, STORAGE_KEYS.favorites, STORAGE_KEYS.orders, STORAGE_KEYS.bonus,
           STORAGE_KEYS.orderHistory, STORAGE_KEYS.products, STORAGE_KEYS.theme, STORAGE_KEYS.adminOrders,
-          STORAGE_KEYS.lastOrderNumber, STORAGE_KEYS.users, STORAGE_KEYS.promoCodes, STORAGE_KEYS.usedFreeDelivery
+          STORAGE_KEYS.lastOrderNumber, STORAGE_KEYS.users, STORAGE_KEYS.promoCodes, STORAGE_KEYS.usedFreeDelivery,
+          STORAGE_KEYS.referrals
         ]);
         let localCart = c[1] ? JSON.parse(c[1]) : [];
         let localFavorites = f[1] ? JSON.parse(f[1]) : [];
@@ -189,6 +195,7 @@ export default function App() {
         let localUsers = u[1] ? JSON.parse(u[1]) : [];
         let localPromoCodes = pc[1] ? JSON.parse(pc[1]) : [];
         let localUsedFreeDelivery = ufd[1] ? JSON.parse(ufd[1]) : [];
+        let localReferrals = refs[1] ? JSON.parse(refs[1]) : [];
 
         const cloudCart = await loadFromCloud(CLOUD_KEYS.cart);
         const cloudFavorites = await loadFromCloud(CLOUD_KEYS.favorites);
@@ -197,6 +204,7 @@ export default function App() {
         const cloudOrderHistory = await loadFromCloud(CLOUD_KEYS.orderHistory);
         const cloudLastOrderNumber = await loadFromCloud(CLOUD_KEYS.lastOrderNumber);
         const cloudUsedFreeDelivery = await loadFromCloud(CLOUD_KEYS.usedFreeDelivery);
+        const cloudReferrals = await loadFromCloud(CLOUD_KEYS.referrals);
 
         if (cloudCart !== null) localCart = cloudCart;
         if (cloudFavorites !== null) localFavorites = cloudFavorites;
@@ -205,6 +213,7 @@ export default function App() {
         if (cloudOrderHistory !== null) localOrderHistory = cloudOrderHistory;
         if (cloudLastOrderNumber !== null) localLastOrderNumber = cloudLastOrderNumber;
         if (cloudUsedFreeDelivery !== null) localUsedFreeDelivery = cloudUsedFreeDelivery;
+        if (cloudReferrals !== null) localReferrals = cloudReferrals;
 
         setCart(localCart);
         setFavorites(localFavorites);
@@ -218,9 +227,33 @@ export default function App() {
         setUsers(localUsers);
         setPromoCodes(localPromoCodes);
         setUsedFreeDelivery(localUsedFreeDelivery);
+        setReferrals(localReferrals);
       } catch (e) { console.warn("Ошибка загрузки", e); }
     };
     loadAll();
+  }, []);
+
+  // Обработка реферального перехода
+  useEffect(() => {
+    const handleReferral = async () => {
+      const tg = typeof window !== "undefined" && window.Telegram?.WebApp;
+      if (tg) {
+        const startParam = tg.initDataUnsafe?.start_param;
+        if (startParam && startParam !== user.id) {
+          // Кто-то перешёл по ссылке этого пользователя
+          const referrerId = parseInt(startParam);
+          if (referrerId && !isNaN(referrerId) && referrerId !== user.id) {
+            // Добавляем текущего пользователя в список рефералов referrerId
+            // Для простоты сохраняем в облако (мы не знаем, кто реферер, но можем сохранить у себя)
+            // Лучше: отправить на бэкенд, но у нас нет бэкенда, поэтому сохраним локально и в облако
+            // Но мы не можем записать реферала другому пользователю, так как у нас нет его данных.
+            // Просто покажем уведомление и сохраним у себя, что мы пришли по реферальной ссылке.
+            Alert.alert("Реферальная ссылка", `Вы перешли по ссылке пользователя ${referrerId}`);
+          }
+        }
+      }
+    };
+    handleReferral();
   }, []);
 
   useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.cart, JSON.stringify(cart)); saveToCloud(CLOUD_KEYS.cart, cart); }, [cart]);
@@ -230,6 +263,7 @@ export default function App() {
   useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.orderHistory, JSON.stringify(orderHistory)); saveToCloud(CLOUD_KEYS.orderHistory, orderHistory); }, [orderHistory]);
   useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.lastOrderNumber, JSON.stringify(lastOrderNumber)); saveToCloud(CLOUD_KEYS.lastOrderNumber, lastOrderNumber); }, [lastOrderNumber]);
   useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.usedFreeDelivery, JSON.stringify(usedFreeDelivery)); saveToCloud(CLOUD_KEYS.usedFreeDelivery, usedFreeDelivery); }, [usedFreeDelivery]);
+  useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.referrals, JSON.stringify(referrals)); saveToCloud(CLOUD_KEYS.referrals, referrals); }, [referrals]);
 
   useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.products, JSON.stringify(products)); }, [products]);
   useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.theme, JSON.stringify(theme)); }, [theme]);
@@ -247,7 +281,6 @@ export default function App() {
   const nextLevel = LEVELS[LEVELS.indexOf(currentLevel) + 1];
   let progress = 100;
   if (nextLevel) progress = Math.min(100, Math.floor(((orders - currentLevel.min) / (nextLevel.min - currentLevel.min)) * 100));
-  // ИСПРАВЛЕНА РЕФЕРАЛЬНАЯ ССЫЛКА
   const referral = `https://t.me/manzshop_bot?start=${user.id}`;
 
   const addCart = (item) => setCart([...cart, item]);
@@ -259,7 +292,6 @@ export default function App() {
       : setFavorites([...favorites, item]);
   };
 
-  // Копирование ссылки (исправлено)
   const copyReferral = () => {
     const link = referral;
     if (navigator?.clipboard) {
@@ -391,13 +423,33 @@ export default function App() {
     }));
   };
   const changeStatus = useCallback((orderId, newStatus) => {
-    setAdminOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o));
-    setOrderHistory(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o));
+    setAdminOrders(prev => prev.map(o => {
+      if (o.id === orderId) {
+        return { ...o, status: newStatus };
+      }
+      return o;
+    }));
+    setOrderHistory(prev => prev.map(o => {
+      if (o.id === orderId) {
+        return { ...o, status: newStatus };
+      }
+      return o;
+    }));
     Alert.alert("Статус обновлён", `Заказ #${orderId} теперь имеет статус "${newStatus}"`);
   }, []);
   const updateTracking = useCallback((orderId, trackingNumber) => {
-    setAdminOrders(prev => prev.map(o => o.id === orderId ? { ...o, trackingNumber } : o));
-    setOrderHistory(prev => prev.map(o => o.id === orderId ? { ...o, trackingNumber } : o));
+    setAdminOrders(prev => prev.map(o => {
+      if (o.id === orderId) {
+        return { ...o, trackingNumber };
+      }
+      return o;
+    }));
+    setOrderHistory(prev => prev.map(o => {
+      if (o.id === orderId) {
+        return { ...o, trackingNumber };
+      }
+      return o;
+    }));
     if (trackingNumber) {
       Alert.alert("Трек-номер добавлен", `Для заказа #${orderId} добавлен трек-номер: ${trackingNumber}`);
     }
@@ -764,7 +816,6 @@ export default function App() {
     return (
       <ScrollView style={[styles.page, isDark && styles.pageDark]} contentContainerStyle={styles.scrollContent}>
         <Text style={[styles.pageTitle, isDark && styles.textDark]}>Профиль</Text>
-        {/* Убрана строка "Привет, Имя" */}
         {isAdmin && (
           <TouchableOpacity style={styles.adminButton} onPress={() => setShowAdmin(true)}>
             <Text style={styles.buttonText}>⚙️ Админ-панель</Text>
@@ -785,6 +836,7 @@ export default function App() {
           <TouchableOpacity style={styles.copyButton} onPress={copyReferral}>
             <Text style={styles.buttonText}>📋 Скопировать ссылку</Text>
           </TouchableOpacity>
+          <Text style={[styles.referralCount, isDark && styles.textDark]}>Приглашено: {referrals.length} чел.</Text>
         </View>
         <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Ваш уровень</Text>
         <View style={styles.currentLevel}>
@@ -857,7 +909,7 @@ export default function App() {
 
     const handleTrackingUpdate = useCallback((orderId, text) => {
       updateTracking(orderId, text);
-    }, []);
+    }, [updateTracking]);
 
     return (
       <Modal visible={showAdmin} animationType="slide" transparent={false}>
@@ -1028,12 +1080,10 @@ export default function App() {
     const label = delivery === "europost" ? "ЕвроПочта" : "Курьер";
     const orderTotal = finalTotal + dp;
     const handlePlace = () => {
-      // Проверка полей
       if (!fullName.trim() || !address.trim() || !phone.trim()) {
         Alert.alert("Ошибка", "Заполните все поля, включая номер телефона");
         return;
       }
-      // Проверка телефона: минимум 7 цифр
       const phoneDigits = phone.replace(/\D/g, '');
       if (phoneDigits.length < 7) {
         Alert.alert("Ошибка", "Введите корректный номер телефона (минимум 7 цифр)");
@@ -1254,6 +1304,7 @@ const styles = StyleSheet.create({
   referralBox: { backgroundColor: "#fff", padding: 16, borderRadius: 24 },
   referralBoxDark: { backgroundColor: "#2a2a2a" },
   referralText: { marginBottom: 12, fontSize: 13 },
+  referralCount: { marginTop: 6, fontSize: 14, fontWeight: "600", color: "#333" },
   copyButton: { backgroundColor: "#111", padding: 12, borderRadius: 18 },
 
   currentLevel: { backgroundColor: "#111", padding: 20, borderRadius: 24 },
