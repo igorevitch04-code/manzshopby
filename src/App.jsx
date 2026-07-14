@@ -25,7 +25,7 @@ const getTelegramUser = () => {
 
 const money = (v) => v.toLocaleString("ru-RU") + " Br";
 const getBrands = (products) => [...new Set(products.map(p => p.brand))];
-const ADMIN_IDS = [778715828, 987654321];
+const ADMIN_IDS = [123456789, 987654321];
 
 const DEFAULT_PRODUCTS = [
   { id: 1, brand: "NIKE", name: "Dunk Low Panda", price: 18990, oldPrice: null, image: "https://images.unsplash.com/photo-1542291026-7eec264c27ff", sales: 120, ratings: [], averageRating: 0, description: "Классические Nike Dunk Low Panda.", sizes: ["40","41","42","43","44"] },
@@ -1339,7 +1339,7 @@ const styles = StyleSheet.create({
   modalViewDark: { backgroundColor: "#2a2a2a" },
   modalTitle: { fontSize: 20, fontWeight: "900", marginBottom: 16, textAlign: "center" },
   modalSubtitle: { fontSize: 15, textAlign: "center", marginBottom: 12, color: "#666" },
-  modalInput: { borderWidth: 1, borderColor: "#ddd", borderRadius: 14, padding: 10, marginBottom: 12, fontSize: 15 },
+  modalInput: { borderWidth: 1, borderColor: "#ddd", borderRadius: 14, padding: 10, marginBottom: 12, fontSize: 15, color: "#333", },
   modalButtons: { flexDirection: "row", justifyContent: "space-between", marginTop: 12 },
   modalCancel: { padding: 10, borderRadius: 18, backgroundColor: "#eee", flex: 0.4, alignItems: "center" },
   modalConfirm: { padding: 10, borderRadius: 18, backgroundColor: "#111", flex: 0.5, alignItems: "center" },
