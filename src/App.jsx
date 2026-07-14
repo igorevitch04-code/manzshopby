@@ -317,7 +317,7 @@ export default function App() {
   const placeOrderWithDetails = (deliveryData) => {
   const { fullName, address, phone, delivery, freeDelivery } = deliveryData;
   const { total, discount, usedBonus, finalTotal } = calculateTotals();
-  
+
   let deliveryPrice = delivery === "europost" ? 8 : 10;
   if (freeDelivery) {
     deliveryPrice = 0;
@@ -329,37 +329,39 @@ export default function App() {
   setLastOrderNumber(nextNumber);
 
   const order = {
-    id: nextNumber, 
-    items: cart.map(i => ({ ...i })), 
-    total, 
-    delivery, 
-    address, 
-    phone, 
+    id: nextNumber,
+    items: cart.map(i => ({ ...i })),
+    total,
+    delivery,
+    address,
+    phone,
     fullName,
-    deliveryPrice, 
-    discount, 
-    usedBonus, 
-    finalTotal: orderTotal, 
+    deliveryPrice,
+    discount,
+    usedBonus,
+    finalTotal: orderTotal,
     date: new Date().toISOString(),
-    status: "Ожидает подтверждения", 
-    trackingNumber: null, 
+    status: "Ожидает подтверждения",
+    trackingNumber: null,
     freeDelivery
   };
 
   setOrderHistory(prev => [order, ...prev]);
   setAdminOrders(prev => [order, ...prev]);
+
   const cashback = Math.floor(total * (currentLevel.cashback / 100));
   setBonusBalance(prev => prev + cashback - usedBonus);
   setOrders(orders + 1);
   setCart([]);
   closeOrderModal();
 
+  // Красивое сообщение после заказа
   Alert.alert(
-    "✅ Заказ оформлен!",
-    `Номер заказа: #${nextNumber}\n\nСпасибо! Ваш заказ принят.\nСкоро менеджер его обработает и свяжется с вами.\n\nЕсли у вас есть вопросы — можете написать менеджеру по ссылке в описании бота.`,
+    "🎉 Заказ успешно оформлен!",
+    `Номер заказа: #${nextNumber}\n\nСпасибо за покупку! 🎉\nНаш менеджер скоро обработает заказ и свяжется с вами.\n\nЕсли есть вопросы — пишите менеджеру по ссылке в описании бота.`,
     [
       { text: "Отлично" },
-      { text: "Посмотреть заказ", onPress: () => setPage("profile") }
+      { text: "Посмотреть заказы", onPress: () => setPage("profile") }
     ]
   );
 };
@@ -492,58 +494,70 @@ export default function App() {
   // ==============================
 
   const SizeModal = () => {
-    const { theme } = useTheme();
-    const isDark = theme === "dark";
-    const sizes = sizeModalProduct?.sizes || [];
-    const handleAddWithSize = () => {
-  if (!tempSelectedSize) {
-    Alert.alert("Ошибка", "Выберите размер");
-    return;
-  }
+  const { theme } = useTheme();
+  const isDark = theme === "dark";
+  const sizes = sizeModalProduct?.sizes || [];
 
-  addCart({ ...sizeModalProduct, size: tempSelectedSize });
+  const handleAddWithSize = () => {
+    if (!tempSelectedSize) {
+      Alert.alert("Ошибка", "Выберите размер");
+      return;
+    }
 
-  setSizeModalVisible(false);
-  setSizeModalProduct(null);
-  setTempSelectedSize(null);
+    addCart({ ...sizeModalProduct, size: tempSelectedSize });
 
-  // Новое уведомление без лишней анимации
-  Alert.alert(
-    "✅ Добавлено в корзину",
-    `${sizeModalProduct?.brand} ${sizeModalProduct?.name}\nРазмер: ${tempSelectedSize}`,
-    [{ text: "OK" }]
-  );
-};
-    return (
-      <Modal transparent visible={sizeModalVisible} animationType="fade" onRequestClose={() => setSizeModalVisible(false)}>
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalView, isDark && styles.modalViewDark]}>
-            <Text style={[styles.modalTitle, isDark && styles.textDark]}>Выберите размер</Text>
-            <Text style={[styles.modalSubtitle, isDark && styles.textDark]}>{sizeModalProduct?.brand} {sizeModalProduct?.name}</Text>
-            <View style={styles.sizeGrid}>
-              {sizes.map(s => (
-                <TouchableOpacity
-                  key={s}
-                  style={[styles.sizeOption, tempSelectedSize === s && styles.sizeOptionActive]}
-                  onPress={() => setTempSelectedSize(s)}
-                >
-                  <Text style={[styles.sizeOptionText, tempSelectedSize === s && styles.sizeOptionTextActive]}>{s}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-            <View style={styles.modalButtons}>
-              <TouchableOpacity style={styles.modalCancel} onPress={() => setSizeModalVisible(false)}>
-                <Text>Отмена</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.modalConfirm} onPress={handleAddWithSize}>
-                <Text style={styles.buttonText}>Добавить</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
+    setSizeModalVisible(false);
+    setSizeModalProduct(null);
+    setTempSelectedSize(null);
+
+    Alert.alert(
+      "✅ Добавлено в корзину",
+      `${sizeModalProduct?.brand} ${sizeModalProduct?.name}\nРазмер: ${tempSelectedSize}`,
+      [{ text: "OK" }]
     );
   };
+
+  return (
+    <Modal 
+      transparent 
+      visible={sizeModalVisible} 
+      animationType="none"   // ← Изменено на none
+      onRequestClose={() => setSizeModalVisible(false)}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={[styles.modalView, isDark && styles.modalViewDark]}>
+          <Text style={[styles.modalTitle, isDark && styles.textDark]}>Выберите размер</Text>
+          <Text style={[styles.modalSubtitle, isDark && styles.textDark]}>
+            {sizeModalProduct?.brand} {sizeModalProduct?.name}
+          </Text>
+
+          <View style={styles.sizeGrid}>
+            {sizes.map(s => (
+              <TouchableOpacity
+                key={s}
+                style={[styles.sizeOption, tempSelectedSize === s && styles.sizeOptionActive]}
+                onPress={() => setTempSelectedSize(s)}
+              >
+                <Text style={[styles.sizeOptionText, tempSelectedSize === s && styles.sizeOptionTextActive]}>
+                  {s}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          <View style={styles.modalButtons}>
+            <TouchableOpacity style={styles.modalCancel} onPress={() => setSizeModalVisible(false)}>
+              <Text>Отмена</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.modalConfirm} onPress={handleAddWithSize}>
+              <Text style={styles.buttonText}>Добавить</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+};
 
   const ProductCard = ({ item }) => {
     const isFav = favorites.some(x => x.id === item.id);
