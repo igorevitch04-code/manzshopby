@@ -316,50 +316,49 @@ export default function App() {
     return !usedFreeDelivery.some(item => item.phone === phone.trim() && item.fullName === fullName.trim());
   };
 
-  const placeOrderWithDetails = (deliveryData) => {
-  const { fullName, address, phone, delivery, freeDelivery } = deliveryData;
-  const { total, discount, usedBonus, finalTotal } = calculateTotals();
+    const placeOrderWithDetails = (deliveryData) => {
+    const { fullName, address, phone, delivery, freeDelivery } = deliveryData;
+    const { total, discount, usedBonus, finalTotal } = calculateTotals();
 
-  let deliveryPrice = delivery === "europost" ? 8 : 10;
-  if (freeDelivery) {
-    deliveryPrice = 0;
-    setUsedFreeDelivery(prev => [...prev, { phone: phone.trim(), fullName: fullName.trim() }]);
-  }
+    let deliveryPrice = delivery === "europost" ? 8 : 10;
+    if (freeDelivery) {
+      deliveryPrice = 0;
+      setUsedFreeDelivery(prev => [...prev, { phone: phone.trim(), fullName: fullName.trim() }]);
+    }
 
-  const orderTotal = finalTotal + deliveryPrice;
-  const nextNumber = lastOrderNumber + 1;
-  setLastOrderNumber(nextNumber);
+    const orderTotal = finalTotal + deliveryPrice;
+    const nextNumber = lastOrderNumber + 1;
+    setLastOrderNumber(nextNumber);
 
-  const order = {
-    id: nextNumber,
-    items: cart.map(i => ({ ...i })),
-    total,
-    delivery,
-    address,
-    phone,
-    fullName,
-    deliveryPrice,
-    discount,
-    usedBonus,
-    finalTotal: orderTotal,
-    date: new Date().toISOString(),
-    status: "Ожидает подтверждения",
-    trackingNumber: null,
-    freeDelivery
+    const order = {
+      id: nextNumber,
+      items: cart.map(i => ({ ...i })),
+      total,
+      delivery,
+      address,
+      phone,
+      fullName,
+      deliveryPrice,
+      discount,
+      usedBonus,
+      finalTotal: orderTotal,
+      date: new Date().toISOString(),
+      status: "Ожидает подтверждения",
+      trackingNumber: null,
+      freeDelivery
+    };
+
+    setOrderHistory(prev => [order, ...prev]);
+    setAdminOrders(prev => [order, ...prev]);
+
+    const cashback = Math.floor(total * (currentLevel.cashback / 100));
+    setBonusBalance(prev => prev + cashback - usedBonus);
+    setOrders(orders + 1);
+    setCart([]);
+    closeOrderModal();
+
+    tg?.showAlert(`🎉 Заказ #${nextNumber} успешно оформлен!\n\nМенеджер скоро свяжется с вами.`);
   };
-
-  setOrderHistory(prev => [order, ...prev]);
-  setAdminOrders(prev => [order, ...prev]);
-
-  const cashback = Math.floor(total * (currentLevel.cashback / 100));
-  setBonusBalance(prev => prev + cashback - usedBonus);
-  setOrders(orders + 1);
-  setCart([]);
-  closeOrderModal();
-
-  // Красивое сообщение после заказа
-    // В конце placeOrderWithDetails замени Alert.alert на:
-  tg?.showAlert(`🎉 Заказ #${nextNumber} успешно оформлен!\n\nМенеджер скоро свяжется с вами.`);
 
   const addRating = (productId, rating, comment) => {
     setProducts(prev => prev.map(p => {
