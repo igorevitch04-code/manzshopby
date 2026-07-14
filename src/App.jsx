@@ -483,19 +483,22 @@ export default function App() {
   adminOrders.forEach(o => { adminRevenue += o.finalTotal; o.items.forEach(i => { salesMap[i.id] = (salesMap[i.id] || 0) + 1; }); });
   const popular = Object.keys(salesMap).sort((a,b) => salesMap[b] - salesMap[a]).slice(0,5).map(id => products.find(p => p.id === parseInt(id))).filter(Boolean);
       
-  const ProductCard = ({ item }) => {
+    const ProductCard = ({ item }) => {
     const isFav = favorites.some(x => x.id === item.id);
     const { theme } = useTheme();
     const isDark = theme === "dark";
+
     const handleAddToCart = () => {
       if (item.sizes && item.sizes.length > 0) {
-        setSizeModalProduct(item);
-        setTempSelectedSize(null);
-        setSizeModalVisible(true);
+        const defaultSize = item.sizes[0];
+        addCart({ ...item, size: defaultSize });
+        tg?.showAlert(`✅ ${item.brand} ${item.name}\nРазмер ${defaultSize} добавлен в корзину`);
       } else {
-        Alert.alert("Ошибка", "У этого товара нет доступных размеров");
+        addCart(item);
+        tg?.showAlert("✅ Товар добавлен в корзину");
       }
     };
+
     return (
       <View style={[styles.card, isDark && styles.cardDark]}>
         <TouchableOpacity onPress={() => { setSelectedProduct(item); setSelectedSize(null); setPage("product"); }}>
@@ -593,15 +596,14 @@ export default function App() {
     const hasPurchased = orderHistory.some(order => 
       order.status === "Доставлен" && order.items.some(i => i.id === selectedProduct.id)
     );
-        const handleAddToCart = () => {
-      if (item.sizes && item.sizes.length > 0) {
-        const defaultSize = item.sizes[0]; // берём первый размер
-        addCart({ ...item, size: defaultSize });
-        tg?.showAlert(`✅ ${item.brand} ${item.name}\nРазмер ${defaultSize} добавлен в корзину`);
-      } else {
-        tg?.showAlert("Товар добавлен в корзину");
-        addCart(item);
+            const handleAddToCart = () => {
+      const sizeToUse = selectedSize || (selectedProduct.sizes && selectedProduct.sizes[0]);
+      if (!sizeToUse) {
+        tg?.showAlert("Нет доступных размеров");
+        return;
       }
+      addCart({ ...selectedProduct, size: sizeToUse });
+      tg?.showAlert(`✅ Добавлено в корзину\nРазмер: ${sizeToUse}`);
     };
     const submitRating = () => {
       if (rating === 0) { Alert.alert("Ошибка", "Поставьте оценку"); return; }
