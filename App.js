@@ -469,24 +469,8 @@ export default function App() {
       </View>
     );
   };
-    return (
-      <View style={[styles.card, isDark && styles.cardDark]}>
-        <TouchableOpacity onPress={() => { setSelectedProduct(item); setSelectedSize(null); setPage("product"); }}>
-          <Image source={{ uri: item.image }} style={styles.image} />
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.favorite} onPress={() => toggleFavorite(item)}>
-          <Text style={styles.favoriteText}>{isFav ? "♥" : "♡"}</Text>
-        </TouchableOpacity>
-        <Text style={[styles.brand, isDark && styles.textDark]}>{item.brand}</Text>
-        <Text style={[styles.productName, isDark && styles.textDark]}>{item.name}</Text>
-        {item.oldPrice && <Text style={styles.oldPrice}>{money(item.oldPrice)}</Text>}
-        <Text style={[styles.price, isDark && styles.textDark]}>{money(item.price)}</Text>
-        <TouchableOpacity style={styles.smallButton} onPress={handleAddToCart}>
-          <Text style={styles.buttonText}>В корзину</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  };
+
+  const Home = () => {
   const Home = () => {
     const popularItems = [...products].sort((a,b) => b.sales - a.sales).slice(0,4);
     const recommended = getRecommended();
