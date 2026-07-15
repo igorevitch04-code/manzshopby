@@ -1257,49 +1257,67 @@ export default function App() {
     );
   };
 
-  // ---- Меню (закреплённое) ----
-    // ---- Меню (закреплённое снизу) ----
-   // ---- Меню (закреплённое снизу ВСЕГДА) ----
+  // ---- Меню (pill-стиль, чёрно-белый) ----
   const Menu = () => {
     const { theme } = useTheme();
     const isDark = theme === "dark";
     const isActive = (target) => page === target;
 
+    const textStyle = (active) => [
+      styles.menuText,
+      active && styles.menuTextActive,
+      isDark && { color: active ? '#fff' : '#999' },
+    ];
+    const iconStyle = (active) => [
+      styles.menuIcon,
+      active && (isDark ? { color: '#111' } : styles.menuIconActive),
+    ];
+
     return (
-      <View style={[styles.menu, isDark && styles.menuDark]}>
-        <TouchableOpacity onPress={() => setPage("catalog")} style={styles.menuButton}>
-          <Text style={[styles.menuIcon, isActive("catalog") && styles.menuIconActive]}>👟</Text>
-          <Text style={[styles.menuText, isActive("catalog") && styles.menuTextActive]}>Каталог</Text>
-        </TouchableOpacity>
+      <View style={styles.menuWrapper} pointerEvents="box-none">
+        <View style={[styles.menu, isDark && styles.menuDark]}>
+          <TouchableOpacity onPress={() => setPage("catalog")} style={styles.menuButton} activeOpacity={0.7}>
+            <View style={[styles.menuIconWrap, isActive("catalog") && (isDark ? styles.menuIconWrapActiveDark : styles.menuIconWrapActive)]}>
+              <Text style={iconStyle(isActive("catalog"))}>👟</Text>
+            </View>
+            <Text style={textStyle(isActive("catalog"))}>Каталог</Text>
+          </TouchableOpacity>
 
-        <TouchableOpacity onPress={() => setPage("favorites")} style={styles.menuButton}>
-          <View style={{ position: 'relative' }}>
-            <Text style={[styles.menuIcon, isActive("favorites") && styles.menuIconActive]}>♥</Text>
-            {favorites.length > 0 && (
-              <View style={styles.menuBadge}>
-                <Text style={styles.menuBadgeText}>{favorites.length}</Text>
+          <TouchableOpacity onPress={() => setPage("favorites")} style={styles.menuButton} activeOpacity={0.7}>
+            <View style={{ position: 'relative' }}>
+              <View style={[styles.menuIconWrap, isActive("favorites") && (isDark ? styles.menuIconWrapActiveDark : styles.menuIconWrapActive)]}>
+                <Text style={iconStyle(isActive("favorites"))}>♥</Text>
               </View>
-            )}
-          </View>
-          <Text style={[styles.menuText, isActive("favorites") && styles.menuTextActive]}>Избранное</Text>
-        </TouchableOpacity>
+              {favorites.length > 0 && (
+                <View style={styles.menuBadge}>
+                  <Text style={styles.menuBadgeText}>{favorites.length}</Text>
+                </View>
+              )}
+            </View>
+            <Text style={textStyle(isActive("favorites"))}>Избранное</Text>
+          </TouchableOpacity>
 
-        <TouchableOpacity onPress={() => setPage("cart")} style={styles.menuButton}>
-          <View style={{ position: 'relative' }}>
-            <Text style={[styles.menuIcon, isActive("cart") && styles.menuIconActive]}>🛒</Text>
-            {cart.length > 0 && (
-              <View style={styles.menuBadge}>
-                <Text style={styles.menuBadgeText}>{cart.length}</Text>
+          <TouchableOpacity onPress={() => setPage("cart")} style={styles.menuButton} activeOpacity={0.7}>
+            <View style={{ position: 'relative' }}>
+              <View style={[styles.menuIconWrap, isActive("cart") && (isDark ? styles.menuIconWrapActiveDark : styles.menuIconWrapActive)]}>
+                <Text style={iconStyle(isActive("cart"))}>🛒</Text>
               </View>
-            )}
-          </View>
-          <Text style={[styles.menuText, isActive("cart") && styles.menuTextActive]}>Корзина</Text>
-        </TouchableOpacity>
+              {cart.length > 0 && (
+                <View style={styles.menuBadge}>
+                  <Text style={styles.menuBadgeText}>{cart.length}</Text>
+                </View>
+              )}
+            </View>
+            <Text style={textStyle(isActive("cart"))}>Корзина</Text>
+          </TouchableOpacity>
 
-        <TouchableOpacity onPress={() => setPage("profile")} style={styles.menuButton}>
-          <Text style={[styles.menuIcon, isActive("profile") && styles.menuIconActive]}>👤</Text>
-          <Text style={[styles.menuText, isActive("profile") && styles.menuTextActive]}>Я</Text>
-        </TouchableOpacity>
+          <TouchableOpacity onPress={() => setPage("profile")} style={styles.menuButton} activeOpacity={0.7}>
+            <View style={[styles.menuIconWrap, isActive("profile") && (isDark ? styles.menuIconWrapActiveDark : styles.menuIconWrapActive)]}>
+              <Text style={iconStyle(isActive("profile"))}>👤</Text>
+            </View>
+            <Text style={textStyle(isActive("profile"))}>Я</Text>
+          </TouchableOpacity>
+        </View>
       </View>
     );
   };
@@ -1340,7 +1358,7 @@ const styles = StyleSheet.create({
   },
   contentContainer: {
     flex: 1,
-    paddingBottom: 85,
+    paddingBottom: 100,
   },
   page: {
     flex: 1,
@@ -1633,8 +1651,8 @@ const styles = StyleSheet.create({
   cartBadge: { fontSize: 16, fontWeight: "600", color: "#000" },
   menuBadge: {
     position: 'absolute',
-    top: -8,
-    right: -12,
+    top: -2,
+    right: -6,
     backgroundColor: '#111',
     borderRadius: 10,
     minWidth: 18,
@@ -1644,6 +1662,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 5,
     borderWidth: 1.5,
     borderColor: '#fff',
+    zIndex: 2,
   },
   menuBadgeText: {
     color: '#fff',
@@ -1651,46 +1670,74 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
 
-      menu: {
+  // Pill-меню (как на референсе)
+  menuWrapper: {
     position: 'fixed',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    height: 70,
-    backgroundColor: '#fff',
-    borderTopWidth: 1,
-    borderColor: '#eee',
+    bottom: 12,
+    left: 16,
+    right: 16,
+    zIndex: 10000,
+    elevation: 30,
+    alignItems: 'center',
+  },
+  menu: {
     flexDirection: 'row',
     justifyContent: 'space-around',
     alignItems: 'center',
-    paddingBottom: 8,
-    paddingTop: 4,
-    zIndex: 10000,
-    elevation: 20,
-    boxShadow: '0px -4px 12px rgba(0,0,0,0.15)',
+    backgroundColor: 'rgba(255,255,255,0.95)',
+    borderRadius: 28,
+    paddingVertical: 8,
+    paddingHorizontal: 6,
+    width: '100%',
+    maxWidth: 420,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.12,
+    shadowRadius: 16,
+    elevation: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.06)',
   },
   menuDark: {
-    backgroundColor: '#1a1a1a',
-    borderColor: '#333',
+    backgroundColor: 'rgba(30,30,30,0.96)',
+    borderColor: 'rgba(255,255,255,0.08)',
   },
   menuButton: {
     alignItems: 'center',
     justifyContent: 'center',
+    flex: 1,
+    paddingVertical: 2,
+  },
+  menuIconWrap: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'transparent',
+    marginBottom: 2,
+  },
+  menuIconWrapActive: {
+    backgroundColor: '#111',
+  },
+  menuIconWrapActiveDark: {
+    backgroundColor: '#fff',
   },
   menuIcon: {
-    fontSize: 22,
-    color: '#333',
+    fontSize: 20,
+    color: '#555',
   },
   menuIconActive: {
-    color: '#111',
+    color: '#fff',
   },
   menuText: {
     fontSize: 11,
     fontWeight: '500',
-    color: '#333',
+    color: '#888',
+    marginTop: 1,
   },
   menuTextActive: {
-    fontWeight: 'bold',
+    fontWeight: '700',
     color: '#111',
   },
 
