@@ -333,8 +333,10 @@ export default function App() {
 
   const shareProduct = async (product) => {
     try {
+      // Правильная ссылка на Mini App + start_param
+      const link = `https://t.me/manzshop_bot/manzshopbyapp?startapp=product_${product.id}`;
       await Share.share({
-        message: `${product.brand} ${product.name} — ${money(product.price)}\n\nОткрыть в магазине:\nhttps://t.me/manzshop_bot/manzshopbyapp?startapp=product_${product.id}`
+        message: `${product.brand} ${product.name} — ${money(product.price)}\n\nОткрыть в магазине:\n${link}`
       });
     } catch (e) {}
   };
@@ -345,9 +347,18 @@ export default function App() {
       const tg = typeof window !== "undefined" && window.Telegram?.WebApp;
       if (!tg) return;
       tg.ready();
-      const startParam = tg.initDataUnsafe?.start_param || tg.startParam || "";
+
+      // 1. Основной способ — start_param из Telegram
+      let startParam = tg.initDataUnsafe?.start_param || tg.startParam || "";
+
+      // 2. Fallback: смотрим URL (на всякий случай)
+      if (!startParam && typeof window !== "undefined") {
+        const urlParams = new URLSearchParams(window.location.search);
+        startParam = urlParams.get("tgWebAppStartParam") || urlParams.get("startapp") || "";
+      }
+
       if (startParam && startParam.startsWith("product_")) {
-        const productId = parseInt(startParam.replace("product_", ""));
+        const productId = parseInt(startParam.replace("product_", ""), 10);
         if (!isNaN(productId)) {
           const tryOpen = () => {
             const found = products.find(p => p.id === productId);
@@ -358,10 +369,12 @@ export default function App() {
             }
           };
           if (products.length > 0) tryOpen();
-          else setTimeout(tryOpen, 1000);
+          else setTimeout(tryOpen, 800);
         }
       }
-    } catch (e) {}
+    } catch (e) {
+      console.warn("Deep link error:", e);
+    }
   }, [products]);
 
   const getRecommended = () => {
