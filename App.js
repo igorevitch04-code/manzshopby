@@ -440,7 +440,7 @@ export default function App() {
     return null;
   };
 
-    const ProductCard = ({ item }) => {
+      const ProductCard = ({ item }) => {
     const isFav = favorites.some(x => x.id === item.id);
     const { theme } = useTheme();
     const isDark = theme === "dark";
@@ -469,7 +469,6 @@ export default function App() {
       </View>
     );
   };
-
     return (
       <View style={[styles.card, isDark && styles.cardDark]}>
         <TouchableOpacity onPress={() => { setSelectedProduct(item); setSelectedSize(null); setPage("product"); }}>
