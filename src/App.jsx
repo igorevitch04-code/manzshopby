@@ -42,7 +42,7 @@ const LEVELS = [
 ];
 const ORDER_STATUSES = ["Ожидает подтверждения", "Принят", "На сборке", "Доставляется", "Готов к выдаче"];
 
-// CloudStorage (без изменений)
+// CloudStorage
 const getCloudStorage = () => {
   if (typeof window !== "undefined" && window.Telegram?.WebApp?.CloudStorage) {
     return window.Telegram.WebApp.CloudStorage;
@@ -141,7 +141,6 @@ export default function App() {
     usedFreeDelivery: "krost_usedFreeDelivery"
   };
 
-  // Загрузка и сохранение (без изменений)
   useEffect(() => {
     const loadAll = async () => {
       try {
@@ -417,8 +416,6 @@ export default function App() {
         
         {item.oldPrice && <Text style={styles.oldPrice}>{money(item.oldPrice)}</Text>}
         <Text style={[styles.price, isDark && styles.textDark]}>{money(item.price)}</Text>
-        
-        {/* Размеры убраны – они только на странице товара */}
       </View>
     );
   };
@@ -495,7 +492,7 @@ export default function App() {
     );
   };
 
-  // ---- ProductPage (с выбором размера и оповещениями) ----
+  // ---- ProductPage (исправлена кнопка, выбор размера) ----
   const ProductPage = () => {
     if (!selectedProduct) return null;
     const { theme } = useTheme(); 
@@ -505,9 +502,8 @@ export default function App() {
     const hasPurchased = orderHistory.some(order => order.items.some(i => i.id === selectedProduct.id));
 
     const handleAddToCart = () => {
-      // Проверяем, выбран ли размер
       if (!selectedSize) {
-        Alert.alert("Ошибка", "Пожалуйста, выберите размер перед добавлением в корзину");
+        Alert.alert("Выберите размер", "Пожалуйста, выберите размер перед добавлением в корзину");
         return;
       }
       addCart({ ...selectedProduct, size: selectedSize });
@@ -765,7 +761,7 @@ export default function App() {
     );
   };
 
-  // ---- AdminPanel (исправлен скролл) ----
+  // ---- AdminPanel ----
   const AdminPanel = () => {
     const { theme } = useTheme(); 
     const isDark = theme === "dark";
@@ -987,7 +983,7 @@ export default function App() {
     );
   };
 
-  // ---- Меню (закреплённое, с иконками) ----
+  // ---- Меню (закреплённое) ----
   const Menu = () => {
     const { theme } = useTheme();
     const isDark = theme === "dark";
@@ -1035,8 +1031,10 @@ export default function App() {
 
   return (
     <ThemeContext.Provider value={{ theme, toggleTheme }}>
-      <View style={{ flex: 1, height: '100%', backgroundColor: theme === "dark" ? "#1a1a1a" : "#F7F7F5" }}>
-        {content}
+      <View style={styles.root}>
+        <View style={styles.contentContainer}>
+          {content}
+        </View>
         <Menu />
         <OrderModal />
         <AdminPanel />
@@ -1047,15 +1045,23 @@ export default function App() {
 }
 
 // ==============================
-// СТИЛИ
+// СТИЛИ (исправлены для закрепления меню)
 // ==============================
 const styles = StyleSheet.create({
-  // Основные страницы
+  root: {
+    flex: 1,
+    height: '100%',
+    width: '100%',
+    backgroundColor: '#F7F7F5',
+  },
+  contentContainer: {
+    flex: 1,
+    paddingBottom: 80, // отступ для меню
+  },
   page: {
     flex: 1,
     backgroundColor: "#F7F7F5",
     padding: 14,
-    paddingBottom: 80,
   },
   pageDark: { backgroundColor: "#1a1a1a" },
   textDark: { color: "#fff" },
