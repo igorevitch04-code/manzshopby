@@ -129,7 +129,27 @@ export default function App() {
   const toggleTheme = () => setTheme(t => t === "light" ? "dark" : "light");
   const isAdmin = ADMIN_IDS.includes(user.id);
 
-  const [page, setPage] = useState("home");
+  // Восстанавливаем вкладку только при refresh (sessionStorage), при полном закрытии — с нуля
+  const getInitialPage = () => {
+    try {
+      if (typeof sessionStorage !== "undefined") {
+        const saved = sessionStorage.getItem("krost_page");
+        if (saved) return saved;
+      }
+    } catch (e) {}
+    return "home";
+  };
+  const getInitialProductId = () => {
+    try {
+      if (typeof sessionStorage !== "undefined") {
+        const id = sessionStorage.getItem("krost_productId");
+        if (id) return parseInt(id);
+      }
+    } catch (e) {}
+    return null;
+  };
+
+  const [page, setPage] = useState(getInitialPage);
   const [cart, setCart] = useState([]);
   const [favorites, setFavorites] = useState([]);
   const [orders, setOrders] = useState(0);
@@ -140,6 +160,7 @@ export default function App() {
   const [selectedBrand, setSelectedBrand] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [restoredProductId] = useState(getInitialProductId);
   const [orderModalVisible, setOrderModalVisible] = useState(false);
   const [useBonus, setUseBonus] = useState(false);
   const [promoCode, setPromoCode] = useState("");
@@ -244,6 +265,31 @@ export default function App() {
   useEffect(() => { saveToCloud(CLOUD_KEYS.promoCodes, promoCodes); }, [promoCodes]);
   useEffect(() => { saveToCloud(CLOUD_KEYS.products, products); }, [products]);
   useEffect(() => { saveToCloud(CLOUD_KEYS.theme, theme); }, [theme]);
+
+  // Сохраняем текущую вкладку только в sessionStorage (живёт при refresh, умирает при полном закрытии)
+  useEffect(() => {
+    try {
+      if (typeof sessionStorage !== "undefined") {
+        sessionStorage.setItem("krost_page", page);
+        if (page === "product" && selectedProduct) {
+          sessionStorage.setItem("krost_productId", String(selectedProduct.id));
+        } else if (page !== "product") {
+          sessionStorage.removeItem("krost_productId");
+        }
+      }
+    } catch (e) {}
+  }, [page, selectedProduct]);
+
+  // Восстанавливаем товар после загрузки products (только при refresh)
+  useEffect(() => {
+    if (restoredProductId && products.length > 0 && !selectedProduct) {
+      const p = products.find(x => x.id === restoredProductId);
+      if (p) {
+        setSelectedProduct(p);
+        setPage("product");
+      }
+    }
+  }, [products, restoredProductId]);
 
   useEffect(() => {
     if (user.id !== "guest" && !users.some(u => u.id === user.id)) {
@@ -581,35 +627,110 @@ export default function App() {
   // ---- Catalog ----
   const Catalog = () => {
     const brands = getBrands(products);
-    const { theme } = useTheme(); const isDark = theme === "dark";
+    const { theme } = useTheme();
+    const isDark = theme === "dark";
+
+    // Локальный стейт поиска — чтобы клавиатура не закрывалась
+    const [localSearch, setLocalSearch] = useState(searchQuery);
+    const [localMin, setLocalMin] = useState(minPrice);
+    const [localMax, setLocalMax] = useState(maxPrice);
+    const [localBrand, setLocalBrand] = useState(selectedBrand);
+    const [localPage, setLocalPage] = useState(1);
+    const [localLoading, setLocalLoading] = useState(false);
+
+    // Фильтруем локально — родитель не перерисовывается на каждую букву
+    const localFiltered = products.filter(p => {
+      const q = localSearch.toLowerCase();
+      const matchName = p.name.toLowerCase().includes(q) || p.brand.toLowerCase().includes(q);
+      const matchBrand = localBrand ? p.brand === localBrand : true;
+      const matchPrice = (localMin === "" || p.price >= parseInt(localMin)) && (localMax === "" || p.price <= parseInt(localMax));
+      return matchName && matchBrand && matchPrice;
+    });
+    const LOCAL_PAGE_SIZE = 4;
+    const localPaginated = localFiltered.slice(0, localPage * LOCAL_PAGE_SIZE);
+    const localHasMore = localPaginated.length < localFiltered.length;
+
+    const handleSearchChange = (text) => {
+      setLocalSearch(text);
+      setLocalPage(1);
+    };
+    const handleBrand = (b) => {
+      setLocalBrand(b);
+      setLocalPage(1);
+      setSelectedBrand(b); // синхронизируем с родителем
+    };
+    const handleMin = (t) => {
+      setLocalMin(t);
+      setLocalPage(1);
+    };
+    const handleMax = (t) => {
+      setLocalMax(t);
+      setLocalPage(1);
+    };
+    const handleLoadMore = () => {
+      if (localLoading || !localHasMore) return;
+      setLocalLoading(true);
+      setTimeout(() => {
+        setLocalPage(prev => prev + 1);
+        setLocalLoading(false);
+      }, 400);
+    };
+
     return (
       <View style={[styles.page, isDark && styles.pageDark]}>
         <Text style={[styles.pageTitle, isDark && styles.textDark]}>Каталог</Text>
-        <TextInput style={[styles.searchInput, isDark && styles.inputDark]} placeholder="Поиск..." placeholderTextColor={isDark ? "#999" : "#888"} value={searchQuery} onChangeText={setSearchQuery} />
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterScroll} contentContainerStyle={styles.filterContent}>
-          <TouchableOpacity style={[styles.filterChip, selectedBrand === null && styles.filterChipActive]} onPress={() => setSelectedBrand(null)}>
-            <Text style={selectedBrand === null && styles.filterChipTextActive}>Все</Text>
+        <TextInput
+          style={[styles.searchInput, isDark && styles.inputDark]}
+          placeholder="Поиск..."
+          placeholderTextColor={isDark ? "#999" : "#888"}
+          value={localSearch}
+          onChangeText={handleSearchChange}
+          blurOnSubmit={false}
+          autoCorrect={false}
+          autoCapitalize="none"
+          returnKeyType="search"
+        />
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterScroll} contentContainerStyle={styles.filterContent} keyboardShouldPersistTaps="handled">
+          <TouchableOpacity style={[styles.filterChip, localBrand === null && styles.filterChipActive]} onPress={() => handleBrand(null)}>
+            <Text style={localBrand === null && styles.filterChipTextActive}>Все</Text>
           </TouchableOpacity>
           {brands.map(b => (
-            <TouchableOpacity key={b} style={[styles.filterChip, selectedBrand === b && styles.filterChipActive]} onPress={() => setSelectedBrand(b)}>
-              <Text style={selectedBrand === b && styles.filterChipTextActive}>{b}</Text>
+            <TouchableOpacity key={b} style={[styles.filterChip, localBrand === b && styles.filterChipActive]} onPress={() => handleBrand(b)}>
+              <Text style={localBrand === b && styles.filterChipTextActive}>{b}</Text>
             </TouchableOpacity>
           ))}
         </ScrollView>
         <View style={styles.priceFilter}>
-          <TextInput style={[styles.priceInput, isDark && styles.inputDark]} placeholder="Цена от" placeholderTextColor={isDark ? "#999" : "#888"} value={minPrice} onChangeText={setMinPrice} keyboardType="numeric" />
-          <TextInput style={[styles.priceInput, isDark && styles.inputDark]} placeholder="до" placeholderTextColor={isDark ? "#999" : "#888"} value={maxPrice} onChangeText={setMaxPrice} keyboardType="numeric" />
+          <TextInput
+            style={[styles.priceInput, isDark && styles.inputDark]}
+            placeholder="Цена от"
+            placeholderTextColor={isDark ? "#999" : "#888"}
+            value={localMin}
+            onChangeText={handleMin}
+            keyboardType="numeric"
+            blurOnSubmit={false}
+          />
+          <TextInput
+            style={[styles.priceInput, isDark && styles.inputDark]}
+            placeholder="до"
+            placeholderTextColor={isDark ? "#999" : "#888"}
+            value={localMax}
+            onChangeText={handleMax}
+            keyboardType="numeric"
+            blurOnSubmit={false}
+          />
         </View>
         <FlatList
-          data={paginated}
-          renderItem={({item}) => <ProductCard item={item} />}
+          data={localPaginated}
+          renderItem={({ item }) => <ProductCard item={item} />}
           keyExtractor={item => item.id.toString()}
           numColumns={2}
           columnWrapperStyle={styles.grid}
           contentContainerStyle={{ paddingBottom: 20 }}
-          onEndReached={loadMore}
+          onEndReached={handleLoadMore}
           onEndReachedThreshold={0.5}
-          ListFooterComponent={loadingMore ? <Text style={[styles.loader, isDark && styles.textDark]}>Загрузка...</Text> : null}
+          keyboardShouldPersistTaps="handled"
+          ListFooterComponent={localLoading ? <Text style={[styles.loader, isDark && styles.textDark]}>Загрузка...</Text> : null}
           ListEmptyComponent={<Text style={[styles.empty, isDark && styles.textDark]}>Товаров нет</Text>}
         />
       </View>
