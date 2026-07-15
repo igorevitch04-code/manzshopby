@@ -277,16 +277,16 @@ export default function App() {
     closeOrderModal();
     showToast(`✅ Заказ #${nextNumber} оформлен`);
     Alert.alert(
-  "Заказ оформлен",
-  `Номер заказа: ${nextNumber}\nСтатус: Ожидает подтверждения\n\nЕсли у вас есть вопросы — можете задать их менеджеру в описании бота.`,
-  [
-    { text: "OK" },
-    { text: "Перейти в историю", onPress: () => setPage("profile") }
-  ]
-);
+      "Заказ оформлен",
+      `Номер заказа: ${nextNumber}\nСтатус: Ожидает подтверждения\n\nЕсли у вас есть вопросы — можете задать их менеджеру в описании бота.`,
+      [
+        { text: "OK" },
+        { text: "Перейти в историю", onPress: () => setPage("profile") }
+      ]
+    );
+  };
 
-  
-    const addRating = (productId, rating, comment) => {
+  const addRating = (productId, rating, comment) => {
     setProducts(prev => prev.map(p => {
       if (p.id === productId) {
         const newRatings = [...p.ratings, { userId: user.id, rating, comment, date: new Date().toISOString() }];
@@ -918,11 +918,10 @@ export default function App() {
     const label = delivery === "europost" ? "ЕвроПочта" : "Курьер";
     const orderTotal = finalTotal + dp;
     const handlePlace = () => {
-      const handlePlace = () => {
-  if (!fullName.trim() || !address.trim() || !phone.trim()) {
-    Alert.alert("Ошибка", "Для оформления заказа нужно заполнить все данные (ФИО, адрес, телефон)");
-    return;
-  }
+      if (!fullName.trim() || !address.trim() || !phone.trim()) {
+        Alert.alert("Ошибка", "Для оформления заказа нужно заполнить все данные (ФИО, адрес, телефон)");
+        return;
+      }
       if (useFreeDelivery && !isFreeDeliveryEligible(phone, fullName)) {
         Alert.alert("Ошибка", "Бесплатная доставка уже была использована с этими данными");
         return;
@@ -1311,7 +1310,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     maxWidth: '80%',
   },
-    toastText: {
+  toastText: {
     color: '#fff',
     fontSize: 16,
     fontWeight: '500',
