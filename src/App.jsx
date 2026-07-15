@@ -1049,15 +1049,11 @@ export default function App() {
 const styles = StyleSheet.create({
       root: {
     flex: 1,
-    height: '100vh',
-    width: '100%',
     backgroundColor: '#F7F7F5',
-    position: 'relative',
   },
-    contentContainer: {
+  contentContainer: {
     flex: 1,
-    paddingBottom: 90,     // уменьшил обратно
-    overflow: 'visible',   // ← измени на visible
+    paddingBottom: 85,
   },
   page: {
     flex: 1,
