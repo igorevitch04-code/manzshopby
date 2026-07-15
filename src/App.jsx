@@ -650,8 +650,8 @@ export default function App() {
     return (
       <ScrollView style={[styles.page, isDark && styles.pageDark]} contentContainerStyle={styles.scrollContent}>
         <View style={styles.productHeader}>
-          <TouchableOpacity style={styles.headerBtn} onPress={() => setPage("catalog")}>
-            <Text style={styles.headerBtnText}>← Назад</Text>
+          <TouchableOpacity style={[styles.backBtnMinimal, isDark && styles.backBtnMinimalDark]} onPress={() => setPage("catalog")}>
+            <Text style={[styles.backBtnMinimalText, isDark && styles.backBtnMinimalTextDark]}>‹</Text>
           </TouchableOpacity>
 
           <TouchableOpacity style={styles.headerBtn} onPress={() => shareProduct(selectedProduct)}>
@@ -1329,6 +1329,28 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontSize: 13,
     fontWeight: "700",
+  },
+  // Минималистичная кнопка «Назад» (как в iOS)
+  backBtnMinimal: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "rgba(0,0,0,0.06)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  backBtnMinimalDark: {
+    backgroundColor: "rgba(255,255,255,0.12)",
+  },
+  backBtnMinimalText: {
+    fontSize: 32,
+    fontWeight: "300",
+    color: "#111",
+    marginTop: -2,
+    lineHeight: 36,
+  },
+  backBtnMinimalTextDark: {
+    color: "#fff",
   },
   productHeaderLeft: {
     flexDirection: "row",
