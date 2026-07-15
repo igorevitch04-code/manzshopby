@@ -510,6 +510,7 @@ export default function App() {
     return (
       <View style={[styles.card, isDark && styles.cardDark]}>
         <TouchableOpacity 
+          activeOpacity={0.9}
           onPress={() => { 
             setSelectedProduct(item); 
             setSelectedSize(null); 
@@ -519,8 +520,19 @@ export default function App() {
           <Image source={{ uri: item.image }} style={styles.image} />
         </TouchableOpacity>
         
-        <TouchableOpacity style={styles.favorite} onPress={() => toggleFavorite(item)}>
-          <Text style={styles.favoriteText}>{isFav ? "♥" : "♡"}</Text>
+        {/* Кнопка избранного прямо на карточке */}
+        <TouchableOpacity
+          style={[styles.favoriteBtn, isFav && styles.favoriteBtnActive]}
+          onPress={(e) => {
+            e?.stopPropagation?.();
+            toggleFavorite(item);
+            showToast(isFav ? "Удалено из избранного" : "❤️ Добавлено в избранное");
+          }}
+          activeOpacity={0.7}
+        >
+          <Text style={[styles.favoriteBtnText, isFav && styles.favoriteBtnTextActive]}>
+            {isFav ? "♥" : "♡"}
+          </Text>
         </TouchableOpacity>
         
         <Text style={[styles.brand, isDark && styles.textDark]}>{item.brand}</Text>
@@ -633,6 +645,8 @@ export default function App() {
       Alert.alert("Спасибо", "Отзыв добавлен");
     };
 
+    const isFav = favorites.some(x => x.id === selectedProduct.id);
+
     return (
       <ScrollView style={[styles.page, isDark && styles.pageDark]} contentContainerStyle={styles.scrollContent}>
         <View style={styles.productHeader}>
@@ -676,6 +690,19 @@ export default function App() {
             ))}
           </View>
         </View>
+
+        {/* Кнопка в избранное на странице товара */}
+        <TouchableOpacity
+          style={[styles.favPageBtn, isFav && styles.favPageBtnActive]}
+          onPress={() => {
+            toggleFavorite(selectedProduct);
+            showToast(isFav ? "Удалено из избранного" : "❤️ Добавлено в избранное");
+          }}
+        >
+          <Text style={[styles.favPageBtnText, isFav && styles.favPageBtnTextActive]}>
+            {isFav ? "♥ В избранном" : "♡ В избранное"}
+          </Text>
+        </TouchableOpacity>
 
         <TouchableOpacity style={styles.buyButton} onPress={handleAddToCart}>
           <Text style={styles.buttonText}>Добавить в корзину</Text>
@@ -1123,10 +1150,19 @@ export default function App() {
           <Text style={[styles.menuIcon, isActive("catalog") && styles.menuIconActive]}>👟</Text>
           <Text style={[styles.menuText, isActive("catalog") && styles.menuTextActive]}>Каталог</Text>
         </TouchableOpacity>
+
         <TouchableOpacity onPress={() => setPage("favorites")} style={styles.menuButton}>
-          <Text style={[styles.menuIcon, isActive("favorites") && styles.menuIconActive]}>♥</Text>
+          <View style={{ position: 'relative' }}>
+            <Text style={[styles.menuIcon, isActive("favorites") && styles.menuIconActive]}>♥</Text>
+            {favorites.length > 0 && (
+              <View style={styles.menuBadge}>
+                <Text style={styles.menuBadgeText}>{favorites.length}</Text>
+              </View>
+            )}
+          </View>
           <Text style={[styles.menuText, isActive("favorites") && styles.menuTextActive]}>Избранное</Text>
         </TouchableOpacity>
+
         <TouchableOpacity onPress={() => setPage("cart")} style={styles.menuButton}>
           <View style={{ position: 'relative' }}>
             <Text style={[styles.menuIcon, isActive("cart") && styles.menuIconActive]}>🛒</Text>
@@ -1138,6 +1174,7 @@ export default function App() {
           </View>
           <Text style={[styles.menuText, isActive("cart") && styles.menuTextActive]}>Корзина</Text>
         </TouchableOpacity>
+
         <TouchableOpacity onPress={() => setPage("profile")} style={styles.menuButton}>
           <Text style={[styles.menuIcon, isActive("profile") && styles.menuIconActive]}>👤</Text>
           <Text style={[styles.menuText, isActive("profile") && styles.menuTextActive]}>Я</Text>
@@ -1205,11 +1242,57 @@ const styles = StyleSheet.create({
   bannerButton: { backgroundColor: "#fff", padding: 10, borderRadius: 20, marginTop: 15, alignSelf: "flex-start" },
 
   grid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between" },
-  card: { width: "48%", backgroundColor: "#fff", borderRadius: 20, padding: 8, marginBottom: 12 },
+  card: { width: "48%", backgroundColor: "#fff", borderRadius: 20, padding: 8, marginBottom: 12, position: "relative" },
   image: { height: 120, width: "100%", borderRadius: 16 },
   bigImage: { width: "100%", height: 250, borderRadius: 24 },
   favorite: { position: "absolute", right: 12, top: 12 },
   favoriteText: { fontSize: 20 },
+  // Чёрная круглая кнопка избранного на карточке
+  favoriteBtn: {
+    position: "absolute",
+    right: 10,
+    top: 10,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: "#111",
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 10,
+    elevation: 6,
+  },
+  favoriteBtnActive: {
+    backgroundColor: "#111",
+  },
+  favoriteBtnText: {
+    fontSize: 16,
+    color: "#fff",
+  },
+  favoriteBtnTextActive: {
+    color: "#ff3b30",
+  },
+  // Кнопка «В избранное» на странице товара
+  favPageBtn: {
+    backgroundColor: "#f0f0f0",
+    paddingVertical: 14,
+    borderRadius: 16,
+    alignItems: "center",
+    marginBottom: 10,
+    borderWidth: 1.5,
+    borderColor: "#111",
+  },
+  favPageBtnActive: {
+    backgroundColor: "#111",
+    borderColor: "#111",
+  },
+  favPageBtnText: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#111",
+  },
+  favPageBtnTextActive: {
+    color: "#fff",
+  },
 
   brand: { fontSize: 11, color: "#777", marginTop: 6 },
   productName: { fontSize: 14, fontWeight: "800", marginTop: 4 },
@@ -1416,16 +1499,22 @@ const styles = StyleSheet.create({
   menuBadge: {
     position: 'absolute',
     top: -8,
-    right: -10,
-    backgroundColor: '#ff3b30',
+    right: -12,
+    backgroundColor: '#111',
     borderRadius: 10,
     minWidth: 18,
     height: 18,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 4,
+    paddingHorizontal: 5,
+    borderWidth: 1.5,
+    borderColor: '#fff',
   },
-  menuBadgeText: { color: '#fff', fontSize: 10, fontWeight: 'bold' },
+  menuBadgeText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '800',
+  },
 
       menu: {
     position: 'fixed',
