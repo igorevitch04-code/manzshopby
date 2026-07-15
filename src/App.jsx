@@ -1,9 +1,10 @@
-import React, { useState, useEffect, createContext, useContext, useRef } from "react";
+import React, { useState, useEffect, createContext, useContext } from "react";
 import {
   View, Text, StyleSheet, TouchableOpacity, Image, ScrollView, Alert,
   TextInput, Clipboard, FlatList, Modal, Share, Switch
 } from "react-native";
-// import AsyncStorage from "@react-native-async-storage/async-storage";
+
+// AsyncStorage removed - using only Telegram CloudStorage + local state
 
 const tg = typeof window !== "undefined" && window.Telegram?.WebApp;
 const ThemeContext = createContext();
@@ -34,7 +35,7 @@ const DEFAULT_PRODUCTS = [
   { id: 5, brand: "JORDAN", name: "Jordan Retro", price: 24990, oldPrice: 29990, image: "https://images.unsplash.com/photo-1460353581641-37baddab0fa2", sales: 80, ratings: [], averageRating: 0, description: "Культовые Jordan Retro.", sizes: ["42","43","44","45"] },
   { id: 6, brand: "PUMA", name: "Puma Classic", price: 11990, oldPrice: null, image: "https://images.unsplash.com/photo-1495555961986-6d4c1ecb7be3", sales: 60, ratings: [], averageRating: 0, description: "Puma Classic – надёжная классика.", sizes: ["40","41","42"] }
 ];
- 
+
 const LEVELS = [
   { name: "Новичок", min: 0, max: 4, cashback: 2 },
   { name: "Постоянный клиент", min: 5, max: 14, cashback: 5 },
@@ -42,7 +43,7 @@ const LEVELS = [
 ];
 const ORDER_STATUSES = ["Ожидает подтверждения", "Принят", "На сборке", "Доставляется", "Готов к выдаче"];
 
-// CloudStorage (без изменений)
+// CloudStorage
 const getCloudStorage = () => {
   if (typeof window !== "undefined" && window.Telegram?.WebApp?.CloudStorage) {
     return window.Telegram.WebApp.CloudStorage;
@@ -81,37 +82,28 @@ const loadFromCloud = async (key) => {
 };
 
 // ==============================
-// КОМПОНЕНТ TOAST (всплывающее уведомление)
+// КОМПОНЕНТ TOAST
 // ==============================
 const Toast = ({ message, visible, onHide }) => {
-    useEffect(() => {
-    const loadAll = async () => {
-      try {
-        // Загружаем только из CloudStorage (Telegram)
-        const cloudCart = await loadFromCloud(CLOUD_KEYS.cart);
-        const cloudFavorites = await loadFromCloud(CLOUD_KEYS.favorites);
-        const cloudOrders = await loadFromCloud(CLOUD_KEYS.orders);
-        const cloudBonus = await loadFromCloud(CLOUD_KEYS.bonus);
-        const cloudOrderHistory = await loadFromCloud(CLOUD_KEYS.orderHistory);
-        const cloudLastOrderNumber = await loadFromCloud(CLOUD_KEYS.lastOrderNumber);
-        const cloudUsedFreeDelivery = await loadFromCloud(CLOUD_KEYS.usedFreeDelivery);
+  useEffect(() => {
+    if (visible) {
+      const timer = setTimeout(() => {
+        onHide();
+      }, 2500);
+      return () => clearTimeout(timer);
+    }
+  }, [visible]);
 
-        setCart(cloudCart || []);
-        setFavorites(cloudFavorites || []);
-        setOrders(cloudOrders || 0);
-        setBonusBalance(cloudBonus || 0);
-        setOrderHistory(cloudOrderHistory || []);
-        setLastOrderNumber(cloudLastOrderNumber || 3340);
-        setUsedFreeDelivery(cloudUsedFreeDelivery || []);
+  if (!visible) return null;
 
-        setProducts(DEFAULT_PRODUCTS);
-        setTheme("light");
-      } catch (e) { 
-        console.warn("Ошибка загрузки", e); 
-      }
-    };
-    loadAll();
-  }, []);
+  return (
+    <View style={styles.toastContainer}>
+      <View style={styles.toast}>
+        <Text style={styles.toastText}>{message}</Text>
+      </View>
+    </View>
+  );
+};
 
 // ==============================
 // ГЛАВНЫЙ КОМПОНЕНТ
@@ -153,7 +145,7 @@ export default function App() {
   const [sizeModalProduct, setSizeModalProduct] = useState(null);
   const [tempSelectedSize, setTempSelectedSize] = useState(null);
 
-  // Состояния для Toast
+  // Toast
   const [toastVisible, setToastVisible] = useState(false);
   const [toastMessage, setToastMessage] = useState("");
 
@@ -166,20 +158,6 @@ export default function App() {
     setToastVisible(false);
   };
 
-  const STORAGE_KEYS = {
-    cart: "@krost_cart",
-    favorites: "@krost_favorites",
-    orders: "@krost_orders",
-    bonus: "@krost_bonus",
-    orderHistory: "@krost_orderHistory",
-    products: "@krost_products",
-    theme: "@krost_theme",
-    adminOrders: "@krost_adminOrders",
-    lastOrderNumber: "@krost_lastOrderNumber",
-    users: "@krost_users",
-    promoCodes: "@krost_promoCodes",
-    usedFreeDelivery: "@krost_usedFreeDelivery"
-  };
   const CLOUD_KEYS = {
     cart: "krost_cart",
     favorites: "krost_favorites",
@@ -190,27 +168,12 @@ export default function App() {
     usedFreeDelivery: "krost_usedFreeDelivery"
   };
 
-  // useEffect(() => {
+  // ==============================
+  // ЗАГРУЗКА ДАННЫХ (только CloudStorage)
+  // ==============================
+  useEffect(() => {
     const loadAll = async () => {
       try {
-        const [c, f, o, b, h, p, t, a, ln, u, pc, ufd] = await AsyncStorage.multiGet([
-          STORAGE_KEYS.cart, STORAGE_KEYS.favorites, STORAGE_KEYS.orders, STORAGE_KEYS.bonus,
-          STORAGE_KEYS.orderHistory, STORAGE_KEYS.products, STORAGE_KEYS.theme, STORAGE_KEYS.adminOrders,
-          STORAGE_KEYS.lastOrderNumber, STORAGE_KEYS.users, STORAGE_KEYS.promoCodes, STORAGE_KEYS.usedFreeDelivery
-        ]);
-        let localCart = c[1] ? JSON.parse(c[1]) : [];
-        let localFavorites = f[1] ? JSON.parse(f[1]) : [];
-        let localOrders = o[1] ? JSON.parse(o[1]) : 0;
-        let localBonus = b[1] ? JSON.parse(b[1]) : 0;
-        let localOrderHistory = h[1] ? JSON.parse(h[1]) : [];
-        let localProducts = p[1] ? JSON.parse(p[1]) : DEFAULT_PRODUCTS;
-        let localTheme = t[1] ? JSON.parse(t[1]) : "light";
-        let localAdminOrders = a[1] ? JSON.parse(a[1]) : [];
-        let localLastOrderNumber = ln[1] ? JSON.parse(ln[1]) : 3340;
-        let localUsers = u[1] ? JSON.parse(u[1]) : [];
-        let localPromoCodes = pc[1] ? JSON.parse(pc[1]) : [];
-        let localUsedFreeDelivery = ufd[1] ? JSON.parse(ufd[1]) : [];
-
         const cloudCart = await loadFromCloud(CLOUD_KEYS.cart);
         const cloudFavorites = await loadFromCloud(CLOUD_KEYS.favorites);
         const cloudOrders = await loadFromCloud(CLOUD_KEYS.orders);
@@ -219,46 +182,35 @@ export default function App() {
         const cloudLastOrderNumber = await loadFromCloud(CLOUD_KEYS.lastOrderNumber);
         const cloudUsedFreeDelivery = await loadFromCloud(CLOUD_KEYS.usedFreeDelivery);
 
-        if (cloudCart !== null) localCart = cloudCart;
-        if (cloudFavorites !== null) localFavorites = cloudFavorites;
-        if (cloudOrders !== null) localOrders = cloudOrders;
-        if (cloudBonus !== null) localBonus = cloudBonus;
-        if (cloudOrderHistory !== null) localOrderHistory = cloudOrderHistory;
-        if (cloudLastOrderNumber !== null) localLastOrderNumber = cloudLastOrderNumber;
-        if (cloudUsedFreeDelivery !== null) localUsedFreeDelivery = cloudUsedFreeDelivery;
+        setCart(cloudCart || []);
+        setFavorites(cloudFavorites || []);
+        setOrders(cloudOrders || 0);
+        setBonusBalance(cloudBonus || 0);
+        setOrderHistory(cloudOrderHistory || []);
+        setLastOrderNumber(cloudLastOrderNumber || 3340);
+        setUsedFreeDelivery(cloudUsedFreeDelivery || []);
 
-        setCart(localCart);
-        setFavorites(localFavorites);
-        setOrders(localOrders);
-        setBonusBalance(localBonus);
-        setOrderHistory(localOrderHistory);
-        setProducts(localProducts);
-        setTheme(localTheme);
-        setAdminOrders(localAdminOrders);
-        setLastOrderNumber(localLastOrderNumber);
-        setUsers(localUsers);
-        setPromoCodes(localPromoCodes);
-        setUsedFreeDelivery(localUsedFreeDelivery);
-      } catch (e) { console.warn("Ошибка загрузки", e); }
+        setProducts(DEFAULT_PRODUCTS);
+        setTheme("light");
+      } catch (e) {
+        console.warn("Ошибка загрузки", e);
+      }
     };
     loadAll();
   }, []);
 
-  // useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.cart, JSON.stringify(cart)); saveToCloud(CLOUD_KEYS.cart, cart); }, [cart]);
-  // useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.favorites, JSON.stringify(favorites)); saveToCloud(CLOUD_KEYS.favorites, favorites); }, [favorites]);
-  // useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.orders, JSON.stringify(orders)); saveToCloud(CLOUD_KEYS.orders, orders); }, [orders]);
-  // useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.bonus, JSON.stringify(bonusBalance)); saveToCloud(CLOUD_KEYS.bonus, bonusBalance); }, [bonusBalance]);
-  // useEffect(() => { { AsyncStorage.setItem(STORAGE_KEYS.orderHistory, JSON.stringify(orderHistory)); saveToCloud(CLOUD_KEYS.orderHistory, orderHistory); }, [orderHistory]);
-  // useEffect(() => { { AsyncStorage.setItem(STORAGE_KEYS.lastOrderNumber, JSON.stringify(lastOrderNumber)); saveToCloud(CLOUD_KEYS.lastOrderNumber, lastOrderNumber); }, [lastOrderNumber]);
-  // useEffect(() => { { AsyncStorage.setItem(STORAGE_KEYS.usedFreeDelivery, JSON.stringify(usedFreeDelivery)); saveToCloud(CLOUD_KEYS.usedFreeDelivery, usedFreeDelivery); }, [usedFreeDelivery]);
+  // ==============================
+  // СОХРАНЕНИЕ (только CloudStorage)
+  // ==============================
+  useEffect(() => { saveToCloud(CLOUD_KEYS.cart, cart); }, [cart]);
+  useEffect(() => { saveToCloud(CLOUD_KEYS.favorites, favorites); }, [favorites]);
+  useEffect(() => { saveToCloud(CLOUD_KEYS.orders, orders); }, [orders]);
+  useEffect(() => { saveToCloud(CLOUD_KEYS.bonus, bonusBalance); }, [bonusBalance]);
+  useEffect(() => { saveToCloud(CLOUD_KEYS.orderHistory, orderHistory); }, [orderHistory]);
+  useEffect(() => { saveToCloud(CLOUD_KEYS.lastOrderNumber, lastOrderNumber); }, [lastOrderNumber]);
+  useEffect(() => { saveToCloud(CLOUD_KEYS.usedFreeDelivery, usedFreeDelivery); }, [usedFreeDelivery]);
 
-  // useEffect(() => { { AsyncStorage.setItem(STORAGE_KEYS.products, JSON.stringify(products)); }, [products]);
-  // useEffect(() => { { AsyncStorage.setItem(STORAGE_KEYS.theme, JSON.stringify(theme)); }, [theme]);
-  // useEffect(() => { { AsyncStorage.setItem(STORAGE_KEYS.adminOrders, JSON.stringify(adminOrders)); }, [adminOrders]);
-  // useEffect(() => { { AsyncStorage.setItem(STORAGE_KEYS.users, JSON.stringify(users)); }, [users]);
-  // useEffect(() => { { AsyncStorage.setItem(STORAGE_KEYS.promoCodes, JSON.stringify(promoCodes)); }, [promoCodes]);
-
-  // useEffect(() => { {
+  useEffect(() => {
     if (user.id !== "guest" && !users.some(u => u.id === user.id)) {
       setUsers(prev => [...prev, user]);
     }
@@ -323,9 +275,7 @@ export default function App() {
     setOrders(orders + 1);
     setCart([]);
     closeOrderModal();
-    // Показываем Toast вместо Alert
     showToast(`✅ Заказ #${nextNumber} оформлен`);
-    // Дополнительно показываем Alert с деталями
     Alert.alert(
       "Заказ оформлен",
       `Номер заказа: ${nextNumber}\nСтатус: Ожидает подтверждения\n${freeDelivery ? "Доставка бесплатная (первый заказ)!" : ""}\n\nЕсли у менеджера будут вопросы, он свяжется с вами.\nА если у вас есть вопросы, вы можете связаться по ссылке в описании бота.`,
@@ -372,7 +322,105 @@ export default function App() {
     setLoadingMore(true);
     setTimeout(() => { setCurrentPage(prev => prev + 1); setLoadingMore(false); }, 500);
   };
-  // useEffect(() => { {
+  useEffect(() => {
+    if (page === "catalog") { setCurrentPage(1); setLoadingMore(false); }
+  }, [page, searchQuery, selectedBrand, minPrice, maxPrice]);
+
+  const toggleAdmin = () => {
+    if (!isAdmin) { Alert.alert("Доступ запрещён", "У вас нет прав администратора"); return; }
+    setShowAdmin(!showAdmin);
+  };
+  const deleteProduct = (id) => {
+    Alert.alert("Удалить?", "", [{ text: "Отмена" }, { text: "Удалить", onPress: () => setProducts(products.filter(p => p.id !== id)) }]);
+  };
+  const addProduct = () => {
+    const np = { id: Date.now(), brand: "Новый бренд", name: "Название", price: 0, oldPrice: null, image: "https://via.placeholder.com/150", sales: 0, ratings: [], averageRating: 0, description: "Описание", sizes: ["40","41","42"] };
+    setProducts([np, ...products]);
+    setEditingProduct(np.id);
+  };
+  const updateProduct = (id, field, value) => {
+    setProducts(prev => prev.map(p => {
+      if (p.id === id) {
+        if (field === "price" || field === "oldPrice") return { ...p, [field]: parseInt(value) || 0 };
+        if (field === "sizes") return { ...p, [field]: value.split(',').map(s => s.trim()) };
+        return { ...p, [field]: value };
+      }
+      return p;
+    }));
+  };
+  const changeStatus = (orderId, newStatus) => {
+    setAdminOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o));
+    setOrderHistory(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o));
+  };
+  const updateTracking = (orderId, trackingNumber) => {
+    setAdminOrders(prev => prev.map(o => o.id === orderId ? { ...o, trackingNumber } : o));
+    setOrderHistory(prev => prev.map(o => o.id === orderId ? { ...o, trackingNumber } : o));
+  };
+  const sendBroadcast = () => {
+    if (!broadcastText.trim()) { Alert.alert("Ошибка", "Введите текст"); return; }
+    Alert.alert("Рассылка отправлена", `Сообщение: ${broadcastText}\nПолучателей: ${users.length}`);
+    setBroadcastText("");
+  };
+
+  const addPromoCode = () => {
+    const code = prompt("Введите код (например, SAVE10)");
+    if (!code) return;
+    const discount = prompt("Введите скидку в % (например, 10)");
+    if (!discount) return;
+    const description = prompt("Описание (необязательно)") || "";
+    setPromoCodes(prev => [...prev, { code: code.toUpperCase(), discount: parseInt(discount), description, active: true }]);
+  };
+  const togglePromoActive = (index) => {
+    setPromoCodes(prev => prev.map((p, i) => i === index ? { ...p, active: !p.active } : p));
+  };
+  const deletePromoCode = (index) => {
+    Alert.alert("Удалить промокод?", "", [
+      { text: "Отмена" },
+      { text: "Удалить", onPress: () => setPromoCodes(prev => prev.filter((_, i) => i !== index)) }
+    ]);
+  };
+
+  let adminRevenue = 0;
+  const salesMap = {};
+  adminOrders.forEach(o => { adminRevenue += o.finalTotal; o.items.forEach(i => { salesMap[i.id] = (salesMap[i.id] || 0) + 1; }); });
+  const popular = Object.keys(salesMap).sort((a,b) => salesMap[b] - salesMap[a]).slice(0,5).map(id => products.find(p => p.id === parseInt(id))).filter(Boolean);
+    const addRating = (productId, rating, comment) => {
+    setProducts(prev => prev.map(p => {
+      if (p.id === productId) {
+        const newRatings = [...p.ratings, { userId: user.id, rating, comment, date: new Date().toISOString() }];
+        const avg = newRatings.reduce((s, r) => s + r.rating, 0) / newRatings.length;
+        return { ...p, ratings: newRatings, averageRating: avg };
+      }
+      return p;
+    }));
+  };
+
+  const shareProduct = async (product) => {
+    try { await Share.share({ message: `${product.brand} ${product.name} - ${money(product.price)}\nhttps://t.me/krost_shop_bot?start=product_${product.id}` }); } catch (e) {}
+  };
+
+  const getRecommended = () => {
+    if (orderHistory.length === 0) return [];
+    const lastOrder = orderHistory[0];
+    const brands = lastOrder.items.map(i => i.brand);
+    return products.filter(p => brands.includes(p.brand) && !lastOrder.items.some(i => i.id === p.id)).slice(0, 4);
+  };
+
+  const filtered = products.filter(p => {
+    const matchName = p.name.toLowerCase().includes(searchQuery.toLowerCase()) || p.brand.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchBrand = selectedBrand ? p.brand === selectedBrand : true;
+    const matchPrice = (minPrice === "" || p.price >= parseInt(minPrice)) && (maxPrice === "" || p.price <= parseInt(maxPrice));
+    return matchName && matchBrand && matchPrice;
+  });
+  const PAGE_SIZE = 4;
+  const paginated = filtered.slice(0, currentPage * PAGE_SIZE);
+  const hasMore = paginated.length < filtered.length;
+  const loadMore = () => {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    setTimeout(() => { setCurrentPage(prev => prev + 1); setLoadingMore(false); }, 500);
+  };
+  useEffect(() => {
     if (page === "catalog") { setCurrentPage(1); setLoadingMore(false); }
   }, [page, searchQuery, selectedBrand, minPrice, maxPrice]);
 
@@ -441,7 +489,7 @@ export default function App() {
 
   const SizeModal = () => null;
 
-  // ---- ProductCard (без кнопки, без размеров) ----
+  // ---- ProductCard ----
   const ProductCard = ({ item }) => {
     const isFav = favorites.some(x => x.id === item.id);
     const { theme } = useTheme();
@@ -544,7 +592,7 @@ export default function App() {
     );
   };
 
-  // ---- ProductPage (исправлена кнопка, выбор размера) ----
+  // ---- ProductPage ----
   const ProductPage = () => {
     if (!selectedProduct) return null;
     const { theme } = useTheme(); 
@@ -593,7 +641,6 @@ export default function App() {
           <Text style={[styles.ratingDisplay, isDark && styles.textDark]}>⭐ {selectedProduct.averageRating.toFixed(1)} ({selectedProduct.ratings.length} отзывов)</Text>
         )}
 
-        {/* Выбор размера */}
         <View style={styles.sizeBox}>
           <Text style={[styles.sizeTitle, isDark && styles.textDark]}>Выберите размер</Text>
           <View style={styles.sizes}>
@@ -736,9 +783,7 @@ export default function App() {
         <View style={{ height: 20 }} />
       </ScrollView>
     );
-  };
-
-  // ---- Profile ----
+  };  // ---- Profile ----
   const Profile = () => {
     const { theme, toggleTheme } = useTheme(); const isDark = theme === "dark";
     return (
@@ -837,10 +882,7 @@ export default function App() {
             <Text style={[styles.closeAdminText, isDark && styles.textDark]}>✕ Закрыть админку</Text>
           </TouchableOpacity>
 
-          <ScrollView 
-            style={{ flex: 1 }} 
-            contentContainerStyle={{ paddingBottom: 40, flexGrow: 1 }}
-          >
+          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 40, flexGrow: 1 }}>
             <Text style={[styles.pageTitle, isDark && styles.textDark]}>Админ-панель</Text>
 
             <View style={[styles.adminStatCard, isDark && styles.adminStatCardDark]}>
@@ -961,7 +1003,7 @@ export default function App() {
     const [delivery, setDelivery] = useState("europost");
     const [useFreeDelivery, setUseFreeDelivery] = useState(false);
     const { theme } = useTheme(); const isDark = theme === "dark";
-    // useEffect(() =>  {
+    useEffect(() => {
       if (!orderModalVisible) { setFullName(""); setAddress(""); setPhone(""); setDelivery("europost"); setUseFreeDelivery(false); }
     }, [orderModalVisible]);
 
@@ -1090,7 +1132,6 @@ export default function App() {
         <Menu />
         <OrderModal />
         <AdminPanel />
-        <SizeModal />
         <Toast message={toastMessage} visible={toastVisible} onHide={hideToast} />
       </View>
     </ThemeContext.Provider>
@@ -1098,7 +1139,7 @@ export default function App() {
 }
 
 // ==============================
-// СТИЛИ (добавлены для Toast и закрепления меню)
+// СТИЛИ (ПОЛНЫЕ)
 // ==============================
 const styles = StyleSheet.create({
   root: {
@@ -1109,7 +1150,7 @@ const styles = StyleSheet.create({
   },
   contentContainer: {
     flex: 1,
-    paddingBottom: 80, // отступ для меню
+    paddingBottom: 80,
   },
   page: {
     flex: 1,
@@ -1122,18 +1163,15 @@ const styles = StyleSheet.create({
   cardDark: { backgroundColor: "#2a2a2a" },
   scrollContent: { paddingBottom: 10 },
 
-  // Логотип и описания
   logo: { fontSize: 30, fontWeight: "900", marginTop: 18 },
   description: { color: "#777", marginTop: 4, fontSize: 14 },
   pageTitle: { fontSize: 24, fontWeight: "900", marginTop: 18, marginBottom: 12 },
   sectionTitle: { fontSize: 20, fontWeight: "900", marginTop: 18, marginBottom: 12 },
 
-  // Баннер
   banner: { backgroundColor: "#111", padding: 20, borderRadius: 28, marginTop: 18 },
   bannerTitle: { fontSize: 26, fontWeight: "900", color: "#fff" },
   bannerButton: { backgroundColor: "#fff", padding: 10, borderRadius: 20, marginTop: 15, alignSelf: "flex-start" },
 
-  // Сетка и карточки
   grid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between" },
   card: { width: "48%", backgroundColor: "#fff", borderRadius: 20, padding: 8, marginBottom: 12 },
   image: { height: 120, width: "100%", borderRadius: 16 },
@@ -1141,7 +1179,6 @@ const styles = StyleSheet.create({
   favorite: { position: "absolute", right: 12, top: 12 },
   favoriteText: { fontSize: 20 },
 
-  // Тексты
   brand: { fontSize: 11, color: "#777", marginTop: 6 },
   productName: { fontSize: 14, fontWeight: "800", marginTop: 4 },
   price: { fontSize: 18, fontWeight: "900", marginTop: 3 },
@@ -1150,12 +1187,9 @@ const styles = StyleSheet.create({
   bigTitle: { fontSize: 24, fontWeight: "900" },
   bigPrice: { fontSize: 28, fontWeight: "900" },
 
-  // Кнопки
-  smallButton: { backgroundColor: "#111", padding: 8, borderRadius: 16, marginTop: 8 },
   buyButton: { backgroundColor: "#111", padding: 14, borderRadius: 22, marginTop: 16 },
   buttonText: { color: "#fff", textAlign: "center", fontWeight: "800", fontSize: 13 },
 
-  // Корзина
   cartItem: { backgroundColor: "#fff", padding: 12, borderRadius: 20, flexDirection: "row", marginBottom: 12 },
   cartItemDark: { backgroundColor: "#2a2a2a" },
   cartImage: { width: 70, height: 70, borderRadius: 16, marginRight: 12 },
@@ -1164,20 +1198,17 @@ const styles = StyleSheet.create({
   finalTotal: { fontSize: 20, fontWeight: "900", marginTop: 4 },
   discountText: { fontSize: 16, color: "green", marginTop: 4 },
 
-  // Бонусы, профиль
   balanceCard: { backgroundColor: "#111", padding: 24, borderRadius: 28 },
   balanceLabel: { color: "#fff" },
   balanceValue: { color: "#fff", fontSize: 36, fontWeight: "900" },
   balanceInfo: { color: "#fff" },
   userName: { fontSize: 18 },
 
-  // Рефералка
   referralBox: { backgroundColor: "#fff", padding: 16, borderRadius: 24 },
   referralBoxDark: { backgroundColor: "#2a2a2a" },
   referralText: { marginBottom: 12, fontSize: 13 },
   copyButton: { backgroundColor: "#111", padding: 12, borderRadius: 18 },
 
-  // Уровни
   currentLevel: { backgroundColor: "#111", padding: 20, borderRadius: 24 },
   currentLevelTitle: { fontSize: 24, fontWeight: "900", color: "#fff" },
   currentInfo: { color: "#fff", marginTop: 6, fontSize: 14 },
@@ -1190,7 +1221,6 @@ const styles = StyleSheet.create({
   levelInfo: { marginTop: 4, fontSize: 14 },
   activeText: { color: "#fff" },
 
-  // История заказов
   orderCard: { backgroundColor: "#fff", padding: 14, borderRadius: 18, marginBottom: 12 },
   orderCardDark: { backgroundColor: "#2a2a2a" },
   orderId: { fontSize: 15, fontWeight: "800" },
@@ -1201,19 +1231,16 @@ const styles = StyleSheet.create({
   orderMore: { fontSize: 12, color: "#777", marginLeft: 8 },
   trackingText: { fontSize: 13, color: "#0066cc", marginTop: 2 },
 
-  // Модальные окна
   modalOverlay: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "rgba(0,0,0,0.5)" },
   modalScrollView: { flexGrow: 1, justifyContent: "center", paddingVertical: 20 },
   modalView: { width: "90%", backgroundColor: "#fff", borderRadius: 28, padding: 20, alignItems: "stretch", alignSelf: "center" },
   modalViewDark: { backgroundColor: "#2a2a2a" },
   modalTitle: { fontSize: 20, fontWeight: "900", marginBottom: 16, textAlign: "center" },
-  modalSubtitle: { fontSize: 15, textAlign: "center", marginBottom: 12, color: "#666" },
   modalInput: { borderWidth: 1, borderColor: "#ddd", borderRadius: 14, padding: 10, marginBottom: 12, fontSize: 15 },
   modalButtons: { flexDirection: "row", justifyContent: "space-between", marginTop: 12 },
   modalCancel: { padding: 10, borderRadius: 18, backgroundColor: "#eee", flex: 0.4, alignItems: "center" },
   modalConfirm: { padding: 10, borderRadius: 18, backgroundColor: "#111", flex: 0.5, alignItems: "center" },
 
-  // Доставка
   deliveryLabel: { fontSize: 15, fontWeight: "600", marginBottom: 8 },
   deliveryOptions: { flexDirection: "row", justifyContent: "space-between", marginBottom: 16 },
   deliveryOption: { flex: 1, padding: 10, borderRadius: 14, backgroundColor: "#eee", marginHorizontal: 4, alignItems: "center" },
@@ -1225,16 +1252,13 @@ const styles = StyleSheet.create({
   deliverySummaryDark: { backgroundColor: "#333" },
   summaryText: { fontSize: 13, fontWeight: "500" },
 
-  // Промокод
   promoBox: { flexDirection: "row", marginVertical: 8 },
   promoInput: { flex: 1, borderWidth: 1, borderColor: "#ddd", borderRadius: 18, padding: 8, marginRight: 8, fontSize: 14 },
   promoButton: { backgroundColor: "#111", padding: 8, borderRadius: 18, justifyContent: "center" },
 
-  // Бонус-чекбокс
   bonusCheckbox: { flexDirection: "row", alignItems: "center", marginVertical: 8 },
   bonusCheckboxText: { fontSize: 14, fontWeight: "600" },
 
-  // Поиск и фильтры
   searchInput: { backgroundColor: "#fff", padding: 10, borderRadius: 22, marginBottom: 12, fontSize: 14 },
   filterScroll: { flexDirection: "row", marginBottom: 12, height: 44, flexShrink: 0, flexGrow: 0 },
   filterContent: { alignItems: "center" },
@@ -1244,7 +1268,6 @@ const styles = StyleSheet.create({
   priceFilter: { flexDirection: "row", marginBottom: 12 },
   priceInput: { flex: 1, backgroundColor: "#fff", padding: 8, borderRadius: 18, marginRight: 8, fontSize: 14 },
 
-  // Выбор размера (на странице товара)
   sizeBox: { marginTop: 16 },
   sizeTitle: { fontSize: 15, fontWeight: "600", marginBottom: 8 },
   sizes: { flexDirection: "row", flexWrap: "wrap" },
@@ -1253,7 +1276,6 @@ const styles = StyleSheet.create({
   sizeTextActive: { color: "#fff" },
   sizeText: { fontSize: 13, color: "#555", marginTop: 2 },
 
-  // Админка
   adminButton: { backgroundColor: "#111", padding: 10, borderRadius: 18, marginVertical: 8, alignSelf: "flex-start" },
   closeAdmin: { marginBottom: 16, alignSelf: "flex-end" },
   closeAdminText: { fontSize: 15, fontWeight: "600" },
@@ -1267,7 +1289,6 @@ const styles = StyleSheet.create({
     backgroundColor: "#2a2a2a",
   },
   adminStat: { fontSize: 16, marginVertical: 4 },
-  adminItem: { fontSize: 13, marginVertical: 2 },
   statusButtons: { flexDirection: "row", flexWrap: "wrap", marginTop: 8 },
   statusBtn: { padding: 5, borderRadius: 12, backgroundColor: "#eee", marginRight: 6, marginBottom: 4 },
   statusBtnActive: { backgroundColor: "#111" },
@@ -1284,7 +1305,6 @@ const styles = StyleSheet.create({
   broadcastInput: { borderWidth: 1, borderColor: "#ddd", borderRadius: 14, padding: 10, marginBottom: 12, minHeight: 60, fontSize: 14 },
   broadcastBtn: { backgroundColor: "#111", padding: 12, borderRadius: 20, alignItems: "center", marginBottom: 20 },
 
-  // Отзывы
   ratingDisplay: { fontSize: 14, marginVertical: 4 },
   reviewItem: { backgroundColor: "#f0f0f0", padding: 8, borderRadius: 12, marginBottom: 8 },
   reviewItemDark: { backgroundColor: "#333" },
@@ -1301,16 +1321,13 @@ const styles = StyleSheet.create({
   reviewInput: { borderWidth: 1, borderColor: "#ddd", borderRadius: 12, padding: 8, marginBottom: 8 },
   submitReview: { backgroundColor: "#111", padding: 10, borderRadius: 16, alignItems: "center" },
 
-  // Тема
   themeRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginVertical: 12 },
   themeLabel: { fontSize: 16 },
 
-  // Карточка итога
   totalRow: { flexDirection: "row", justifyContent: "space-between", marginVertical: 12, paddingVertical: 8, borderTopWidth: 1, borderColor: "#ddd" },
   totalLabel: { fontSize: 16, fontWeight: "600" },
   totalAmount: { fontSize: 18, fontWeight: "900" },
 
-  // Бейджи
   cartBadge: { fontSize: 16, fontWeight: "600", color: "#000" },
   menuBadge: {
     position: 'absolute',
@@ -1326,7 +1343,6 @@ const styles = StyleSheet.create({
   },
   menuBadgeText: { color: '#fff', fontSize: 10, fontWeight: 'bold' },
 
-  // Меню (закреплённое)
   menu: {
     position: 'absolute',
     bottom: 0,
@@ -1368,7 +1384,6 @@ const styles = StyleSheet.create({
     color: '#111',
   },
 
-  // Прочие мелочи
   back: { fontSize: 16, marginBottom: 12, color: "#555" },
   shareBtn: { fontSize: 22, marginBottom: 12 },
   productHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
@@ -1376,7 +1391,6 @@ const styles = StyleSheet.create({
   loader: { textAlign: "center", padding: 8, color: "#777" },
   empty: { textAlign: "center", padding: 20, color: "#999" },
 
-  // ===== СТИЛИ ДЛЯ TOAST =====
   toastContainer: {
     position: 'absolute',
     top: 50,
