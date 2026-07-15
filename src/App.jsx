@@ -339,6 +339,31 @@ export default function App() {
     } catch (e) {}
   };
 
+  // Открытие товара по deep link (startapp / start_param)
+  useEffect(() => {
+    try {
+      const tg = typeof window !== "undefined" && window.Telegram?.WebApp;
+      if (!tg) return;
+      tg.ready();
+      const startParam = tg.initDataUnsafe?.start_param || tg.startParam || "";
+      if (startParam && startParam.startsWith("product_")) {
+        const productId = parseInt(startParam.replace("product_", ""));
+        if (!isNaN(productId)) {
+          const tryOpen = () => {
+            const found = products.find(p => p.id === productId);
+            if (found) {
+              setSelectedProduct(found);
+              setSelectedSize(null);
+              setPage("product");
+            }
+          };
+          if (products.length > 0) tryOpen();
+          else setTimeout(tryOpen, 1000);
+        }
+      }
+    } catch (e) {}
+  }, [products]);
+
   const getRecommended = () => {
     if (orderHistory.length === 0) return [];
     const lastOrder = orderHistory[0];
