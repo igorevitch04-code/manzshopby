@@ -42,7 +42,7 @@ const LEVELS = [
 ];
 const ORDER_STATUSES = ["Ожидает подтверждения", "Принят", "На сборке", "Доставляется", "Готов к выдаче"];
 
-// CloudStorage
+// CloudStorage (без изменений)
 const getCloudStorage = () => {
   if (typeof window !== "undefined" && window.Telegram?.WebApp?.CloudStorage) {
     return window.Telegram.WebApp.CloudStorage;
@@ -141,6 +141,7 @@ export default function App() {
     usedFreeDelivery: "krost_usedFreeDelivery"
   };
 
+  // Загрузка и сохранение (без изменений, как в вашем коде)
   useEffect(() => {
     const loadAll = async () => {
       try {
@@ -389,7 +390,7 @@ export default function App() {
 
   const SizeModal = () => null; // не используется
 
-  // ---- ProductCard (без кнопки, с размерами) ----
+  // ---- ProductCard (без кнопки, без размеров) ----
   const ProductCard = ({ item }) => {
     const isFav = favorites.some(x => x.id === item.id);
     const { theme } = useTheme();
@@ -417,13 +418,7 @@ export default function App() {
         {item.oldPrice && <Text style={styles.oldPrice}>{money(item.oldPrice)}</Text>}
         <Text style={[styles.price, isDark && styles.textDark]}>{money(item.price)}</Text>
         
-        <View style={styles.sizesRow}>
-          {item.sizes && item.sizes.map(size => (
-            <View key={size} style={styles.sizeChip}>
-              <Text style={styles.sizeChipText}>{size}</Text>
-            </View>
-          ))}
-        </View>
+        {/* Размеры убраны – они только на странице товара */}
       </View>
     );
   };
@@ -500,7 +495,7 @@ export default function App() {
     );
   };
 
-  // ---- ProductPage (с выбором размера через tg.showPopup) ----
+  // ---- ProductPage (исправлена кнопка и выбор размера) ----
   const ProductPage = () => {
     if (!selectedProduct) return null;
     const { theme } = useTheme(); 
@@ -510,25 +505,13 @@ export default function App() {
     const hasPurchased = orderHistory.some(order => order.items.some(i => i.id === selectedProduct.id));
 
     const handleAddToCart = () => {
-      if (!selectedProduct.sizes || selectedProduct.sizes.length === 0) {
-        addCart(selectedProduct);
-        tg?.showAlert("✅ Товар добавлен в корзину");
+      // Проверяем, выбран ли размер
+      if (!selectedSize) {
+        Alert.alert("Выберите размер", "Пожалуйста, выберите размер перед добавлением в корзину");
         return;
       }
-
-      const buttons = selectedProduct.sizes.map(size => ({
-        text: size,
-        onClick: () => {
-          addCart({ ...selectedProduct, size });
-          tg?.showAlert(`✅ ${selectedProduct.brand} ${selectedProduct.name}\nРазмер: ${size} добавлен`);
-        }
-      }));
-
-      tg?.showPopup({
-        title: "Выберите размер",
-        message: `${selectedProduct.brand} ${selectedProduct.name}`,
-        buttons: [...buttons, { text: "Отмена", type: "cancel" }]
-      });
+      addCart({ ...selectedProduct, size: selectedSize });
+      Alert.alert("Добавлено", `Товар добавлен в корзину (размер ${selectedSize})`);
     };
 
     const submitRating = () => {
@@ -561,6 +544,22 @@ export default function App() {
         {selectedProduct.averageRating > 0 && (
           <Text style={[styles.ratingDisplay, isDark && styles.textDark]}>⭐ {selectedProduct.averageRating.toFixed(1)} ({selectedProduct.ratings.length} отзывов)</Text>
         )}
+
+        {/* Выбор размера */}
+        <View style={styles.sizeBox}>
+          <Text style={[styles.sizeTitle, isDark && styles.textDark]}>Выберите размер</Text>
+          <View style={styles.sizes}>
+            {(selectedProduct.sizes || ["40","41","42","43","44"]).map(size => (
+              <TouchableOpacity
+                key={size}
+                style={[styles.size, selectedSize === size && styles.sizeActive]}
+                onPress={() => setSelectedSize(size)}
+              >
+                <Text style={selectedSize === size && styles.sizeTextActive}>{size}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
 
         <TouchableOpacity style={styles.buyButton} onPress={handleAddToCart}>
           <Text style={styles.buttonText}>Добавить в корзину</Text>
@@ -988,7 +987,7 @@ export default function App() {
     );
   };
 
-  // ---- Меню (с иконками, без эмодзи, закреплённое) ----
+  // ---- Меню (закреплённое, с иконками) ----
   const Menu = () => {
     const { theme } = useTheme();
     const isDark = theme === "dark";
@@ -1048,7 +1047,7 @@ export default function App() {
 }
 
 // ==============================
-// СТИЛИ (полный набор)
+// СТИЛИ
 // ==============================
 const styles = StyleSheet.create({
   // Основные страницы
@@ -1186,24 +1185,14 @@ const styles = StyleSheet.create({
   priceFilter: { flexDirection: "row", marginBottom: 12 },
   priceInput: { flex: 1, backgroundColor: "#fff", padding: 8, borderRadius: 18, marginRight: 8, fontSize: 14 },
 
-  // Выбор размера (в карточке)
-  sizesRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    marginTop: 6,
-  },
-  sizeChip: {
-    backgroundColor: '#eee',
-    borderRadius: 12,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    marginRight: 4,
-    marginBottom: 4,
-  },
-  sizeChipText: {
-    fontSize: 11,
-    color: '#333',
-  },
+  // Выбор размера (на странице товара)
+  sizeBox: { marginTop: 16 },
+  sizeTitle: { fontSize: 15, fontWeight: "600", marginBottom: 8 },
+  sizes: { flexDirection: "row", flexWrap: "wrap" },
+  size: { width: 44, height: 44, borderRadius: 22, backgroundColor: "#eee", justifyContent: "center", alignItems: "center", marginRight: 8, marginBottom: 8 },
+  sizeActive: { backgroundColor: "#111" },
+  sizeTextActive: { color: "#fff" },
+  sizeText: { fontSize: 13, color: "#555", marginTop: 2 },
 
   // Админка
   adminButton: { backgroundColor: "#111", padding: 10, borderRadius: 18, marginVertical: 8, alignSelf: "flex-start" },
