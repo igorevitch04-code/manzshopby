@@ -1,4 +1,4 @@
-import React, { useState, useEffect, createContext, useContext } from "react";
+import React, { useState, useEffect, createContext, useContext, useRef } from "react";
 import {
   View, Text, StyleSheet, TouchableOpacity, Image, ScrollView, Alert,
   TextInput, Clipboard, FlatList, Modal, Share, Switch
@@ -42,9 +42,7 @@ const LEVELS = [
 ];
 const ORDER_STATUSES = ["Ожидает подтверждения", "Принят", "На сборке", "Доставляется", "Готов к выдаче"];
 
-// ==============================
-// Вспомогательные функции для CloudStorage
-// ==============================
+// CloudStorage (без изменений)
 const getCloudStorage = () => {
   if (typeof window !== "undefined" && window.Telegram?.WebApp?.CloudStorage) {
     return window.Telegram.WebApp.CloudStorage;
@@ -62,9 +60,7 @@ const saveToCloud = async (key, data) => {
           else resolve();
         });
       });
-    } catch (e) {
-      console.warn("CloudStorage save error:", e);
-    }
+    } catch (e) { console.warn("CloudStorage save error:", e); }
   }
 };
 
@@ -79,14 +75,38 @@ const loadFromCloud = async (key) => {
         });
       });
       return value ? JSON.parse(value) : null;
-    } catch (e) {
-      console.warn("CloudStorage load error:", e);
-      return null;
-    }
+    } catch (e) { console.warn("CloudStorage load error:", e); return null; }
   }
   return null;
 };
 
+// ==============================
+// КОМПОНЕНТ TOAST (всплывающее уведомление)
+// ==============================
+const Toast = ({ message, visible, onHide }) => {
+  useEffect(() => {
+    if (visible) {
+      const timer = setTimeout(() => {
+        onHide();
+      }, 2500);
+      return () => clearTimeout(timer);
+    }
+  }, [visible]);
+
+  if (!visible) return null;
+
+  return (
+    <View style={styles.toastContainer}>
+      <View style={styles.toast}>
+        <Text style={styles.toastText}>{message}</Text>
+      </View>
+    </View>
+  );
+};
+
+// ==============================
+// ГЛАВНЫЙ КОМПОНЕНТ
+// ==============================
 export default function App() {
   const user = getTelegramUser();
   const [theme, setTheme] = useState("light");
@@ -124,6 +144,19 @@ export default function App() {
   const [sizeModalProduct, setSizeModalProduct] = useState(null);
   const [tempSelectedSize, setTempSelectedSize] = useState(null);
 
+  // Состояния для Toast
+  const [toastVisible, setToastVisible] = useState(false);
+  const [toastMessage, setToastMessage] = useState("");
+
+  const showToast = (msg) => {
+    setToastMessage(msg);
+    setToastVisible(true);
+  };
+
+  const hideToast = () => {
+    setToastVisible(false);
+  };
+
   const STORAGE_KEYS = {
     cart: "@krost_cart",
     favorites: "@krost_favorites",
@@ -138,8 +171,6 @@ export default function App() {
     promoCodes: "@krost_promoCodes",
     usedFreeDelivery: "@krost_usedFreeDelivery"
   };
-
-  // Облачные ключи (префикс, чтобы не конфликтовать с другими приложениями)
   const CLOUD_KEYS = {
     cart: "krost_cart",
     favorites: "krost_favorites",
@@ -150,13 +181,9 @@ export default function App() {
     usedFreeDelivery: "krost_usedFreeDelivery"
   };
 
-  // ==============================
-  // Загрузка из AsyncStorage и CloudStorage
-  // ==============================
   useEffect(() => {
     const loadAll = async () => {
       try {
-        // Сначала загружаем из AsyncStorage (локально)
         const [c, f, o, b, h, p, t, a, ln, u, pc, ufd] = await AsyncStorage.multiGet([
           STORAGE_KEYS.cart, STORAGE_KEYS.favorites, STORAGE_KEYS.orders, STORAGE_KEYS.bonus,
           STORAGE_KEYS.orderHistory, STORAGE_KEYS.products, STORAGE_KEYS.theme, STORAGE_KEYS.adminOrders,
@@ -175,7 +202,6 @@ export default function App() {
         let localPromoCodes = pc[1] ? JSON.parse(pc[1]) : [];
         let localUsedFreeDelivery = ufd[1] ? JSON.parse(ufd[1]) : [];
 
-        // Загружаем из CloudStorage (если есть) и объединяем / перезаписываем
         const cloudCart = await loadFromCloud(CLOUD_KEYS.cart);
         const cloudFavorites = await loadFromCloud(CLOUD_KEYS.favorites);
         const cloudOrders = await loadFromCloud(CLOUD_KEYS.orders);
@@ -184,7 +210,6 @@ export default function App() {
         const cloudLastOrderNumber = await loadFromCloud(CLOUD_KEYS.lastOrderNumber);
         const cloudUsedFreeDelivery = await loadFromCloud(CLOUD_KEYS.usedFreeDelivery);
 
-        // Если в облаке есть данные – используем их (они актуальнее на других устройствах)
         if (cloudCart !== null) localCart = cloudCart;
         if (cloudFavorites !== null) localFavorites = cloudFavorites;
         if (cloudOrders !== null) localOrders = cloudOrders;
@@ -193,7 +218,6 @@ export default function App() {
         if (cloudLastOrderNumber !== null) localLastOrderNumber = cloudLastOrderNumber;
         if (cloudUsedFreeDelivery !== null) localUsedFreeDelivery = cloudUsedFreeDelivery;
 
-        // Устанавливаем состояния
         setCart(localCart);
         setFavorites(localFavorites);
         setOrders(localOrders);
@@ -206,62 +230,31 @@ export default function App() {
         setUsers(localUsers);
         setPromoCodes(localPromoCodes);
         setUsedFreeDelivery(localUsedFreeDelivery);
-      } catch (e) {
-        console.warn("Ошибка загрузки данных", e);
-      }
+      } catch (e) { console.warn("Ошибка загрузки", e); }
     };
     loadAll();
   }, []);
 
-  // ==============================
-  // Сохранение в AsyncStorage и CloudStorage при каждом изменении
-  // ==============================
-  useEffect(() => {
-    AsyncStorage.setItem(STORAGE_KEYS.cart, JSON.stringify(cart));
-    saveToCloud(CLOUD_KEYS.cart, cart);
-  }, [cart]);
-  useEffect(() => {
-    AsyncStorage.setItem(STORAGE_KEYS.favorites, JSON.stringify(favorites));
-    saveToCloud(CLOUD_KEYS.favorites, favorites);
-  }, [favorites]);
-  useEffect(() => {
-    AsyncStorage.setItem(STORAGE_KEYS.orders, JSON.stringify(orders));
-    saveToCloud(CLOUD_KEYS.orders, orders);
-  }, [orders]);
-  useEffect(() => {
-    AsyncStorage.setItem(STORAGE_KEYS.bonus, JSON.stringify(bonusBalance));
-    saveToCloud(CLOUD_KEYS.bonus, bonusBalance);
-  }, [bonusBalance]);
-  useEffect(() => {
-    AsyncStorage.setItem(STORAGE_KEYS.orderHistory, JSON.stringify(orderHistory));
-    saveToCloud(CLOUD_KEYS.orderHistory, orderHistory);
-  }, [orderHistory]);
-  useEffect(() => {
-    AsyncStorage.setItem(STORAGE_KEYS.lastOrderNumber, JSON.stringify(lastOrderNumber));
-    saveToCloud(CLOUD_KEYS.lastOrderNumber, lastOrderNumber);
-  }, [lastOrderNumber]);
-  useEffect(() => {
-    AsyncStorage.setItem(STORAGE_KEYS.usedFreeDelivery, JSON.stringify(usedFreeDelivery));
-    saveToCloud(CLOUD_KEYS.usedFreeDelivery, usedFreeDelivery);
-  }, [usedFreeDelivery]);
+  useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.cart, JSON.stringify(cart)); saveToCloud(CLOUD_KEYS.cart, cart); }, [cart]);
+  useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.favorites, JSON.stringify(favorites)); saveToCloud(CLOUD_KEYS.favorites, favorites); }, [favorites]);
+  useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.orders, JSON.stringify(orders)); saveToCloud(CLOUD_KEYS.orders, orders); }, [orders]);
+  useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.bonus, JSON.stringify(bonusBalance)); saveToCloud(CLOUD_KEYS.bonus, bonusBalance); }, [bonusBalance]);
+  useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.orderHistory, JSON.stringify(orderHistory)); saveToCloud(CLOUD_KEYS.orderHistory, orderHistory); }, [orderHistory]);
+  useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.lastOrderNumber, JSON.stringify(lastOrderNumber)); saveToCloud(CLOUD_KEYS.lastOrderNumber, lastOrderNumber); }, [lastOrderNumber]);
+  useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.usedFreeDelivery, JSON.stringify(usedFreeDelivery)); saveToCloud(CLOUD_KEYS.usedFreeDelivery, usedFreeDelivery); }, [usedFreeDelivery]);
 
-  // Сохранение остальных данных (которые не синхронизируются между устройствами, но нужны локально)
   useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.products, JSON.stringify(products)); }, [products]);
   useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.theme, JSON.stringify(theme)); }, [theme]);
   useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.adminOrders, JSON.stringify(adminOrders)); }, [adminOrders]);
   useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.users, JSON.stringify(users)); }, [users]);
   useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.promoCodes, JSON.stringify(promoCodes)); }, [promoCodes]);
 
-  // Обновление пользователей
   useEffect(() => {
     if (user.id !== "guest" && !users.some(u => u.id === user.id)) {
       setUsers(prev => [...prev, user]);
     }
   }, [user]);
 
-  // ==============================
-  // Уровни и прочие вычисления
-  // ==============================
   const currentLevel = LEVELS.find(l => orders >= l.min && orders <= l.max) || LEVELS[0];
   const nextLevel = LEVELS[LEVELS.indexOf(currentLevel) + 1];
   let progress = 100;
@@ -321,6 +314,9 @@ export default function App() {
     setOrders(orders + 1);
     setCart([]);
     closeOrderModal();
+    // Показываем Toast вместо Alert
+    showToast(`✅ Заказ #${nextNumber} оформлен`);
+    // Дополнительно показываем Alert с деталями
     Alert.alert(
       "Заказ оформлен",
       `Номер заказа: ${nextNumber}\nСтатус: Ожидает подтверждения\n${freeDelivery ? "Доставка бесплатная (первый заказ)!" : ""}\n\nЕсли у менеджера будут вопросы, он свяжется с вами.\nА если у вас есть вопросы, вы можете связаться по ссылке в описании бота.`,
@@ -431,16 +427,13 @@ export default function App() {
   const popular = Object.keys(salesMap).sort((a,b) => salesMap[b] - salesMap[a]).slice(0,5).map(id => products.find(p => p.id === parseInt(id))).filter(Boolean);
 
   // ==============================
-  // КОМПОНЕНТЫ
+  // КОМПОНЕНТЫ СТРАНИЦ
   // ==============================
 
-  const SizeModal = () => {
-    // Этот компонент больше не нужен как Modal, но оставляем состояние
-    // Выбор размера будет через tg.showPopup
-    return null;
-  };
+  const SizeModal = () => null;
 
-    const ProductCard = ({ item }) => {
+  // ---- ProductCard (без кнопки, без размеров) ----
+  const ProductCard = ({ item }) => {
     const isFav = favorites.some(x => x.id === item.id);
     const { theme } = useTheme();
     const isDark = theme === "dark";
@@ -470,6 +463,7 @@ export default function App() {
     );
   };
 
+  // ---- Home ----
   const Home = () => {
     const popularItems = [...products].sort((a,b) => b.sales - a.sales).slice(0,4);
     const recommended = getRecommended();
@@ -503,6 +497,7 @@ export default function App() {
     );
   };
 
+  // ---- Catalog ----
   const Catalog = () => {
     const brands = getBrands(products);
     const { theme } = useTheme(); const isDark = theme === "dark";
@@ -540,7 +535,8 @@ export default function App() {
     );
   };
 
-    const ProductPage = () => {
+  // ---- ProductPage (исправлена кнопка, выбор размера) ----
+  const ProductPage = () => {
     if (!selectedProduct) return null;
     const { theme } = useTheme(); 
     const isDark = theme === "dark";
@@ -549,25 +545,12 @@ export default function App() {
     const hasPurchased = orderHistory.some(order => order.items.some(i => i.id === selectedProduct.id));
 
     const handleAddToCart = () => {
-      if (!selectedProduct.sizes || selectedProduct.sizes.length === 0) {
-        addCart(selectedProduct);
-        tg?.showAlert("✅ Товар добавлен в корзину");
+      if (!selectedSize) {
+        showToast("⚠️ Выберите размер");
         return;
       }
-
-      const buttons = selectedProduct.sizes.map(size => ({
-        text: size,
-        onClick: () => {
-          addCart({ ...selectedProduct, size });
-          tg?.showAlert(`✅ ${selectedProduct.brand} ${selectedProduct.name}\nРазмер: ${size} добавлен`);
-        }
-      }));
-
-      tg?.showPopup({
-        title: "Выберите размер",
-        message: `${selectedProduct.brand} ${selectedProduct.name}`,
-        buttons: [...buttons, { text: "Отмена", type: "cancel" }]
-      });
+      addCart({ ...selectedProduct, size: selectedSize });
+      showToast(`✅ ${selectedProduct.name} (${selectedSize}) добавлен`);
     };
 
     const submitRating = () => {
@@ -600,6 +583,22 @@ export default function App() {
         {selectedProduct.averageRating > 0 && (
           <Text style={[styles.ratingDisplay, isDark && styles.textDark]}>⭐ {selectedProduct.averageRating.toFixed(1)} ({selectedProduct.ratings.length} отзывов)</Text>
         )}
+
+        {/* Выбор размера */}
+        <View style={styles.sizeBox}>
+          <Text style={[styles.sizeTitle, isDark && styles.textDark]}>Выберите размер</Text>
+          <View style={styles.sizes}>
+            {(selectedProduct.sizes || ["40","41","42","43","44"]).map(size => (
+              <TouchableOpacity
+                key={size}
+                style={[styles.size, selectedSize === size && styles.sizeActive]}
+                onPress={() => setSelectedSize(size)}
+              >
+                <Text style={selectedSize === size && styles.sizeTextActive}>{size}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
 
         <TouchableOpacity style={styles.buyButton} onPress={handleAddToCart}>
           <Text style={styles.buttonText}>Добавить в корзину</Text>
@@ -637,6 +636,7 @@ export default function App() {
     );
   };
 
+  // ---- Favorites ----
   const Favorites = () => {
     const { theme } = useTheme(); const isDark = theme === "dark";
     return (
@@ -654,6 +654,7 @@ export default function App() {
     );
   };
 
+  // ---- Cart ----
   const Cart = () => {
     const { theme } = useTheme();
     const isDark = theme === "dark";
@@ -728,6 +729,7 @@ export default function App() {
     );
   };
 
+  // ---- Profile ----
   const Profile = () => {
     const { theme, toggleTheme } = useTheme(); const isDark = theme === "dark";
     return (
@@ -802,12 +804,12 @@ export default function App() {
     );
   };
 
-    const AdminPanel = () => {
+  // ---- AdminPanel ----
+  const AdminPanel = () => {
     const { theme } = useTheme(); 
     const isDark = theme === "dark";
     if (!showAdmin || !isAdmin) return null;
 
-    // Выручка за сегодня и за месяц
     const today = new Date().toISOString().split('T')[0];
     const todayRevenue = adminOrders
       .filter(o => o.date.startsWith(today))
@@ -826,124 +828,123 @@ export default function App() {
             <Text style={[styles.closeAdminText, isDark && styles.textDark]}>✕ Закрыть админку</Text>
           </TouchableOpacity>
 
-          <Text style={[styles.pageTitle, isDark && styles.textDark]}>Админ-панель</Text>
+          <ScrollView 
+            style={{ flex: 1 }} 
+            contentContainerStyle={{ paddingBottom: 40, flexGrow: 1 }}
+          >
+            <Text style={[styles.pageTitle, isDark && styles.textDark]}>Админ-панель</Text>
 
-          {/* Статистика */}
-          <View style={[styles.adminStatCard, isDark && styles.adminStatCardDark]}>
-            <Text style={[styles.adminStat, isDark && styles.textDark]}>Сегодня: {money(todayRevenue)}</Text>
-            <Text style={[styles.adminStat, isDark && styles.textDark]}>За месяц: {money(monthRevenue)}</Text>
-            <Text style={[styles.adminStat, isDark && styles.textDark]}>Всего заказов: {adminOrders.length}</Text>
-          </View>
+            <View style={[styles.adminStatCard, isDark && styles.adminStatCardDark]}>
+              <Text style={[styles.adminStat, isDark && styles.textDark]}>Сегодня: {money(todayRevenue)}</Text>
+              <Text style={[styles.adminStat, isDark && styles.textDark]}>За месяц: {money(monthRevenue)}</Text>
+              <Text style={[styles.adminStat, isDark && styles.textDark]}>Всего заказов: {adminOrders.length}</Text>
+            </View>
 
-          {/* Управление заказами */}
-          <Text style={[styles.sectionTitle, isDark && styles.textDark]} onPress={() => { /* можно сделать collapsible позже */ }}>
-            Управление заказами
-          </Text>
-          {adminOrders.map(order => (
-            <View key={order.id} style={[styles.orderCard, isDark && styles.orderCardDark]}>
-              <Text style={[styles.orderId, isDark && styles.textDark]}>
-                #{order.id} — {order.fullName} • {new Date(order.date).toLocaleDateString()}
-              </Text>
-              <Text style={[styles.orderStatus, isDark && styles.textDark]}>Статус: {order.status}</Text>
+            <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Управление заказами</Text>
+            {adminOrders.map(order => (
+              <View key={order.id} style={[styles.orderCard, isDark && styles.orderCardDark]}>
+                <Text style={[styles.orderId, isDark && styles.textDark]}>
+                  #{order.id} — {order.fullName} • {new Date(order.date).toLocaleDateString()}
+                </Text>
+                <Text style={[styles.orderStatus, isDark && styles.textDark]}>Статус: {order.status}</Text>
 
-              {order.delivery === "europost" && (
-                <TextInput
-                  style={[styles.trackingInput, isDark && styles.inputDark]}
-                  placeholder="Трек-номер"
-                  placeholderTextColor={isDark ? "#999" : "#888"}
-                  value={order.trackingNumber || ""}
-                  onChangeText={text => updateTracking(order.id, text)}
-                />
-              )}
+                {order.delivery === "europost" && (
+                  <TextInput
+                    style={[styles.trackingInput, isDark && styles.inputDark]}
+                    placeholder="Трек-номер"
+                    placeholderTextColor={isDark ? "#999" : "#888"}
+                    value={order.trackingNumber || ""}
+                    onChangeText={text => updateTracking(order.id, text)}
+                  />
+                )}
 
-              <View style={styles.statusButtons}>
-                {ORDER_STATUSES.map(s => (
-                  <TouchableOpacity 
-                    key={s} 
-                    style={[styles.statusBtn, order.status === s && styles.statusBtnActive]} 
-                    onPress={() => changeStatus(order.id, s)}
-                  >
-                    <Text style={[styles.statusBtnText, order.status === s && styles.statusBtnTextActive]}>{s}</Text>
-                  </TouchableOpacity>
-                ))}
+                <View style={styles.statusButtons}>
+                  {ORDER_STATUSES.map(s => (
+                    <TouchableOpacity 
+                      key={s} 
+                      style={[styles.statusBtn, order.status === s && styles.statusBtnActive]} 
+                      onPress={() => changeStatus(order.id, s)}
+                    >
+                      <Text style={[styles.statusBtnText, order.status === s && styles.statusBtnTextActive]}>{s}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
               </View>
-            </View>
-          ))}
+            ))}
 
-          {/* Управление промокодами */}
-          <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Управление промокодами</Text>
-          <TouchableOpacity style={styles.addBtn} onPress={addPromoCode}>
-            <Text style={styles.buttonText}>+ Добавить промокод</Text>
-          </TouchableOpacity>
-          {promoCodes.map((promo, index) => (
-            <View key={index} style={[styles.productEdit, isDark && styles.productEditDark]}>
-              <Text style={[styles.productName, isDark && styles.textDark]}>
-                {promo.code} — {promo.discount}% {promo.active ? '✅' : '❌'}
-              </Text>
-              <Text style={[styles.brand, isDark && styles.textDark]}>{promo.description}</Text>
-              <View style={styles.editActions}>
-                <TouchableOpacity onPress={() => togglePromoActive(index)}>
-                  <Text style={[styles.editAction, {color: promo.active ? 'green' : 'red'}]}>
-                    {promo.active ? 'Деактивировать' : 'Активировать'}
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => deletePromoCode(index)}>
-                  <Text style={[styles.editAction, {color: 'red'}]}>🗑 Удалить</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          ))}
-
-          {/* Управление товарами */}
-          <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Управление товарами</Text>
-          <TouchableOpacity style={styles.addBtn} onPress={addProduct}>
-            <Text style={styles.buttonText}>+ Добавить товар</Text>
-          </TouchableOpacity>
-          {products.map(p => (
-            <View key={p.id} style={[styles.productEdit, isDark && styles.productEditDark]}>
-              {editingProduct === p.id ? (
-                <>
-                  <TextInput style={[styles.editInput, isDark && styles.inputDark]} value={p.brand} onChangeText={t => updateProduct(p.id, "brand", t)} placeholder="Бренд" />
-                  <TextInput style={[styles.editInput, isDark && styles.inputDark]} value={p.name} onChangeText={t => updateProduct(p.id, "name", t)} placeholder="Название" />
-                  <TextInput style={[styles.editInput, isDark && styles.inputDark]} value={String(p.price)} onChangeText={t => updateProduct(p.id, "price", t)} placeholder="Цена" keyboardType="numeric" />
-                  <TextInput style={[styles.editInput, isDark && styles.inputDark]} value={p.image} onChangeText={t => updateProduct(p.id, "image", t)} placeholder="URL картинки" />
-                  <TextInput style={[styles.editInput, isDark && styles.inputDark]} value={p.description || ""} onChangeText={t => updateProduct(p.id, "description", t)} placeholder="Описание" multiline />
-                  <TextInput style={[styles.editInput, isDark && styles.inputDark]} value={p.sizes ? p.sizes.join(', ') : ""} onChangeText={t => updateProduct(p.id, "sizes", t)} placeholder="Размеры (через запятую)" />
-                  <TouchableOpacity style={styles.saveBtn} onPress={() => setEditingProduct(null)}>
-                    <Text style={styles.buttonText}>Сохранить</Text>
+            <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Управление промокодами</Text>
+            <TouchableOpacity style={styles.addBtn} onPress={addPromoCode}>
+              <Text style={styles.buttonText}>+ Добавить промокод</Text>
+            </TouchableOpacity>
+            {promoCodes.map((promo, index) => (
+              <View key={index} style={[styles.productEdit, isDark && styles.productEditDark]}>
+                <Text style={[styles.productName, isDark && styles.textDark]}>
+                  {promo.code} — {promo.discount}% {promo.active ? '✅' : '❌'}
+                </Text>
+                <Text style={[styles.brand, isDark && styles.textDark]}>{promo.description}</Text>
+                <View style={styles.editActions}>
+                  <TouchableOpacity onPress={() => togglePromoActive(index)}>
+                    <Text style={[styles.editAction, {color: promo.active ? 'green' : 'red'}]}>
+                      {promo.active ? 'Деактивировать' : 'Активировать'}
+                    </Text>
                   </TouchableOpacity>
-                </>
-              ) : (
-                <>
-                  <Text style={[styles.productName, isDark && styles.textDark]}>{p.brand} {p.name}</Text>
-                  <Text style={[styles.price, isDark && styles.textDark]}>{money(p.price)}</Text>
-                  <View style={styles.editActions}>
-                    <TouchableOpacity onPress={() => setEditingProduct(p.id)}><Text style={styles.editAction}>✎ Редактировать</Text></TouchableOpacity>
-                    <TouchableOpacity onPress={() => deleteProduct(p.id)}><Text style={styles.editAction}>🗑 Удалить</Text></TouchableOpacity>
-                  </View>
-                </>
-              )}
-            </View>
-          ))}
+                  <TouchableOpacity onPress={() => deletePromoCode(index)}>
+                    <Text style={[styles.editAction, {color: 'red'}]}>🗑 Удалить</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ))}
 
-          {/* Рассылка */}
-          <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Рассылка</Text>
-          <TextInput
-            style={[styles.broadcastInput, isDark && styles.inputDark]}
-            placeholder="Текст сообщения"
-            placeholderTextColor={isDark ? "#999" : "#888"}
-            value={broadcastText}
-            onChangeText={setBroadcastText}
-            multiline
-          />
-          <TouchableOpacity style={styles.broadcastBtn} onPress={sendBroadcast}>
-            <Text style={styles.buttonText}>📨 Отправить рассылку ({users.length} получателей)</Text>
-          </TouchableOpacity>
+            <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Управление товарами</Text>
+            <TouchableOpacity style={styles.addBtn} onPress={addProduct}>
+              <Text style={styles.buttonText}>+ Добавить товар</Text>
+            </TouchableOpacity>
+            {products.map(p => (
+              <View key={p.id} style={[styles.productEdit, isDark && styles.productEditDark]}>
+                {editingProduct === p.id ? (
+                  <>
+                    <TextInput style={[styles.editInput, isDark && styles.inputDark]} value={p.brand} onChangeText={t => updateProduct(p.id, "brand", t)} placeholder="Бренд" />
+                    <TextInput style={[styles.editInput, isDark && styles.inputDark]} value={p.name} onChangeText={t => updateProduct(p.id, "name", t)} placeholder="Название" />
+                    <TextInput style={[styles.editInput, isDark && styles.inputDark]} value={String(p.price)} onChangeText={t => updateProduct(p.id, "price", t)} placeholder="Цена" keyboardType="numeric" />
+                    <TextInput style={[styles.editInput, isDark && styles.inputDark]} value={p.image} onChangeText={t => updateProduct(p.id, "image", t)} placeholder="URL картинки" />
+                    <TextInput style={[styles.editInput, isDark && styles.inputDark]} value={p.description || ""} onChangeText={t => updateProduct(p.id, "description", t)} placeholder="Описание" multiline />
+                    <TextInput style={[styles.editInput, isDark && styles.inputDark]} value={p.sizes ? p.sizes.join(', ') : ""} onChangeText={t => updateProduct(p.id, "sizes", t)} placeholder="Размеры (через запятую)" />
+                    <TouchableOpacity style={styles.saveBtn} onPress={() => setEditingProduct(null)}>
+                      <Text style={styles.buttonText}>Сохранить</Text>
+                    </TouchableOpacity>
+                  </>
+                ) : (
+                  <>
+                    <Text style={[styles.productName, isDark && styles.textDark]}>{p.brand} {p.name}</Text>
+                    <Text style={[styles.price, isDark && styles.textDark]}>{money(p.price)}</Text>
+                    <View style={styles.editActions}>
+                      <TouchableOpacity onPress={() => setEditingProduct(p.id)}><Text style={styles.editAction}>✎ Редактировать</Text></TouchableOpacity>
+                      <TouchableOpacity onPress={() => deleteProduct(p.id)}><Text style={styles.editAction}>🗑 Удалить</Text></TouchableOpacity>
+                    </View>
+                  </>
+                )}
+              </View>
+            ))}
+
+            <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Рассылка</Text>
+            <TextInput
+              style={[styles.broadcastInput, isDark && styles.inputDark]}
+              placeholder="Текст сообщения"
+              placeholderTextColor={isDark ? "#999" : "#888"}
+              value={broadcastText}
+              onChangeText={setBroadcastText}
+              multiline
+            />
+            <TouchableOpacity style={styles.broadcastBtn} onPress={sendBroadcast}>
+              <Text style={styles.buttonText}>📨 Отправить рассылку ({users.length} получателей)</Text>
+            </TouchableOpacity>
+          </ScrollView>
         </View>
       </Modal>
     );
   };
 
+  // ---- OrderModal ----
   const OrderModal = () => {
     const [fullName, setFullName] = useState("");
     const [address, setAddress] = useState("");
@@ -1025,33 +1026,36 @@ export default function App() {
     );
   };
 
-  // ---- Меню (фиксированное, без эмодзи, жирный шрифт) ----
+  // ---- Меню (закреплённое) ----
   const Menu = () => {
     const { theme } = useTheme();
     const isDark = theme === "dark";
+    const isActive = (target) => page === target;
+
     return (
       <View style={[styles.menu, isDark && styles.menuDark]}>
-        <TouchableOpacity onPress={() => setPage("home")}>
-          <Text style={[styles.menuText, isDark && styles.textDark]}>Главная</Text>
+        <TouchableOpacity onPress={() => setPage("catalog")} style={styles.menuButton}>
+          <Text style={[styles.menuIcon, isActive("catalog") && styles.menuIconActive]}>👟</Text>
+          <Text style={[styles.menuText, isActive("catalog") && styles.menuTextActive]}>Каталог</Text>
         </TouchableOpacity>
-        <TouchableOpacity onPress={() => setPage("catalog")}>
-          <Text style={[styles.menuText, isDark && styles.textDark]}>Каталог</Text>
+        <TouchableOpacity onPress={() => setPage("favorites")} style={styles.menuButton}>
+          <Text style={[styles.menuIcon, isActive("favorites") && styles.menuIconActive]}>♥</Text>
+          <Text style={[styles.menuText, isActive("favorites") && styles.menuTextActive]}>Избранное</Text>
         </TouchableOpacity>
-        <TouchableOpacity onPress={() => setPage("favorites")}>
-          <Text style={[styles.menuText, isDark && styles.textDark]}>Избранное</Text>
-        </TouchableOpacity>
-        <TouchableOpacity onPress={() => setPage("cart")}>
+        <TouchableOpacity onPress={() => setPage("cart")} style={styles.menuButton}>
           <View style={{ position: 'relative' }}>
-            <Text style={[styles.menuText, isDark && styles.textDark]}>Корзина</Text>
+            <Text style={[styles.menuIcon, isActive("cart") && styles.menuIconActive]}>🛒</Text>
             {cart.length > 0 && (
               <View style={styles.menuBadge}>
                 <Text style={styles.menuBadgeText}>{cart.length}</Text>
               </View>
             )}
           </View>
+          <Text style={[styles.menuText, isActive("cart") && styles.menuTextActive]}>Корзина</Text>
         </TouchableOpacity>
-        <TouchableOpacity onPress={() => setPage("profile")}>
-          <Text style={[styles.menuText, isDark && styles.textDark]}>Я</Text>
+        <TouchableOpacity onPress={() => setPage("profile")} style={styles.menuButton}>
+          <Text style={[styles.menuIcon, isActive("profile") && styles.menuIconActive]}>👤</Text>
+          <Text style={[styles.menuText, isActive("profile") && styles.menuTextActive]}>Я</Text>
         </TouchableOpacity>
       </View>
     );
@@ -1070,27 +1074,38 @@ export default function App() {
 
   return (
     <ThemeContext.Provider value={{ theme, toggleTheme }}>
-      <View style={{ flex: 1, backgroundColor: theme === "dark" ? "#1a1a1a" : "#F7F7F5" }}>
-        {content}
+      <View style={styles.root}>
+        <View style={styles.contentContainer}>
+          {content}
+        </View>
         <Menu />
         <OrderModal />
         <AdminPanel />
         <SizeModal />
+        <Toast message={toastMessage} visible={toastVisible} onHide={hideToast} />
       </View>
     </ThemeContext.Provider>
   );
 }
 
 // ==============================
-// СТИЛИ (полный набор)
+// СТИЛИ (добавлены для Toast и закрепления меню)
 // ==============================
 const styles = StyleSheet.create({
-  // Основные страницы
+  root: {
+    flex: 1,
+    height: '100%',
+    width: '100%',
+    backgroundColor: '#F7F7F5',
+  },
+  contentContainer: {
+    flex: 1,
+    paddingBottom: 80, // отступ для меню
+  },
   page: {
     flex: 1,
     backgroundColor: "#F7F7F5",
     padding: 14,
-    paddingBottom: 80,
   },
   pageDark: { backgroundColor: "#1a1a1a" },
   textDark: { color: "#fff" },
@@ -1220,24 +1235,28 @@ const styles = StyleSheet.create({
   priceFilter: { flexDirection: "row", marginBottom: 12 },
   priceInput: { flex: 1, backgroundColor: "#fff", padding: 8, borderRadius: 18, marginRight: 8, fontSize: 14 },
 
-  // Выбор размера
+  // Выбор размера (на странице товара)
   sizeBox: { marginTop: 16 },
   sizeTitle: { fontSize: 15, fontWeight: "600", marginBottom: 8 },
   sizes: { flexDirection: "row", flexWrap: "wrap" },
   size: { width: 44, height: 44, borderRadius: 22, backgroundColor: "#eee", justifyContent: "center", alignItems: "center", marginRight: 8, marginBottom: 8 },
   sizeActive: { backgroundColor: "#111" },
   sizeTextActive: { color: "#fff" },
-  sizeGrid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", marginVertical: 12 },
-  sizeOption: { width: 52, height: 52, borderRadius: 26, backgroundColor: "#eee", justifyContent: "center", alignItems: "center", margin: 6 },
-  sizeOptionActive: { backgroundColor: "#111" },
-  sizeOptionText: { fontSize: 16, fontWeight: "600" },
-  sizeOptionTextActive: { color: "#fff" },
   sizeText: { fontSize: 13, color: "#555", marginTop: 2 },
 
   // Админка
   adminButton: { backgroundColor: "#111", padding: 10, borderRadius: 18, marginVertical: 8, alignSelf: "flex-start" },
   closeAdmin: { marginBottom: 16, alignSelf: "flex-end" },
   closeAdminText: { fontSize: 15, fontWeight: "600" },
+  adminStatCard: {
+    backgroundColor: "#111",
+    padding: 20,
+    borderRadius: 24,
+    marginBottom: 20,
+  },
+  adminStatCardDark: {
+    backgroundColor: "#2a2a2a",
+  },
   adminStat: { fontSize: 16, marginVertical: 4 },
   adminItem: { fontSize: 13, marginVertical: 2 },
   statusButtons: { flexDirection: "row", flexWrap: "wrap", marginTop: 8 },
@@ -1286,8 +1305,8 @@ const styles = StyleSheet.create({
   cartBadge: { fontSize: 16, fontWeight: "600", color: "#000" },
   menuBadge: {
     position: 'absolute',
-    top: -10,
-    right: -14,
+    top: -8,
+    right: -10,
     backgroundColor: '#ff3b30',
     borderRadius: 10,
     minWidth: 18,
@@ -1296,28 +1315,48 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 4,
   },
-  menuBadgeText: { color: '#fff', fontSize: 11, fontWeight: 'bold' },
+  menuBadgeText: { color: '#fff', fontSize: 10, fontWeight: 'bold' },
 
-  // Меню (фиксированное)
+  // Меню (закреплённое)
   menu: {
     position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
-    height: 65,
-    backgroundColor: "#fff",
+    height: 70,
+    backgroundColor: '#fff',
     borderTopWidth: 1,
-    borderColor: "#ddd",
-    flexDirection: "row",
-    justifyContent: "space-around",
-    alignItems: "center",
-    paddingBottom: 5,
+    borderColor: '#eee',
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    alignItems: 'center',
+    paddingBottom: 8,
+    paddingTop: 4,
+    zIndex: 1000,
   },
-  menuDark: { backgroundColor: "#1a1a1a", borderColor: "#333" },
+  menuDark: {
+    backgroundColor: '#1a1a1a',
+    borderColor: '#333',
+  },
+  menuButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  menuIcon: {
+    fontSize: 22,
+    color: '#333',
+  },
+  menuIconActive: {
+    color: '#111',
+  },
   menuText: {
-    fontSize: 13,
-    fontWeight: "bold", // Жирный шрифт
-    color: "#333",
+    fontSize: 11,
+    fontWeight: '500',
+    color: '#333',
+  },
+  menuTextActive: {
+    fontWeight: 'bold',
+    color: '#111',
   },
 
   // Прочие мелочи
@@ -1327,4 +1366,27 @@ const styles = StyleSheet.create({
   descriptionText: { fontSize: 13, color: "#555", marginVertical: 4 },
   loader: { textAlign: "center", padding: 8, color: "#777" },
   empty: { textAlign: "center", padding: 20, color: "#999" },
+
+  // ===== СТИЛИ ДЛЯ TOAST =====
+  toastContainer: {
+    position: 'absolute',
+    top: 50,
+    left: 20,
+    right: 20,
+    alignItems: 'center',
+    zIndex: 9999,
+  },
+  toast: {
+    backgroundColor: 'rgba(0,0,0,0.8)',
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+    maxWidth: '80%',
+  },
+  toastText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '500',
+    textAlign: 'center',
+  },
 });
