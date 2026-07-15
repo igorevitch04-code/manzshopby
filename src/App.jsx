@@ -981,6 +981,7 @@ export default function App() {
   };
 
   // ---- Меню (закреплённое) ----
+    // ---- Меню (закреплённое снизу) ----
   const Menu = () => {
     const { theme } = useTheme();
     const isDark = theme === "dark";
@@ -1246,7 +1247,7 @@ const styles = StyleSheet.create({
   },
   menuBadgeText: { color: '#fff', fontSize: 10, fontWeight: 'bold' },
 
-  menu: {
+    menu: {
     position: 'absolute',
     bottom: 0,
     left: 0,
@@ -1261,6 +1262,7 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
     paddingTop: 4,
     zIndex: 1000,
+    elevation: 8, // для Android
   },
   menuDark: {
     backgroundColor: '#1a1a1a',
