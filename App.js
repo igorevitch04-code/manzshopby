@@ -440,32 +440,35 @@ export default function App() {
     return null;
   };
 
-    const ProductCard = ({ item }) => {
+      const ProductCard = ({ item }) => {
     const isFav = favorites.some(x => x.id === item.id);
     const { theme } = useTheme();
     const isDark = theme === "dark";
 
-    const handleAddToCart = () => {
-      if (!item.sizes || item.sizes.length === 0) {
-        addCart(item);
-        tg?.showAlert("✅ Товар добавлен в корзину");
-        return;
-      }
-
-      const buttons = item.sizes.map(size => ({
-        text: size,
-        onClick: () => {
-          addCart({ ...item, size });
-          tg?.showAlert(`✅ ${item.brand} ${item.name}\nРазмер: ${size} добавлен`);
-        }
-      }));
-
-      tg?.showPopup({
-        title: "Выберите размер",
-        message: `${item.brand} ${item.name}`,
-        buttons: [...buttons, { text: "Отмена", type: "cancel" }]
-      });
-    };
+    return (
+      <View style={[styles.card, isDark && styles.cardDark]}>
+        <TouchableOpacity 
+          onPress={() => { 
+            setSelectedProduct(item); 
+            setSelectedSize(null); 
+            setPage("product"); 
+          }}
+        >
+          <Image source={{ uri: item.image }} style={styles.image} />
+        </TouchableOpacity>
+        
+        <TouchableOpacity style={styles.favorite} onPress={() => toggleFavorite(item)}>
+          <Text style={styles.favoriteText}>{isFav ? "♥" : "♡"}</Text>
+        </TouchableOpacity>
+        
+        <Text style={[styles.brand, isDark && styles.textDark]}>{item.brand}</Text>
+        <Text style={[styles.productName, isDark && styles.textDark]}>{item.name}</Text>
+        
+        {item.oldPrice && <Text style={styles.oldPrice}>{money(item.oldPrice)}</Text>}
+        <Text style={[styles.price, isDark && styles.textDark]}>{money(item.price)}</Text>
+      </View>
+    );
+  };
 
     return (
       <View style={[styles.card, isDark && styles.cardDark]}>
