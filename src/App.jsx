@@ -275,7 +275,7 @@ export default function App() {
     setOrders(orders + 1);
     setCart([]);
     closeOrderModal();
-    showToast(`✅ Заказ #${nextNumber} оформлен`);
+    showToast(`✅ Заказ #${nextNumber} оформлен. Если у вас есть вопросы — можете задать их менеджеру в описании бота`);
     Alert.alert(
       "Заказ оформлен",
       `Номер заказа: ${nextNumber}\nСтатус: Ожидает подтверждения\n\nЕсли у вас есть вопросы — можете задать их менеджеру в описании бота.`,
@@ -917,17 +917,17 @@ export default function App() {
     const days = delivery === "europost" ? "4-5" : "2-3";
     const label = delivery === "europost" ? "ЕвроПочта" : "Курьер";
     const orderTotal = finalTotal + dp;
-        const handlePlace = () => {
+    const handlePlace = () => {
       if (!fullName.trim() || !address.trim() || !phone.trim()) {
-        Alert.alert("Ошибка", "Для оформления заказа нужно заполнить все данные (ФИО, адрес, телефон)");
+        showToast("⚠️ Для оформления заказа нужно заполнить все данные (ФИО, адрес, телефон)");
         return;
       }
       if (useFreeDelivery && !isFreeDeliveryEligible(phone, fullName)) {
-        Alert.alert("Ошибка", "Бесплатная доставка уже была использована с этими данными");
+        showToast("⚠️ Бесплатная доставка уже была использована с этими данными");
         return;
       }
       if (cart.length === 0) {
-        Alert.alert("Ошибка", "Корзина пуста");
+        showToast("⚠️ Корзина пуста");
         return;
       }
       placeOrderWithDetails({ fullName, address, phone, delivery, freeDelivery: useFreeDelivery });
