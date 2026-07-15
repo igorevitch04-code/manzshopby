@@ -12,14 +12,32 @@ const useTheme = () => useContext(ThemeContext);
 
 const getTelegramUser = () => {
   try {
-    const tg = typeof window !== "undefined" && window.Telegram && window.Telegram.WebApp;
-    if (tg) {
-      tg.ready();
-      const data = tg.initDataUnsafe?.user;
-      if (data) return { id: data.id, name: data.first_name || "Пользователь", username: data.username || "guest" };
+    const w = typeof window !== "undefined" ? window : null;
+    const tgWeb = w && w.Telegram && w.Telegram.WebApp;
+    if (tgWeb) {
+      try { tgWeb.ready(); } catch (e) {}
+      const data = tgWeb.initDataUnsafe && tgWeb.initDataUnsafe.user;
+      if (data && data.id) {
+        return {
+          id: String(data.id),
+          name: data.first_name || "Пользователь",
+          username: data.username || ""
+        };
+      }
     }
   } catch (e) {}
-  return { id: "guest", name: "Пользователь", username: "guest" };
+  // Стабильный ID для устройства, если Telegram user недоступен
+  let guestId = "guest";
+  try {
+    if (typeof localStorage !== "undefined") {
+      guestId = localStorage.getItem("krost_guest_id");
+      if (!guestId) {
+        guestId = "g_" + Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-5);
+        localStorage.setItem("krost_guest_id", guestId);
+      }
+    }
+  } catch (e) {}
+  return { id: guestId, name: "Пользователь", username: "guest" };
 };
 
 const money = (v) => v.toLocaleString("ru-RU") + " Br";
@@ -176,10 +194,34 @@ const Toast = ({ message, visible, onHide }) => {
 // ГЛАВНЫЙ КОМПОНЕНТ
 // ==============================
 export default function App() {
-  const user = getTelegramUser();
+  const [user, setUser] = useState(() => getTelegramUser());
+
+  // Перечитываем Telegram user после ready (иногда initData приходит с задержкой)
+  useEffect(() => {
+    const tryRead = () => {
+      const u = getTelegramUser();
+      if (u && u.id && String(u.id) !== String(user.id) && !String(u.id).startsWith("g_") && u.id !== "guest") {
+        setUser(u);
+      } else if (u && u.id && (user.id === "guest" || String(user.id).startsWith("g_")) && !String(u.id).startsWith("g_") && u.id !== "guest") {
+        setUser(u);
+      }
+    };
+    tryRead();
+    const t1 = setTimeout(tryRead, 300);
+    const t2 = setTimeout(tryRead, 1000);
+    try {
+      if (tg && tg.onEvent) {
+        tg.onEvent("viewportChanged", tryRead);
+      }
+    } catch (e) {}
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
+  }, []);
   const [theme, setTheme] = useState("light");
   const toggleTheme = () => setTheme(t => t === "light" ? "dark" : "light");
-  const isAdmin = ADMIN_IDS.includes(user.id);
+  const isAdmin = ADMIN_IDS.map(String).includes(String(user.id));
 
   // Восстанавливаем вкладку только при refresh (sessionStorage), при полном закрытии — с нуля
   const getInitialPage = () => {
@@ -447,9 +489,59 @@ export default function App() {
       : setFavorites([...favorites, item]);
   };
 
-  const copyReferral = () => {
-    Clipboard.setString(referral);
-    showToast("📋 Реферальная ссылка скопирована");
+  const copyReferral = async () => {
+    const text = referral;
+    let ok = false;
+
+    // 1) Современный Clipboard API (в Telegram WebView часто работает)
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+        ok = true;
+      }
+    } catch (e) {}
+
+    // 2) Fallback: textarea + execCommand
+    if (!ok && typeof document !== "undefined") {
+      try {
+        const el = document.createElement("textarea");
+        el.value = text;
+        el.setAttribute("readonly", "");
+        el.style.position = "fixed";
+        el.style.top = "0";
+        el.style.left = "0";
+        el.style.opacity = "0";
+        document.body.appendChild(el);
+        el.focus();
+        el.select();
+        el.setSelectionRange(0, text.length);
+        ok = document.execCommand("copy");
+        document.body.removeChild(el);
+      } catch (e) {}
+    }
+
+    // 3) React Native Clipboard
+    if (!ok) {
+      try {
+        if (Clipboard && Clipboard.setString) {
+          Clipboard.setString(text);
+          ok = true;
+        }
+      } catch (e) {}
+    }
+
+    if (ok) {
+      showToast("📋 Реферальная ссылка скопирована");
+      try {
+        if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred("success");
+      } catch (e) {}
+    } else {
+      // Последний шанс — показать ссылку, чтобы скопировать вручную
+      try {
+        Alert.alert("Ваша реферальная ссылка", text);
+      } catch (e) {}
+      showToast("Не удалось скопировать — скопируйте ссылку вручную");
+    }
   };
 
   // Добавить событие в очередь (для реферера: register / order)
