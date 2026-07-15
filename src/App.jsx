@@ -277,14 +277,13 @@ export default function App() {
     closeOrderModal();
     showToast(`✅ Заказ #${nextNumber} оформлен`);
     Alert.alert(
-      "Заказ оформлен",
-      `Номер заказа: ${nextNumber}\nСтатус: Ожидает подтверждения\n${freeDelivery ? "Доставка бесплатная (первый заказ)!" : ""}\n\nЕсли у менеджера будут вопросы, он свяжется с вами.\nА если у вас есть вопросы, вы можете связаться по ссылке в описании бота.`,
-      [
-        { text: "OK" },
-        { text: "Перейти в историю", onPress: () => setPage("profile") }
-      ]
-    );
-  };
+  "Заказ оформлен",
+  `Номер заказа: ${nextNumber}\nСтатус: Ожидает подтверждения\n\nЕсли у вас есть вопросы — можете задать их менеджеру в описании бота.`,
+  [
+    { text: "OK" },
+    { text: "Перейти в историю", onPress: () => setPage("profile") }
+  ]
+);
 
   
     const addRating = (productId, rating, comment) => {
@@ -510,7 +509,7 @@ export default function App() {
         return;
       }
       addCart({ ...selectedProduct, size: selectedSize });
-      showToast(`✅ ${selectedProduct.name} (${selectedSize}) добавлен`);
+      showToast(`✅ ${selectedProduct.name} добавлен в корзину`);
     };
 
     const submitRating = () => {
@@ -919,10 +918,11 @@ export default function App() {
     const label = delivery === "europost" ? "ЕвроПочта" : "Курьер";
     const orderTotal = finalTotal + dp;
     const handlePlace = () => {
-      if (!fullName.trim() || !address.trim() || !phone.trim()) {
-        Alert.alert("Ошибка", "Заполните все поля");
-        return;
-      }
+      const handlePlace = () => {
+  if (!fullName.trim() || !address.trim() || !phone.trim()) {
+    Alert.alert("Ошибка", "Для оформления заказа нужно заполнить все данные (ФИО, адрес, телефон)");
+    return;
+  }
       if (useFreeDelivery && !isFreeDeliveryEligible(phone, fullName)) {
         Alert.alert("Ошибка", "Бесплатная доставка уже была использована с этими данными");
         return;
