@@ -1311,10 +1311,10 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     maxWidth: '80%',
   },
-  toastText: {
+    toastText: {
     color: '#fff',
     fontSize: 16,
     fontWeight: '500',
     textAlign: 'center',
-  },
+  }
 });
