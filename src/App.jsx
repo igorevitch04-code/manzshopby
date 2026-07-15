@@ -917,7 +917,7 @@ export default function App() {
     const days = delivery === "europost" ? "4-5" : "2-3";
     const label = delivery === "europost" ? "ЕвроПочта" : "Курьер";
     const orderTotal = finalTotal + dp;
-    const handlePlace = () => {
+        const handlePlace = () => {
       if (!fullName.trim() || !address.trim() || !phone.trim()) {
         Alert.alert("Ошибка", "Для оформления заказа нужно заполнить все данные (ФИО, адрес, телефон)");
         return;
