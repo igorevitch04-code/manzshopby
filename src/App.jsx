@@ -957,17 +957,14 @@ export default function App() {
     const handlePlace = () => {
       if (!fullName.trim() || !address.trim() || !phone.trim()) {
         setErrorMsg("⚠️ Для оформления заказа нужно заполнить все данные (ФИО, адрес, телефон)");
-        showToast("⚠️ Для оформления заказа нужно заполнить все данные (ФИО, адрес, телефон)");
         return;
       }
       if (useFreeDelivery && !isFreeDeliveryEligible(phone, fullName)) {
         setErrorMsg("⚠️ Бесплатная доставка уже была использована с этими данными");
-        showToast("⚠️ Бесплатная доставка уже была использована с этими данными");
         return;
       }
       if (cart.length === 0) {
         setErrorMsg("⚠️ Корзина пуста");
-        showToast("⚠️ Корзина пуста");
         return;
       }
       setErrorMsg("");
