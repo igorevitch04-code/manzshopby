@@ -555,26 +555,47 @@ export default function App() {
     );
   };
 
-  const ProductPage = () => {
+    const ProductPage = () => {
     if (!selectedProduct) return null;
-    const { theme } = useTheme(); const isDark = theme === "dark";
+    const { theme } = useTheme(); 
+    const isDark = theme === "dark";
     const [rating, setRating] = useState(0);
     const [comment, setComment] = useState("");
     const hasPurchased = orderHistory.some(order => order.items.some(i => i.id === selectedProduct.id));
+
     const handleAddToCart = () => {
-      if (!selectedSize) {
-        Alert.alert("Выберите размер");
+      if (!selectedProduct.sizes || selectedProduct.sizes.length === 0) {
+        addCart(selectedProduct);
+        tg?.showAlert("✅ Товар добавлен в корзину");
         return;
       }
-      addCart({ ...selectedProduct, size: selectedSize });
-      Alert.alert("Добавлено", "Товар в корзине");
+
+      const buttons = selectedProduct.sizes.map(size => ({
+        text: size,
+        onClick: () => {
+          addCart({ ...selectedProduct, size });
+          tg?.showAlert(`✅ ${selectedProduct.brand} ${selectedProduct.name}\nРазмер: ${size} добавлен`);
+        }
+      }));
+
+      tg?.showPopup({
+        title: "Выберите размер",
+        message: `${selectedProduct.brand} ${selectedProduct.name}`,
+        buttons: [...buttons, { text: "Отмена", type: "cancel" }]
+      });
     };
+
     const submitRating = () => {
-      if (rating === 0) { Alert.alert("Ошибка", "Поставьте оценку"); return; }
+      if (rating === 0) { 
+        Alert.alert("Ошибка", "Поставьте оценку"); 
+        return; 
+      }
       addRating(selectedProduct.id, rating, comment);
-      setRating(0); setComment("");
+      setRating(0); 
+      setComment("");
       Alert.alert("Спасибо", "Отзыв добавлен");
     };
+
     return (
       <ScrollView style={[styles.page, isDark && styles.pageDark]} contentContainerStyle={styles.scrollContent}>
         <View style={styles.productHeader}>
@@ -594,19 +615,11 @@ export default function App() {
         {selectedProduct.averageRating > 0 && (
           <Text style={[styles.ratingDisplay, isDark && styles.textDark]}>⭐ {selectedProduct.averageRating.toFixed(1)} ({selectedProduct.ratings.length} отзывов)</Text>
         )}
-        <View style={styles.sizeBox}>
-          <Text style={[styles.sizeTitle, isDark && styles.textDark]}>Выберите размер</Text>
-          <View style={styles.sizes}>
-            {(selectedProduct.sizes || ["40","41","42","43","44"]).map(s => (
-              <TouchableOpacity key={s} style={[styles.size, selectedSize === s && styles.sizeActive]} onPress={() => setSelectedSize(s)}>
-                <Text style={selectedSize === s && styles.sizeTextActive}>{s}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
+
         <TouchableOpacity style={styles.buyButton} onPress={handleAddToCart}>
           <Text style={styles.buttonText}>Добавить в корзину</Text>
         </TouchableOpacity>
+
         <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Отзывы</Text>
         {selectedProduct.ratings.length > 0 ? (
           selectedProduct.ratings.slice(0, 5).map((r, idx) => (
@@ -617,6 +630,7 @@ export default function App() {
             </View>
           ))
         ) : <Text style={[styles.noReviews, isDark && styles.textDark]}>Пока нет отзывов</Text>}
+
         {hasPurchased && (
           <View style={[styles.reviewForm, isDark && styles.reviewFormDark]}>
             <Text style={[styles.reviewFormTitle, isDark && styles.textDark]}>Оставить отзыв</Text>
