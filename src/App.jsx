@@ -84,25 +84,35 @@ const loadFromCloud = async (key) => {
 // КОМПОНЕНТ TOAST (всплывающее уведомление)
 // ==============================
 const Toast = ({ message, visible, onHide }) => {
-  useEffect(() => {
-    if (visible) {
-      const timer = setTimeout(() => {
-        onHide();
-      }, 2500);
-      return () => clearTimeout(timer);
+  // uuseEffect(() => {
+  const loadAll = async () => {
+    try {
+      // Временно загружаем только из CloudStorage
+      const cloudCart = await loadFromCloud(CLOUD_KEYS.cart);
+      const cloudFavorites = await loadFromCloud(CLOUD_KEYS.favorites);
+      const cloudOrders = await loadFromCloud(CLOUD_KEYS.orders);
+      const cloudBonus = await loadFromCloud(CLOUD_KEYS.bonus);
+      const cloudOrderHistory = await loadFromCloud(CLOUD_KEYS.orderHistory);
+      const cloudLastOrderNumber = await loadFromCloud(CLOUD_KEYS.lastOrderNumber);
+      const cloudUsedFreeDelivery = await loadFromCloud(CLOUD_KEYS.usedFreeDelivery);
+
+      setCart(cloudCart || []);
+      setFavorites(cloudFavorites || []);
+      setOrders(cloudOrders || 0);
+      setBonusBalance(cloudBonus || 0);
+      setOrderHistory(cloudOrderHistory || []);
+      setLastOrderNumber(cloudLastOrderNumber || 3340);
+      setUsedFreeDelivery(cloudUsedFreeDelivery || []);
+      
+      // Остальное оставляем как было
+      setProducts(DEFAULT_PRODUCTS);
+      setTheme("light");
+    } catch (e) { 
+      console.warn("Ошибка загрузки", e); 
     }
-  }, [visible]);
-
-  if (!visible) return null;
-
-  return (
-    <View style={styles.toastContainer}>
-      <View style={styles.toast}>
-        <Text style={styles.toastText}>{message}</Text>
-      </View>
-    </View>
-  );
-};
+  };
+  loadAll();
+}, []);
 
 // ==============================
 // ГЛАВНЫЙ КОМПОНЕНТ
@@ -181,7 +191,7 @@ export default function App() {
     usedFreeDelivery: "krost_usedFreeDelivery"
   };
 
-  useEffect(() => {
+  // useEffect(() => {
     const loadAll = async () => {
       try {
         const [c, f, o, b, h, p, t, a, ln, u, pc, ufd] = await AsyncStorage.multiGet([
@@ -235,21 +245,21 @@ export default function App() {
     loadAll();
   }, []);
 
-  useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.cart, JSON.stringify(cart)); saveToCloud(CLOUD_KEYS.cart, cart); }, [cart]);
-  useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.favorites, JSON.stringify(favorites)); saveToCloud(CLOUD_KEYS.favorites, favorites); }, [favorites]);
-  useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.orders, JSON.stringify(orders)); saveToCloud(CLOUD_KEYS.orders, orders); }, [orders]);
-  useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.bonus, JSON.stringify(bonusBalance)); saveToCloud(CLOUD_KEYS.bonus, bonusBalance); }, [bonusBalance]);
-  useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.orderHistory, JSON.stringify(orderHistory)); saveToCloud(CLOUD_KEYS.orderHistory, orderHistory); }, [orderHistory]);
-  useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.lastOrderNumber, JSON.stringify(lastOrderNumber)); saveToCloud(CLOUD_KEYS.lastOrderNumber, lastOrderNumber); }, [lastOrderNumber]);
-  useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.usedFreeDelivery, JSON.stringify(usedFreeDelivery)); saveToCloud(CLOUD_KEYS.usedFreeDelivery, usedFreeDelivery); }, [usedFreeDelivery]);
+  // useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.cart, JSON.stringify(cart)); saveToCloud(CLOUD_KEYS.cart, cart); }, [cart]);
+  // useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.favorites, JSON.stringify(favorites)); saveToCloud(CLOUD_KEYS.favorites, favorites); }, [favorites]);
+  // useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.orders, JSON.stringify(orders)); saveToCloud(CLOUD_KEYS.orders, orders); }, [orders]);
+  // useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.bonus, JSON.stringify(bonusBalance)); saveToCloud(CLOUD_KEYS.bonus, bonusBalance); }, [bonusBalance]);
+  // useEffect(() => { { AsyncStorage.setItem(STORAGE_KEYS.orderHistory, JSON.stringify(orderHistory)); saveToCloud(CLOUD_KEYS.orderHistory, orderHistory); }, [orderHistory]);
+  // useEffect(() => { { AsyncStorage.setItem(STORAGE_KEYS.lastOrderNumber, JSON.stringify(lastOrderNumber)); saveToCloud(CLOUD_KEYS.lastOrderNumber, lastOrderNumber); }, [lastOrderNumber]);
+  // useEffect(() => { { AsyncStorage.setItem(STORAGE_KEYS.usedFreeDelivery, JSON.stringify(usedFreeDelivery)); saveToCloud(CLOUD_KEYS.usedFreeDelivery, usedFreeDelivery); }, [usedFreeDelivery]);
 
-  useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.products, JSON.stringify(products)); }, [products]);
-  useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.theme, JSON.stringify(theme)); }, [theme]);
-  useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.adminOrders, JSON.stringify(adminOrders)); }, [adminOrders]);
-  useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.users, JSON.stringify(users)); }, [users]);
-  useEffect(() => { AsyncStorage.setItem(STORAGE_KEYS.promoCodes, JSON.stringify(promoCodes)); }, [promoCodes]);
+  // useEffect(() => { { AsyncStorage.setItem(STORAGE_KEYS.products, JSON.stringify(products)); }, [products]);
+  // useEffect(() => { { AsyncStorage.setItem(STORAGE_KEYS.theme, JSON.stringify(theme)); }, [theme]);
+  // useEffect(() => { { AsyncStorage.setItem(STORAGE_KEYS.adminOrders, JSON.stringify(adminOrders)); }, [adminOrders]);
+  // useEffect(() => { { AsyncStorage.setItem(STORAGE_KEYS.users, JSON.stringify(users)); }, [users]);
+  // useEffect(() => { { AsyncStorage.setItem(STORAGE_KEYS.promoCodes, JSON.stringify(promoCodes)); }, [promoCodes]);
 
-  useEffect(() => {
+  // useEffect(() => { {
     if (user.id !== "guest" && !users.some(u => u.id === user.id)) {
       setUsers(prev => [...prev, user]);
     }
@@ -363,7 +373,7 @@ export default function App() {
     setLoadingMore(true);
     setTimeout(() => { setCurrentPage(prev => prev + 1); setLoadingMore(false); }, 500);
   };
-  useEffect(() => {
+  // useEffect(() => { {
     if (page === "catalog") { setCurrentPage(1); setLoadingMore(false); }
   }, [page, searchQuery, selectedBrand, minPrice, maxPrice]);
 
@@ -952,7 +962,7 @@ export default function App() {
     const [delivery, setDelivery] = useState("europost");
     const [useFreeDelivery, setUseFreeDelivery] = useState(false);
     const { theme } = useTheme(); const isDark = theme === "dark";
-    useEffect(() => {
+    // useEffect(() =>  {
       if (!orderModalVisible) { setFullName(""); setAddress(""); setPhone(""); setDelivery("europost"); setUseFreeDelivery(false); }
     }, [orderModalVisible]);
 
