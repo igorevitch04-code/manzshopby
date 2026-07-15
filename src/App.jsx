@@ -765,47 +765,68 @@ export default function App() {
     }
   };
 
-  // Реферал: регистрация (друг открыл ссылку) — один раз на пользователя
+  // Реферал: регистрация (друг открыл ссылку) — строго 1 раз на уникального пользователя
+  // Порядок: сначала claim joined_USERID (atomic hit), и только если мы первые — +1 к ref_REFERRER
   const registerReferral = async (referrerId, newUserId) => {
     if (!referrerId || !newUserId || String(referrerId) === String(newUserId)) return false;
     if (!/^\d+$/.test(String(referrerId)) || !/^\d+$/.test(String(newUserId))) return false;
     try {
-      const localFlag = typeof localStorage !== "undefined"
-        ? localStorage.getItem(`krost_ref_joined_${newUserId}`)
-        : null;
-      if (localFlag === "1") {
-        console.log("[Ref] already joined (local)", newUserId);
-        return true;
-      }
+      // 1) Локальный флаг — самый быстрый (тот же браузер/WebView)
+      try {
+        if (typeof localStorage !== "undefined" && localStorage.getItem(`krost_ref_joined_${newUserId}`) === "1") {
+          console.log("[Ref] already joined (local)", newUserId);
+          return true;
+        }
+      } catch (e) {}
+
+      // 2) CloudStorage флаг этого пользователя (Telegram CloudStorage — per-user)
+      try {
+        const cloudReg = await loadFromCloud("krost_ref_registered");
+        if (cloudReg === true || cloudReg === "true" || cloudReg === 1) {
+          try { localStorage.setItem(`krost_ref_joined_${newUserId}`, "1"); } catch (e) {}
+          console.log("[Ref] already joined (cloud)", newUserId);
+          return true;
+        }
+      } catch (e) {}
 
       const joinedKey = `joined_${newUserId}`;
+
+      // 3) Удалённая проверка: уже помечен?
       const already = await refApiGet(joinedKey);
       if (already != null && already > 0) {
-        console.log("[Ref] already joined (remote)", newUserId);
+        console.log("[Ref] already joined (remote get)", newUserId, already);
         try { localStorage.setItem(`krost_ref_joined_${newUserId}`, "1"); } catch (e) {}
         await saveToCloud("krost_ref_registered", true);
         return true;
       }
 
-      // Сначала +1 к счётчику реферера, потом помечаем joined
+      // 4) Atomic claim: hit на joined_USERID
+      //    Первый вызов → 1  = мы первые, можно +1 к счётчику реферера
+      //    Повторный     → >1 = пользователь уже был засчитан, НЕ трогаем счётчик
+      const joinedVal = await refApiHit(joinedKey);
+      if (joinedVal != null && joinedVal > 1) {
+        console.log("[Ref] already joined (remote hit>1)", newUserId, joinedVal);
+        try { localStorage.setItem(`krost_ref_joined_${newUserId}`, "1"); } catch (e) {}
+        await saveToCloud("krost_ref_registered", true);
+        return true;
+      }
+
+      // joinedVal === 1 → мы первые; null → API недоступен, не рискуем оверсчётом
+      if (joinedVal == null) {
+        console.warn("[Ref] API unavailable for claim, will retry later");
+        return false;
+      }
+
+      // 5) Только сейчас +1 к счётчику реферера (уникальный пользователь)
       let cnt = await refApiHit(`ref_${referrerId}`);
       if (cnt == null) {
         const cur = (await refApiGet(`ref_${referrerId}`)) || 0;
         cnt = await refApiSet(`ref_${referrerId}`, cur + 1);
       }
 
-      // Помечаем, что этот пользователь уже посчитан
-      let joined = await refApiSet(joinedKey, 1);
-      if (joined == null) joined = await refApiHit(joinedKey);
-
-      if (cnt == null && joined == null) {
-        console.warn("[Ref] API unavailable, will retry later");
-        return false;
-      }
-
       try { localStorage.setItem(`krost_ref_joined_${newUserId}`, "1"); } catch (e) {}
       await saveToCloud("krost_ref_registered", true);
-      console.log("[Ref] registered OK", newUserId, "→", referrerId, "count=", cnt);
+      console.log("[Ref] registered OK (unique)", newUserId, "→", referrerId, "count=", cnt, "joined=", joinedVal);
       return true;
     } catch (e) {
       console.warn("registerReferral", e);
