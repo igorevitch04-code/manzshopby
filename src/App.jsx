@@ -84,35 +84,34 @@ const loadFromCloud = async (key) => {
 // КОМПОНЕНТ TOAST (всплывающее уведомление)
 // ==============================
 const Toast = ({ message, visible, onHide }) => {
-  // uuseEffect(() => {
-  const loadAll = async () => {
-    try {
-      // Временно загружаем только из CloudStorage
-      const cloudCart = await loadFromCloud(CLOUD_KEYS.cart);
-      const cloudFavorites = await loadFromCloud(CLOUD_KEYS.favorites);
-      const cloudOrders = await loadFromCloud(CLOUD_KEYS.orders);
-      const cloudBonus = await loadFromCloud(CLOUD_KEYS.bonus);
-      const cloudOrderHistory = await loadFromCloud(CLOUD_KEYS.orderHistory);
-      const cloudLastOrderNumber = await loadFromCloud(CLOUD_KEYS.lastOrderNumber);
-      const cloudUsedFreeDelivery = await loadFromCloud(CLOUD_KEYS.usedFreeDelivery);
+    useEffect(() => {
+    const loadAll = async () => {
+      try {
+        // Загружаем только из CloudStorage (Telegram)
+        const cloudCart = await loadFromCloud(CLOUD_KEYS.cart);
+        const cloudFavorites = await loadFromCloud(CLOUD_KEYS.favorites);
+        const cloudOrders = await loadFromCloud(CLOUD_KEYS.orders);
+        const cloudBonus = await loadFromCloud(CLOUD_KEYS.bonus);
+        const cloudOrderHistory = await loadFromCloud(CLOUD_KEYS.orderHistory);
+        const cloudLastOrderNumber = await loadFromCloud(CLOUD_KEYS.lastOrderNumber);
+        const cloudUsedFreeDelivery = await loadFromCloud(CLOUD_KEYS.usedFreeDelivery);
 
-      setCart(cloudCart || []);
-      setFavorites(cloudFavorites || []);
-      setOrders(cloudOrders || 0);
-      setBonusBalance(cloudBonus || 0);
-      setOrderHistory(cloudOrderHistory || []);
-      setLastOrderNumber(cloudLastOrderNumber || 3340);
-      setUsedFreeDelivery(cloudUsedFreeDelivery || []);
-      
-      // Остальное оставляем как было
-      setProducts(DEFAULT_PRODUCTS);
-      setTheme("light");
-    } catch (e) { 
-      console.warn("Ошибка загрузки", e); 
-    }
-  };
-  loadAll();
-}, []);
+        setCart(cloudCart || []);
+        setFavorites(cloudFavorites || []);
+        setOrders(cloudOrders || 0);
+        setBonusBalance(cloudBonus || 0);
+        setOrderHistory(cloudOrderHistory || []);
+        setLastOrderNumber(cloudLastOrderNumber || 3340);
+        setUsedFreeDelivery(cloudUsedFreeDelivery || []);
+
+        setProducts(DEFAULT_PRODUCTS);
+        setTheme("light");
+      } catch (e) { 
+        console.warn("Ошибка загрузки", e); 
+      }
+    };
+    loadAll();
+  }, []);
 
 // ==============================
 // ГЛАВНЫЙ КОМПОНЕНТ
