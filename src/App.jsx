@@ -1047,18 +1047,17 @@ export default function App() {
 // СТИЛИ (ПОЛНЫЕ)
 // ==============================
 const styles = StyleSheet.create({
-    root: {
+      root: {
     flex: 1,
-    minHeight: '100%',
     height: '100vh',
     width: '100%',
     backgroundColor: '#F7F7F5',
     position: 'relative',
   },
-  contentContainer: {
+    contentContainer: {
     flex: 1,
-    paddingBottom: 100,
-    overflow: 'auto',
+    paddingBottom: 90,     // уменьшил обратно
+    overflow: 'visible',   // ← измени на visible
   },
   page: {
     flex: 1,
