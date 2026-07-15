@@ -938,9 +938,12 @@ export default function App() {
     const [phone, setPhone] = useState("");
     const [delivery, setDelivery] = useState("europost");
     const [useFreeDelivery, setUseFreeDelivery] = useState(false);
+    const [errorMsg, setErrorMsg] = useState("");
     const { theme } = useTheme(); const isDark = theme === "dark";
     useEffect(() => {
-      if (!orderModalVisible) { setFullName(""); setAddress(""); setPhone(""); setDelivery("europost"); setUseFreeDelivery(false); }
+      if (!orderModalVisible) { 
+        setFullName(""); setAddress(""); setPhone(""); setDelivery("europost"); setUseFreeDelivery(false); setErrorMsg(""); 
+      }
     }, [orderModalVisible]);
 
     const { finalTotal } = calculateTotals();
@@ -953,17 +956,21 @@ export default function App() {
     const orderTotal = finalTotal + dp;
     const handlePlace = () => {
       if (!fullName.trim() || !address.trim() || !phone.trim()) {
+        setErrorMsg("⚠️ Для оформления заказа нужно заполнить все данные (ФИО, адрес, телефон)");
         showToast("⚠️ Для оформления заказа нужно заполнить все данные (ФИО, адрес, телефон)");
         return;
       }
       if (useFreeDelivery && !isFreeDeliveryEligible(phone, fullName)) {
+        setErrorMsg("⚠️ Бесплатная доставка уже была использована с этими данными");
         showToast("⚠️ Бесплатная доставка уже была использована с этими данными");
         return;
       }
       if (cart.length === 0) {
+        setErrorMsg("⚠️ Корзина пуста");
         showToast("⚠️ Корзина пуста");
         return;
       }
+      setErrorMsg("");
       placeOrderWithDetails({ fullName, address, phone, delivery, freeDelivery: useFreeDelivery });
     };
     return (
@@ -972,6 +979,13 @@ export default function App() {
           <ScrollView contentContainerStyle={styles.modalScrollView}>
             <View style={[styles.modalView, isDark && styles.modalViewDark]}>
               <Text style={[styles.modalTitle, isDark && styles.textDark]}>Оформление заказа</Text>
+              
+              {errorMsg ? (
+                <View style={styles.modalError}>
+                  <Text style={styles.modalErrorText}>{errorMsg}</Text>
+                </View>
+              ) : null}
+
               <Text style={[styles.deliveryLabel, isDark && styles.textDark]}>Способ доставки</Text>
               <View style={styles.deliveryOptions}>
                 <TouchableOpacity style={[styles.deliveryOption, delivery === "europost" && styles.deliveryOptionActive]} onPress={() => setDelivery("europost")}>
@@ -984,9 +998,9 @@ export default function App() {
                   <Text style={styles.deliveryNote}>Менеджер свяжется</Text>
                 </TouchableOpacity>
               </View>
-              <TextInput style={[styles.modalInput, isDark && styles.inputDark]} placeholder="ФИО" placeholderTextColor={isDark ? "#999" : "#888"} value={fullName} onChangeText={setFullName} />
-              <TextInput style={[styles.modalInput, isDark && styles.inputDark]} placeholder={delivery === "europost" ? "Адрес и номер отделения" : "Адрес доставки"} placeholderTextColor={isDark ? "#999" : "#888"} value={address} onChangeText={setAddress} />
-              <TextInput style={[styles.modalInput, isDark && styles.inputDark]} placeholder="Телефон" placeholderTextColor={isDark ? "#999" : "#888"} value={phone} onChangeText={setPhone} keyboardType="phone-pad" />
+              <TextInput style={[styles.modalInput, isDark && styles.inputDark]} placeholder="ФИО" placeholderTextColor={isDark ? "#999" : "#888"} value={fullName} onChangeText={(t) => { setFullName(t); setErrorMsg(""); }} />
+              <TextInput style={[styles.modalInput, isDark && styles.inputDark]} placeholder={delivery === "europost" ? "Адрес и номер отделения" : "Адрес доставки"} placeholderTextColor={isDark ? "#999" : "#888"} value={address} onChangeText={(t) => { setAddress(t); setErrorMsg(""); }} />
+              <TextInput style={[styles.modalInput, isDark && styles.inputDark]} placeholder="Телефон" placeholderTextColor={isDark ? "#999" : "#888"} value={phone} onChangeText={(t) => { setPhone(t); setErrorMsg(""); }} keyboardType="phone-pad" />
               {showFreeDeliveryOption && (
                 <TouchableOpacity style={styles.bonusCheckbox} onPress={() => setUseFreeDelivery(!useFreeDelivery)}>
                   <Text style={[styles.bonusCheckboxText, isDark && styles.textDark]}>
@@ -1176,6 +1190,19 @@ const styles = StyleSheet.create({
   modalButtons: { flexDirection: "row", justifyContent: "space-between", marginTop: 12 },
   modalCancel: { padding: 10, borderRadius: 18, backgroundColor: "#eee", flex: 0.4, alignItems: "center" },
   modalConfirm: { padding: 10, borderRadius: 18, backgroundColor: "#111", flex: 0.5, alignItems: "center" },
+  modalError: {
+    backgroundColor: "#ff3b30",
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    marginBottom: 14,
+  },
+  modalErrorText: {
+    color: "#fff",
+    fontSize: 13,
+    fontWeight: "600",
+    textAlign: "center",
+  },
 
   deliveryLabel: { fontSize: 15, fontWeight: "600", marginBottom: 8 },
   deliveryOptions: { flexDirection: "row", justifyContent: "space-between", marginBottom: 16 },
