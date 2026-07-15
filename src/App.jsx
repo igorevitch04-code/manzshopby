@@ -34,7 +34,7 @@ const DEFAULT_PRODUCTS = [
   { id: 5, brand: "JORDAN", name: "Jordan Retro", price: 24990, oldPrice: 29990, image: "https://images.unsplash.com/photo-1460353581641-37baddab0fa2", sales: 80, ratings: [], averageRating: 0, description: "Культовые Jordan Retro.", sizes: ["42","43","44","45"] },
   { id: 6, brand: "PUMA", name: "Puma Classic", price: 11990, oldPrice: null, image: "https://images.unsplash.com/photo-1495555961986-6d4c1ecb7be3", sales: 60, ratings: [], averageRating: 0, description: "Puma Classic – надёжная классика.", sizes: ["40","41","42"] }
 ];
- 
+
 const LEVELS = [
   { name: "Новичок", min: 0, max: 4, cashback: 2 },
   { name: "Постоянный клиент", min: 5, max: 14, cashback: 5 },
