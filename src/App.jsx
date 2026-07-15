@@ -1188,7 +1188,7 @@ const styles = StyleSheet.create({
   modalCancel: { padding: 10, borderRadius: 18, backgroundColor: "#eee", flex: 0.4, alignItems: "center" },
   modalConfirm: { padding: 10, borderRadius: 18, backgroundColor: "#111", flex: 0.5, alignItems: "center" },
   modalError: {
-    backgroundColor: "#ff3b30",
+    backgroundColor: "#111",
     paddingVertical: 10,
     paddingHorizontal: 14,
     borderRadius: 12,
