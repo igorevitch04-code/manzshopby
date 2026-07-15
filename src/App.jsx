@@ -10,23 +10,81 @@ const tg = typeof window !== "undefined" && window.Telegram?.WebApp;
 const ThemeContext = createContext();
 const useTheme = () => useContext(ThemeContext);
 
+// Надёжное получение Telegram user id (числовой)
 const getTelegramUser = () => {
+  const parseUserFromInitData = (initData) => {
+    if (!initData || typeof initData !== "string") return null;
+    try {
+      // initData = "query_id=...&user=%7B%22id%22%3A123...&auth_date=..."
+      const params = new URLSearchParams(initData);
+      const userStr = params.get("user");
+      if (userStr) {
+        const u = JSON.parse(userStr);
+        if (u && u.id) {
+          return {
+            id: String(u.id),
+            name: u.first_name || "Пользователь",
+            username: u.username || ""
+          };
+        }
+      }
+    } catch (e) {}
+    return null;
+  };
+
   try {
     const w = typeof window !== "undefined" ? window : null;
     const tgWeb = w && w.Telegram && w.Telegram.WebApp;
     if (tgWeb) {
       try { tgWeb.ready(); } catch (e) {}
-      const data = tgWeb.initDataUnsafe && tgWeb.initDataUnsafe.user;
-      if (data && data.id) {
+      try { tgWeb.expand && tgWeb.expand(); } catch (e) {}
+
+      // 1) initDataUnsafe.user (самый быстрый)
+      const unsafe = tgWeb.initDataUnsafe;
+      if (unsafe && unsafe.user && unsafe.user.id) {
         return {
-          id: String(data.id),
-          name: data.first_name || "Пользователь",
-          username: data.username || ""
+          id: String(unsafe.user.id),
+          name: unsafe.user.first_name || "Пользователь",
+          username: unsafe.user.username || ""
         };
+      }
+
+      // 2) Парсим сырую строку initData
+      if (tgWeb.initData) {
+        const fromInit = parseUserFromInitData(tgWeb.initData);
+        if (fromInit) return fromInit;
+      }
+    }
+
+    // 3) Иногда Telegram кладёт данные в URL hash
+    if (typeof window !== "undefined" && window.location && window.location.hash) {
+      try {
+        const hash = window.location.hash.replace(/^#/, "");
+        const hp = new URLSearchParams(hash);
+        const tgData = hp.get("tgWebAppData") || "";
+        if (tgData) {
+          const fromHash = parseUserFromInitData(decodeURIComponent(tgData));
+          if (fromHash) return fromHash;
+        }
+      } catch (e) {}
+    }
+  } catch (e) {
+    console.warn("[getTelegramUser]", e);
+  }
+
+  // 4) Если уже сохраняли реальный Telegram ID — берём его
+  try {
+    if (typeof localStorage !== "undefined") {
+      const savedReal = localStorage.getItem("krost_real_tg_id");
+      if (savedReal && /^\d+$/.test(savedReal)) {
+        const name = localStorage.getItem("krost_real_tg_name") || "Пользователь";
+        const username = localStorage.getItem("krost_real_tg_username") || "";
+        return { id: savedReal, name, username };
       }
     }
   } catch (e) {}
-  // Стабильный ID для устройства, если Telegram user недоступен
+
+  // 5) Fallback guest (только если реально нет Telegram)
   let guestId = "guest";
   try {
     if (typeof localStorage !== "undefined") {
@@ -38,6 +96,18 @@ const getTelegramUser = () => {
     }
   } catch (e) {}
   return { id: guestId, name: "Пользователь", username: "guest" };
+};
+
+// Сохраняем реальный Telegram ID, когда он появился
+const persistRealUser = (u) => {
+  if (!u || !u.id || !/^\d+$/.test(String(u.id))) return;
+  try {
+    if (typeof localStorage !== "undefined") {
+      localStorage.setItem("krost_real_tg_id", String(u.id));
+      if (u.name) localStorage.setItem("krost_real_tg_name", u.name);
+      if (u.username) localStorage.setItem("krost_real_tg_username", u.username);
+    }
+  } catch (e) {}
 };
 
 const money = (v) => v.toLocaleString("ru-RU") + " Br";
@@ -196,27 +266,39 @@ const Toast = ({ message, visible, onHide }) => {
 export default function App() {
   const [user, setUser] = useState(() => getTelegramUser());
 
-  // Перечитываем Telegram user после ready (иногда initData приходит с задержкой)
+  // Перечитываем Telegram user после ready (initData иногда приходит с задержкой)
   useEffect(() => {
     const tryRead = () => {
       const u = getTelegramUser();
-      if (u && u.id && String(u.id) !== String(user.id) && !String(u.id).startsWith("g_") && u.id !== "guest") {
-        setUser(u);
-      } else if (u && u.id && (user.id === "guest" || String(user.id).startsWith("g_")) && !String(u.id).startsWith("g_") && u.id !== "guest") {
-        setUser(u);
+      if (!u || !u.id) return;
+      const isReal = /^\d+$/.test(String(u.id));
+      if (isReal) {
+        persistRealUser(u);
+        setUser((prev) => {
+          if (String(prev.id) === String(u.id)) return prev;
+          console.log("[User] Telegram ID:", u.id, u.name);
+          return u;
+        });
       }
     };
     tryRead();
-    const t1 = setTimeout(tryRead, 300);
-    const t2 = setTimeout(tryRead, 1000);
+    const timers = [100, 300, 600, 1200, 2500].map((ms) => setTimeout(tryRead, ms));
     try {
-      if (tg && tg.onEvent) {
-        tg.onEvent("viewportChanged", tryRead);
+      if (tg) {
+        try { tg.ready(); } catch (e) {}
+        if (tg.onEvent) {
+          tg.onEvent("viewportChanged", tryRead);
+          tg.onEvent("themeChanged", tryRead);
+        }
       }
     } catch (e) {}
+    // Периодически пробуем первые 5 секунд
+    const interval = setInterval(tryRead, 500);
+    const stop = setTimeout(() => clearInterval(interval), 5000);
     return () => {
-      clearTimeout(t1);
-      clearTimeout(t2);
+      timers.forEach(clearTimeout);
+      clearInterval(interval);
+      clearTimeout(stop);
     };
   }, []);
   const [theme, setTheme] = useState("light");
@@ -477,8 +559,11 @@ export default function App() {
   const nextLevel = LEVELS[LEVELS.indexOf(currentLevel) + 1];
   let progress = 100;
   if (nextLevel) progress = Math.min(100, Math.floor(((orders - currentLevel.min) / (nextLevel.min - currentLevel.min)) * 100));
-  // Уникальная реферальная ссылка (открывает мини-апп с startapp=ref_USERID)
-  const referral = `https://t.me/manzshop_bot/manzshopbyapp?startapp=ref_${user.id}`;
+  // Уникальная реферальная ссылка — только если есть реальный числовой Telegram ID
+  const hasRealId = /^\d+$/.test(String(user.id));
+  const referral = hasRealId
+    ? `https://t.me/manzshop_bot/manzshopbyapp?startapp=ref_${user.id}`
+    : `https://t.me/manzshop_bot/manzshopbyapp?startapp=ref_${user.id}`;
 
   const addCart = (item) => setCart([...cart, item]);
   const removeCart = (idx) => setCart(cart.filter((_, i) => i !== idx));
@@ -490,10 +575,25 @@ export default function App() {
   };
 
   const copyReferral = async () => {
-    const text = referral;
+    // Ещё раз пробуем прочитать Telegram ID перед копированием
+    const u = getTelegramUser();
+    if (u && /^\d+$/.test(String(u.id))) {
+      persistRealUser(u);
+      if (String(u.id) !== String(user.id)) setUser(u);
+    }
+    const realId = (u && /^\d+$/.test(String(u.id))) ? u.id : user.id;
+    const text = `https://t.me/manzshop_bot/manzshopbyapp?startapp=ref_${realId}`;
+
     let ok = false;
 
-    // 1) Современный Clipboard API (в Telegram WebView часто работает)
+    // 1) Telegram WebApp clipboard (если есть)
+    try {
+      if (tg && typeof tg.readTextFromClipboard === "function") {
+        // write через clipboard API ниже
+      }
+    } catch (e) {}
+
+    // 2) Современный Clipboard API
     try {
       if (typeof navigator !== "undefined" && navigator.clipboard && navigator.clipboard.writeText) {
         await navigator.clipboard.writeText(text);
@@ -501,14 +601,14 @@ export default function App() {
       }
     } catch (e) {}
 
-    // 2) Fallback: textarea + execCommand
+    // 3) Fallback: textarea + execCommand (часто работает в WebView)
     if (!ok && typeof document !== "undefined") {
       try {
         const el = document.createElement("textarea");
         el.value = text;
         el.setAttribute("readonly", "");
         el.style.position = "fixed";
-        el.style.top = "0";
+        el.style.top = "-9999px";
         el.style.left = "0";
         el.style.opacity = "0";
         document.body.appendChild(el);
@@ -520,7 +620,7 @@ export default function App() {
       } catch (e) {}
     }
 
-    // 3) React Native Clipboard
+    // 4) React Native Clipboard
     if (!ok) {
       try {
         if (Clipboard && Clipboard.setString) {
@@ -530,17 +630,32 @@ export default function App() {
       } catch (e) {}
     }
 
+    // 5) Web Share API (на телефоне часто удобнее)
+    if (!ok && typeof navigator !== "undefined" && navigator.share) {
+      try {
+        await navigator.share({ title: "MENZ", text: "Заходи в магазин:", url: text });
+        showToast("📋 Ссылка отправлена");
+        return;
+      } catch (e) {}
+    }
+
     if (ok) {
       showToast("📋 Реферальная ссылка скопирована");
       try {
         if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred("success");
       } catch (e) {}
-    } else {
-      // Последний шанс — показать ссылку, чтобы скопировать вручную
+      // На всякий случай показываем ссылку (Telegram iOS часто врёт про clipboard)
       try {
-        Alert.alert("Ваша реферальная ссылка", text);
+        Alert.alert("Ссылка скопирована", text);
       } catch (e) {}
-      showToast("Не удалось скопировать — скопируйте ссылку вручную");
+    } else {
+      // Показываем ссылку — пользователь может зажать и скопировать
+      try {
+        Alert.alert("Ваша реферальная ссылка", text + "\n\nЗажмите текст и скопируйте");
+      } catch (e) {
+        showToast(text);
+      }
+      showToast("Зажмите ссылку и скопируйте");
     }
   };
 
@@ -1290,7 +1405,14 @@ export default function App() {
 
         <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Ваша реферальная ссылка</Text>
         <View style={[styles.referralBox, isDark && styles.referralBoxDark]}>
-          <Text style={[styles.referralText, isDark && styles.textDark]} numberOfLines={2}>{referral}</Text>
+          <Text style={[styles.referralText, isDark && styles.textDark]} selectable>
+            {referral}
+          </Text>
+          <Text style={{ fontSize: 12, color: hasRealId ? "#2E7D32" : "#C62828", marginBottom: 10 }}>
+            {hasRealId
+              ? `Ваш Telegram ID: ${user.id}`
+              : "⚠️ ID не получен — откройте мини-апп из Telegram (не из браузера)"}
+          </Text>
           <TouchableOpacity style={styles.copyButton} onPress={copyReferral}>
             <Text style={styles.buttonText}>📋 Скопировать ссылку</Text>
           </TouchableOpacity>
