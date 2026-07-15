@@ -1,4 +1,4 @@
-import React, { useState, useEffect, createContext, useContext, useRef } from "react";
+import React, { useState, useEffect, createContext, useContext } from "react";
 import {
   View, Text, StyleSheet, TouchableOpacity, Image, ScrollView, Alert,
   TextInput, Clipboard, FlatList, Modal, Share, Switch
@@ -80,9 +80,7 @@ const loadFromCloud = async (key) => {
   return null;
 };
 
-// ==============================
-// КОМПОНЕНТ TOAST (всплывающее уведомление)
-// ==============================
+// Toast компонент
 const Toast = ({ message, visible, onHide }) => {
   useEffect(() => {
     if (visible) {
@@ -91,7 +89,7 @@ const Toast = ({ message, visible, onHide }) => {
       }, 2500);
       return () => clearTimeout(timer);
     }
-  }, [visible]);
+  }, [visible, onHide]);
 
   if (!visible) return null;
 
@@ -104,9 +102,6 @@ const Toast = ({ message, visible, onHide }) => {
   );
 };
 
-// ==============================
-// ГЛАВНЫЙ КОМПОНЕНТ
-// ==============================
 export default function App() {
   const user = getTelegramUser();
   const [theme, setTheme] = useState("light");
@@ -144,7 +139,7 @@ export default function App() {
   const [sizeModalProduct, setSizeModalProduct] = useState(null);
   const [tempSelectedSize, setTempSelectedSize] = useState(null);
 
-  // Состояния для Toast
+  // Toast
   const [toastVisible, setToastVisible] = useState(false);
   const [toastMessage, setToastMessage] = useState("");
 
@@ -181,6 +176,7 @@ export default function App() {
     usedFreeDelivery: "krost_usedFreeDelivery"
   };
 
+  // Загрузка данных
   useEffect(() => {
     const loadAll = async () => {
       try {
@@ -314,9 +310,7 @@ export default function App() {
     setOrders(orders + 1);
     setCart([]);
     closeOrderModal();
-    // Показываем Toast вместо Alert
     showToast(`✅ Заказ #${nextNumber} оформлен`);
-    // Дополнительно показываем Alert с деталями
     Alert.alert(
       "Заказ оформлен",
       `Номер заказа: ${nextNumber}\nСтатус: Ожидает подтверждения\n${freeDelivery ? "Доставка бесплатная (первый заказ)!" : ""}\n\nЕсли у менеджера будут вопросы, он свяжется с вами.\nА если у вас есть вопросы, вы можете связаться по ссылке в описании бота.`,
@@ -432,7 +426,6 @@ export default function App() {
 
   const SizeModal = () => null;
 
-  // ---- ProductCard (без кнопки, без размеров) ----
   const ProductCard = ({ item }) => {
     const isFav = favorites.some(x => x.id === item.id);
     const { theme } = useTheme();
@@ -463,7 +456,6 @@ export default function App() {
     );
   };
 
-  // ---- Home ----
   const Home = () => {
     const popularItems = [...products].sort((a,b) => b.sales - a.sales).slice(0,4);
     const recommended = getRecommended();
@@ -497,7 +489,6 @@ export default function App() {
     );
   };
 
-  // ---- Catalog ----
   const Catalog = () => {
     const brands = getBrands(products);
     const { theme } = useTheme(); const isDark = theme === "dark";
@@ -535,7 +526,6 @@ export default function App() {
     );
   };
 
-  // ---- ProductPage (исправлена кнопка, выбор размера) ----
   const ProductPage = () => {
     if (!selectedProduct) return null;
     const { theme } = useTheme(); 
@@ -584,7 +574,6 @@ export default function App() {
           <Text style={[styles.ratingDisplay, isDark && styles.textDark]}>⭐ {selectedProduct.averageRating.toFixed(1)} ({selectedProduct.ratings.length} отзывов)</Text>
         )}
 
-        {/* Выбор размера */}
         <View style={styles.sizeBox}>
           <Text style={[styles.sizeTitle, isDark && styles.textDark]}>Выберите размер</Text>
           <View style={styles.sizes}>
@@ -636,7 +625,6 @@ export default function App() {
     );
   };
 
-  // ---- Favorites ----
   const Favorites = () => {
     const { theme } = useTheme(); const isDark = theme === "dark";
     return (
@@ -654,7 +642,6 @@ export default function App() {
     );
   };
 
-  // ---- Cart ----
   const Cart = () => {
     const { theme } = useTheme();
     const isDark = theme === "dark";
@@ -729,7 +716,6 @@ export default function App() {
     );
   };
 
-  // ---- Profile ----
   const Profile = () => {
     const { theme, toggleTheme } = useTheme(); const isDark = theme === "dark";
     return (
@@ -804,7 +790,6 @@ export default function App() {
     );
   };
 
-  // ---- AdminPanel ----
   const AdminPanel = () => {
     const { theme } = useTheme(); 
     const isDark = theme === "dark";
@@ -944,7 +929,6 @@ export default function App() {
     );
   };
 
-  // ---- OrderModal ----
   const OrderModal = () => {
     const [fullName, setFullName] = useState("");
     const [address, setAddress] = useState("");
@@ -1026,7 +1010,6 @@ export default function App() {
     );
   };
 
-  // ---- Меню (закреплённое) ----
   const Menu = () => {
     const { theme } = useTheme();
     const isDark = theme === "dark";
@@ -1089,7 +1072,7 @@ export default function App() {
 }
 
 // ==============================
-// СТИЛИ (добавлены для Toast и закрепления меню)
+// СТИЛИ
 // ==============================
 const styles = StyleSheet.create({
   root: {
@@ -1100,7 +1083,7 @@ const styles = StyleSheet.create({
   },
   contentContainer: {
     flex: 1,
-    paddingBottom: 80, // отступ для меню
+    paddingBottom: 80,
   },
   page: {
     flex: 1,
@@ -1113,18 +1096,15 @@ const styles = StyleSheet.create({
   cardDark: { backgroundColor: "#2a2a2a" },
   scrollContent: { paddingBottom: 10 },
 
-  // Логотип и описания
   logo: { fontSize: 30, fontWeight: "900", marginTop: 18 },
   description: { color: "#777", marginTop: 4, fontSize: 14 },
   pageTitle: { fontSize: 24, fontWeight: "900", marginTop: 18, marginBottom: 12 },
   sectionTitle: { fontSize: 20, fontWeight: "900", marginTop: 18, marginBottom: 12 },
 
-  // Баннер
   banner: { backgroundColor: "#111", padding: 20, borderRadius: 28, marginTop: 18 },
   bannerTitle: { fontSize: 26, fontWeight: "900", color: "#fff" },
   bannerButton: { backgroundColor: "#fff", padding: 10, borderRadius: 20, marginTop: 15, alignSelf: "flex-start" },
 
-  // Сетка и карточки
   grid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between" },
   card: { width: "48%", backgroundColor: "#fff", borderRadius: 20, padding: 8, marginBottom: 12 },
   image: { height: 120, width: "100%", borderRadius: 16 },
@@ -1132,7 +1112,6 @@ const styles = StyleSheet.create({
   favorite: { position: "absolute", right: 12, top: 12 },
   favoriteText: { fontSize: 20 },
 
-  // Тексты
   brand: { fontSize: 11, color: "#777", marginTop: 6 },
   productName: { fontSize: 14, fontWeight: "800", marginTop: 4 },
   price: { fontSize: 18, fontWeight: "900", marginTop: 3 },
@@ -1141,12 +1120,10 @@ const styles = StyleSheet.create({
   bigTitle: { fontSize: 24, fontWeight: "900" },
   bigPrice: { fontSize: 28, fontWeight: "900" },
 
-  // Кнопки
   smallButton: { backgroundColor: "#111", padding: 8, borderRadius: 16, marginTop: 8 },
   buyButton: { backgroundColor: "#111", padding: 14, borderRadius: 22, marginTop: 16 },
   buttonText: { color: "#fff", textAlign: "center", fontWeight: "800", fontSize: 13 },
 
-  // Корзина
   cartItem: { backgroundColor: "#fff", padding: 12, borderRadius: 20, flexDirection: "row", marginBottom: 12 },
   cartItemDark: { backgroundColor: "#2a2a2a" },
   cartImage: { width: 70, height: 70, borderRadius: 16, marginRight: 12 },
@@ -1155,20 +1132,17 @@ const styles = StyleSheet.create({
   finalTotal: { fontSize: 20, fontWeight: "900", marginTop: 4 },
   discountText: { fontSize: 16, color: "green", marginTop: 4 },
 
-  // Бонусы, профиль
   balanceCard: { backgroundColor: "#111", padding: 24, borderRadius: 28 },
   balanceLabel: { color: "#fff" },
   balanceValue: { color: "#fff", fontSize: 36, fontWeight: "900" },
   balanceInfo: { color: "#fff" },
   userName: { fontSize: 18 },
 
-  // Рефералка
   referralBox: { backgroundColor: "#fff", padding: 16, borderRadius: 24 },
   referralBoxDark: { backgroundColor: "#2a2a2a" },
   referralText: { marginBottom: 12, fontSize: 13 },
   copyButton: { backgroundColor: "#111", padding: 12, borderRadius: 18 },
 
-  // Уровни
   currentLevel: { backgroundColor: "#111", padding: 20, borderRadius: 24 },
   currentLevelTitle: { fontSize: 24, fontWeight: "900", color: "#fff" },
   currentInfo: { color: "#fff", marginTop: 6, fontSize: 14 },
@@ -1181,7 +1155,6 @@ const styles = StyleSheet.create({
   levelInfo: { marginTop: 4, fontSize: 14 },
   activeText: { color: "#fff" },
 
-  // История заказов
   orderCard: { backgroundColor: "#fff", padding: 14, borderRadius: 18, marginBottom: 12 },
   orderCardDark: { backgroundColor: "#2a2a2a" },
   orderId: { fontSize: 15, fontWeight: "800" },
@@ -1192,7 +1165,6 @@ const styles = StyleSheet.create({
   orderMore: { fontSize: 12, color: "#777", marginLeft: 8 },
   trackingText: { fontSize: 13, color: "#0066cc", marginTop: 2 },
 
-  // Модальные окна
   modalOverlay: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "rgba(0,0,0,0.5)" },
   modalScrollView: { flexGrow: 1, justifyContent: "center", paddingVertical: 20 },
   modalView: { width: "90%", backgroundColor: "#fff", borderRadius: 28, padding: 20, alignItems: "stretch", alignSelf: "center" },
@@ -1204,7 +1176,6 @@ const styles = StyleSheet.create({
   modalCancel: { padding: 10, borderRadius: 18, backgroundColor: "#eee", flex: 0.4, alignItems: "center" },
   modalConfirm: { padding: 10, borderRadius: 18, backgroundColor: "#111", flex: 0.5, alignItems: "center" },
 
-  // Доставка
   deliveryLabel: { fontSize: 15, fontWeight: "600", marginBottom: 8 },
   deliveryOptions: { flexDirection: "row", justifyContent: "space-between", marginBottom: 16 },
   deliveryOption: { flex: 1, padding: 10, borderRadius: 14, backgroundColor: "#eee", marginHorizontal: 4, alignItems: "center" },
@@ -1216,16 +1187,13 @@ const styles = StyleSheet.create({
   deliverySummaryDark: { backgroundColor: "#333" },
   summaryText: { fontSize: 13, fontWeight: "500" },
 
-  // Промокод
   promoBox: { flexDirection: "row", marginVertical: 8 },
   promoInput: { flex: 1, borderWidth: 1, borderColor: "#ddd", borderRadius: 18, padding: 8, marginRight: 8, fontSize: 14 },
   promoButton: { backgroundColor: "#111", padding: 8, borderRadius: 18, justifyContent: "center" },
 
-  // Бонус-чекбокс
   bonusCheckbox: { flexDirection: "row", alignItems: "center", marginVertical: 8 },
   bonusCheckboxText: { fontSize: 14, fontWeight: "600" },
 
-  // Поиск и фильтры
   searchInput: { backgroundColor: "#fff", padding: 10, borderRadius: 22, marginBottom: 12, fontSize: 14 },
   filterScroll: { flexDirection: "row", marginBottom: 12, height: 44, flexShrink: 0, flexGrow: 0 },
   filterContent: { alignItems: "center" },
@@ -1235,7 +1203,6 @@ const styles = StyleSheet.create({
   priceFilter: { flexDirection: "row", marginBottom: 12 },
   priceInput: { flex: 1, backgroundColor: "#fff", padding: 8, borderRadius: 18, marginRight: 8, fontSize: 14 },
 
-  // Выбор размера (на странице товара)
   sizeBox: { marginTop: 16 },
   sizeTitle: { fontSize: 15, fontWeight: "600", marginBottom: 8 },
   sizes: { flexDirection: "row", flexWrap: "wrap" },
@@ -1244,7 +1211,6 @@ const styles = StyleSheet.create({
   sizeTextActive: { color: "#fff" },
   sizeText: { fontSize: 13, color: "#555", marginTop: 2 },
 
-  // Админка
   adminButton: { backgroundColor: "#111", padding: 10, borderRadius: 18, marginVertical: 8, alignSelf: "flex-start" },
   closeAdmin: { marginBottom: 16, alignSelf: "flex-end" },
   closeAdminText: { fontSize: 15, fontWeight: "600" },
@@ -1275,7 +1241,6 @@ const styles = StyleSheet.create({
   broadcastInput: { borderWidth: 1, borderColor: "#ddd", borderRadius: 14, padding: 10, marginBottom: 12, minHeight: 60, fontSize: 14 },
   broadcastBtn: { backgroundColor: "#111", padding: 12, borderRadius: 20, alignItems: "center", marginBottom: 20 },
 
-  // Отзывы
   ratingDisplay: { fontSize: 14, marginVertical: 4 },
   reviewItem: { backgroundColor: "#f0f0f0", padding: 8, borderRadius: 12, marginBottom: 8 },
   reviewItemDark: { backgroundColor: "#333" },
@@ -1292,16 +1257,13 @@ const styles = StyleSheet.create({
   reviewInput: { borderWidth: 1, borderColor: "#ddd", borderRadius: 12, padding: 8, marginBottom: 8 },
   submitReview: { backgroundColor: "#111", padding: 10, borderRadius: 16, alignItems: "center" },
 
-  // Тема
   themeRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginVertical: 12 },
   themeLabel: { fontSize: 16 },
 
-  // Карточка итога
   totalRow: { flexDirection: "row", justifyContent: "space-between", marginVertical: 12, paddingVertical: 8, borderTopWidth: 1, borderColor: "#ddd" },
   totalLabel: { fontSize: 16, fontWeight: "600" },
   totalAmount: { fontSize: 18, fontWeight: "900" },
 
-  // Бейджи
   cartBadge: { fontSize: 16, fontWeight: "600", color: "#000" },
   menuBadge: {
     position: 'absolute',
@@ -1317,7 +1279,6 @@ const styles = StyleSheet.create({
   },
   menuBadgeText: { color: '#fff', fontSize: 10, fontWeight: 'bold' },
 
-  // Меню (закреплённое)
   menu: {
     position: 'absolute',
     bottom: 0,
@@ -1359,7 +1320,6 @@ const styles = StyleSheet.create({
     color: '#111',
   },
 
-  // Прочие мелочи
   back: { fontSize: 16, marginBottom: 12, color: "#555" },
   shareBtn: { fontSize: 22, marginBottom: 12 },
   productHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
@@ -1367,7 +1327,6 @@ const styles = StyleSheet.create({
   loader: { textAlign: "center", padding: 8, color: "#777" },
   empty: { textAlign: "center", padding: 20, color: "#999" },
 
-  // ===== СТИЛИ ДЛЯ TOAST =====
   toastContainer: {
     position: 'absolute',
     top: 50,
