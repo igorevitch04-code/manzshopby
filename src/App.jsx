@@ -488,6 +488,9 @@ export default function App() {
   const [adminOrders, setAdminOrders] = useState([]);
   const [showAdmin, setShowAdmin] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null);
+  const [productDraft, setProductDraft] = useState(null);
+  const [isNewProduct, setIsNewProduct] = useState(false);
+  const [promoForm, setPromoForm] = useState({ code: "", discount: "", maxUses: "", description: "" });
   const [lastOrderNumber, setLastOrderNumber] = useState(3340);
   const [users, setUsers] = useState([]);
   const [broadcastText, setBroadcastText] = useState("");
@@ -938,7 +941,13 @@ export default function App() {
   const calculateTotals = () => {
     const total = cart.reduce((s, i) => s + i.price, 0);
     let discount = 0;
-    const foundPromo = promoCodes.find(p => p.code.toUpperCase() === promoCode.toUpperCase() && p.active);
+    const foundPromo = promoCodes.find(p => {
+      if (p.code.toUpperCase() !== promoCode.toUpperCase()) return false;
+      if (p.active === false) return false;
+      const maxU = p.maxUses != null ? Number(p.maxUses) : 999999;
+      const used = Number(p.usedCount) || 0;
+      return used < maxU;
+    });
     if (foundPromo) {
       discount = total * (foundPromo.discount / 100);
     }
@@ -982,6 +991,15 @@ export default function App() {
     };
     setOrderHistory(prev => [order, ...prev]);
     setAdminOrders(prev => [order, ...prev]);
+    // Увеличиваем счётчик использований промокода
+    if (promoCode) {
+      const codeUp = promoCode.toUpperCase();
+      setPromoCodes(prev => prev.map(p =>
+        p.code.toUpperCase() === codeUp
+          ? { ...p, usedCount: (Number(p.usedCount) || 0) + 1 }
+          : p
+      ));
+    }
     const cashback = Math.floor(total * (currentLevel.cashback / 100));
     setBonusBalance(prev => prev + cashback - usedBonus);
     setOrders(orders + 1);
@@ -1157,54 +1175,189 @@ export default function App() {
     if (!isAdmin) { Alert.alert("Доступ запрещён", "У вас нет прав администратора"); return; }
     setShowAdmin(!showAdmin);
   };
-  const deleteProduct = (id) => {
-    Alert.alert("Удалить?", "", [{ text: "Отмена" }, { text: "Удалить", onPress: () => setProducts(products.filter(p => p.id !== id)) }]);
-  };
-  const addProduct = () => {
-    const np = { id: Date.now(), brand: "Новый бренд", name: "Название", price: 0, oldPrice: null, image: "https://via.placeholder.com/150", sales: 0, ratings: [], averageRating: 0, description: "Описание", sizes: ["40","41","42"] };
-    setProducts([np, ...products]);
-    setEditingProduct(np.id);
-  };
-  const updateProduct = (id, field, value) => {
-    setProducts(prev => prev.map(p => {
-      if (p.id === id) {
-        if (field === "price" || field === "oldPrice") return { ...p, [field]: parseInt(value) || 0 };
-        if (field === "sizes") return { ...p, [field]: value.split(',').map(s => s.trim()) };
-        return { ...p, [field]: value };
+  const confirmAction = (msg) => {
+    try {
+      if (typeof window !== "undefined" && typeof window.confirm === "function") {
+        return window.confirm(msg);
       }
-      return p;
-    }));
+    } catch (e) {}
+    return true;
   };
+
+  const deleteProduct = (id) => {
+    if (!confirmAction("Удалить этот товар?")) return;
+    setProducts((prev) => prev.filter((p) => p.id !== id));
+    setEditingProduct((cur) => (cur === id ? null : cur));
+    setProductDraft((d) => (d && d.id === id ? null : d));
+  };
+
+  const startAddProduct = () => {
+    const id = Date.now();
+    setIsNewProduct(true);
+    setProductDraft({
+      id,
+      brand: "",
+      name: "",
+      price: "",
+      oldPrice: "",
+      image: "",
+      description: "",
+      sizes: "40, 41, 42",
+    });
+    setEditingProduct(id);
+  };
+
+  const startEditProduct = (p) => {
+    setIsNewProduct(false);
+    setProductDraft({
+      id: p.id,
+      brand: p.brand || "",
+      name: p.name || "",
+      price: String(p.price ?? ""),
+      oldPrice: p.oldPrice != null ? String(p.oldPrice) : "",
+      image: p.image || "",
+      description: p.description || "",
+      sizes: Array.isArray(p.sizes) ? p.sizes.join(", ") : "",
+    });
+    setEditingProduct(p.id);
+  };
+
+  const updateProductDraft = (field, value) => {
+    setProductDraft((d) => (d ? { ...d, [field]: value } : d));
+  };
+
+  const pickProductImage = () => {
+    try {
+      if (typeof document === "undefined") {
+        Alert.alert("Ошибка", "Загрузка фото доступна в Telegram / браузере");
+        return;
+      }
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = "image/*";
+      input.onchange = (e) => {
+        const file = e.target?.files?.[0];
+        if (!file) return;
+        if (file.size > 2.5 * 1024 * 1024) {
+          Alert.alert("Файл слишком большой", "Максимум 2.5 МБ. Сожмите фото или укажите URL.");
+          return;
+        }
+        const reader = new FileReader();
+        reader.onload = () => {
+          updateProductDraft("image", String(reader.result || ""));
+        };
+        reader.readAsDataURL(file);
+      };
+      input.click();
+    } catch (err) {
+      console.warn("pickProductImage", err);
+      Alert.alert("Ошибка", "Не удалось открыть выбор файла");
+    }
+  };
+
+  const saveProductDraft = () => {
+    if (!productDraft) return;
+    const brand = (productDraft.brand || "").trim() || "Бренд";
+    const name = (productDraft.name || "").trim() || "Товар";
+    const price = parseInt(String(productDraft.price).replace(/\D/g, ""), 10) || 0;
+    const oldRaw = String(productDraft.oldPrice || "").replace(/\D/g, "");
+    const oldPrice = oldRaw ? parseInt(oldRaw, 10) : null;
+    const image = (productDraft.image || "").trim() || "https://via.placeholder.com/400?text=Photo";
+    const description = (productDraft.description || "").trim();
+    const sizes = String(productDraft.sizes || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const payload = {
+      brand,
+      name,
+      price,
+      oldPrice,
+      image,
+      description,
+      sizes: sizes.length ? sizes : ["40", "41", "42"],
+    };
+    if (isNewProduct) {
+      setProducts((prev) => [
+        {
+          id: productDraft.id,
+          ...payload,
+          sales: 0,
+          ratings: [],
+          averageRating: 0,
+        },
+        ...prev,
+      ]);
+    } else {
+      setProducts((prev) =>
+        prev.map((p) => (p.id === productDraft.id ? { ...p, ...payload } : p))
+      );
+    }
+    setEditingProduct(null);
+    setProductDraft(null);
+    setIsNewProduct(false);
+    showToast("✅ Товар сохранён");
+  };
+
+  const cancelProductDraft = () => {
+    setEditingProduct(null);
+    setProductDraft(null);
+    setIsNewProduct(false);
+  };
+
   const changeStatus = (orderId, newStatus) => {
-    setAdminOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o));
-    setOrderHistory(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o));
+    setAdminOrders((prev) => prev.map((o) => (o.id === orderId ? { ...o, status: newStatus } : o)));
+    setOrderHistory((prev) => prev.map((o) => (o.id === orderId ? { ...o, status: newStatus } : o)));
   };
+
   const updateTracking = (orderId, trackingNumber) => {
-    setAdminOrders(prev => prev.map(o => o.id === orderId ? { ...o, trackingNumber } : o));
-    setOrderHistory(prev => prev.map(o => o.id === orderId ? { ...o, trackingNumber } : o));
+    setAdminOrders((prev) => prev.map((o) => (o.id === orderId ? { ...o, trackingNumber } : o)));
+    setOrderHistory((prev) => prev.map((o) => (o.id === orderId ? { ...o, trackingNumber } : o)));
   };
+
   const sendBroadcast = () => {
-    if (!broadcastText.trim()) { Alert.alert("Ошибка", "Введите текст"); return; }
+    if (!broadcastText.trim()) {
+      Alert.alert("Ошибка", "Введите текст");
+      return;
+    }
     Alert.alert("Рассылка отправлена", `Сообщение: ${broadcastText}\nПолучателей: ${users.length}`);
     setBroadcastText("");
   };
 
-  const addPromoCode = () => {
-    const code = prompt("Введите код (например, SAVE10)");
-    if (!code) return;
-    const discount = prompt("Введите скидку в % (например, 10)");
-    if (!discount) return;
-    const description = prompt("Описание (необязательно)") || "";
-    setPromoCodes(prev => [...prev, { code: code.toUpperCase(), discount: parseInt(discount), description, active: true }]);
-  };
-  const togglePromoActive = (index) => {
-    setPromoCodes(prev => prev.map((p, i) => i === index ? { ...p, active: !p.active } : p));
-  };
-  const deletePromoCode = (index) => {
-    Alert.alert("Удалить промокод?", "", [
-      { text: "Отмена" },
-      { text: "Удалить", onPress: () => setPromoCodes(prev => prev.filter((_, i) => i !== index)) }
+  const addPromoFromForm = () => {
+    const code = (promoForm.code || "").trim().toUpperCase();
+    const discount = parseInt(String(promoForm.discount || ""), 10);
+    const maxUses = parseInt(String(promoForm.maxUses || ""), 10);
+    if (!code) {
+      Alert.alert("Ошибка", "Введите код промокода");
+      return;
+    }
+    if (!discount || discount < 1 || discount > 100) {
+      Alert.alert("Ошибка", "Скидка должна быть от 1 до 100%");
+      return;
+    }
+    if (promoCodes.some((p) => p.code.toUpperCase() === code)) {
+      Alert.alert("Ошибка", "Такой промокод уже есть");
+      return;
+    }
+    setPromoCodes((prev) => [
+      ...prev,
+      {
+        code,
+        discount,
+        description: (promoForm.description || "").trim(),
+        maxUses: maxUses > 0 ? maxUses : 999999,
+        usedCount: 0,
+        active: true,
+      },
     ]);
+    setPromoForm({ code: "", discount: "", maxUses: "", description: "" });
+    showToast("✅ Промокод добавлен");
+  };
+
+  const deletePromoCode = (code) => {
+    if (!confirmAction(`Удалить промокод ${code}?`)) return;
+    setPromoCodes((prev) => prev.filter((p) => p.code !== code));
   };
 
   let adminRevenue = 0;
@@ -1789,7 +1942,9 @@ export default function App() {
               <Text style={[styles.orderId, isDark && styles.textDark]}>Заказ #{order.id}</Text>
               <Text style={[styles.orderDate, isDark && styles.textDark]}>{new Date(order.date).toLocaleDateString()}</Text>
               <Text style={[styles.orderStatus, isDark && styles.textDark]}>Статус: {order.status}</Text>
-              {order.trackingNumber && <Text style={[styles.trackingText, isDark && styles.textDark]}>Трек-номер: {order.trackingNumber}</Text>}
+              {order.delivery === "europost" && order.trackingNumber && (order.status === "Доставляется" || order.status === "Готов к выдаче") && (
+                <Text style={[styles.trackingText, isDark && styles.textDark]}>Трек-номер: {order.trackingNumber}</Text>
+              )}
               <Text style={[styles.orderTotal, isDark && styles.textDark]}>Сумма: {money(order.finalTotal)}</Text>
               {order.items.slice(0, 3).map((item, i) => (
                 <Text key={i} style={[styles.orderItem, isDark && styles.textDark]}>• {item.name} x1</Text>
@@ -1805,123 +1960,324 @@ export default function App() {
 
   // ---- AdminPanel ----
   const AdminPanel = () => {
-    const { theme } = useTheme(); 
+    const { theme } = useTheme();
     const isDark = theme === "dark";
     if (!showAdmin || !isAdmin) return null;
 
-    const today = new Date().toISOString().split('T')[0];
+    const today = new Date().toISOString().split("T")[0];
     const todayRevenue = adminOrders
-      .filter(o => o.date.startsWith(today))
-      .reduce((sum, o) => sum + o.finalTotal, 0);
+      .filter((o) => o.date && o.date.startsWith(today))
+      .reduce((sum, o) => sum + (o.finalTotal || 0), 0);
 
     const monthStart = new Date();
     monthStart.setDate(1);
+    monthStart.setHours(0, 0, 0, 0);
     const monthRevenue = adminOrders
-      .filter(o => new Date(o.date) >= monthStart)
-      .reduce((sum, o) => sum + o.finalTotal, 0);
+      .filter((o) => o.date && new Date(o.date) >= monthStart)
+      .reduce((sum, o) => sum + (o.finalTotal || 0), 0);
+
+    const statusColor = (s) => {
+      if (s === "Ожидает подтверждения") return "#f59e0b";
+      if (s === "Принят") return "#3b82f6";
+      if (s === "На сборке") return "#8b5cf6";
+      if (s === "Доставляется") return "#06b6d4";
+      if (s === "Готов к выдаче") return "#22c55e";
+      return "#999";
+    };
 
     return (
       <Modal visible={showAdmin} animationType="slide" transparent={false}>
-        <View style={[styles.page, isDark && styles.pageDark, {paddingTop: 40}]}>
+        <View style={[styles.page, isDark && styles.pageDark, { paddingTop: 40 }]}>
           <TouchableOpacity onPress={() => setShowAdmin(false)} style={styles.closeAdmin}>
-            <Text style={[styles.closeAdminText, isDark && styles.textDark]}>✕ Закрыть админку</Text>
+            <Text style={[styles.closeAdminText, isDark && styles.textDark]}>✕ Закрыть CRM</Text>
           </TouchableOpacity>
 
-          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 40, flexGrow: 1 }}>
-            <Text style={[styles.pageTitle, isDark && styles.textDark]}>Админ-панель</Text>
+          <ScrollView
+            style={{ flex: 1 }}
+            contentContainerStyle={{ paddingBottom: 60, flexGrow: 1 }}
+            keyboardShouldPersistTaps="handled"
+            nestedScrollEnabled
+          >
+            <Text style={[styles.pageTitle, isDark && styles.textDark]}>CRM · Админ-панель</Text>
 
-            <View style={[styles.adminStatCard, isDark && styles.adminStatCardDark]}>
-              <Text style={[styles.adminStat, isDark && styles.textDark]}>Сегодня: {money(todayRevenue)}</Text>
-              <Text style={[styles.adminStat, isDark && styles.textDark]}>За месяц: {money(monthRevenue)}</Text>
-              <Text style={[styles.adminStat, isDark && styles.textDark]}>Всего заказов: {adminOrders.length}</Text>
+            {/* Stats */}
+            <View style={styles.adminStatCard}>
+              <Text style={styles.adminStatWhite}>Сегодня: {money(todayRevenue)}</Text>
+              <Text style={styles.adminStatWhite}>За месяц: {money(monthRevenue)}</Text>
+              <Text style={styles.adminStatWhite}>Всего заказов: {adminOrders.length}</Text>
+              <Text style={styles.adminStatWhite}>Товаров в каталоге: {products.length}</Text>
             </View>
 
+            {/* ORDERS TABLE */}
             <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Управление заказами</Text>
-            {adminOrders.map(order => (
-              <View key={order.id} style={[styles.orderCard, isDark && styles.orderCardDark]}>
-                <Text style={[styles.orderId, isDark && styles.textDark]}>
-                  #{order.id} — {order.fullName} • {new Date(order.date).toLocaleDateString()}
-                </Text>
-                <Text style={[styles.orderStatus, isDark && styles.textDark]}>Статус: {order.status}</Text>
+            {adminOrders.length === 0 ? (
+              <Text style={[styles.empty, isDark && styles.textDark]}>Заказов пока нет</Text>
+            ) : (
+              <ScrollView horizontal showsHorizontalScrollIndicator nestedScrollEnabled style={styles.crmTableScroll}>
+                <View style={styles.crmTable}>
+                  <View style={[styles.crmRow, styles.crmHeaderRow]}>
+                    <Text style={[styles.crmCell, styles.crmHead, { width: 70 }]}>#</Text>
+                    <Text style={[styles.crmCell, styles.crmHead, { width: 90 }]}>Дата</Text>
+                    <Text style={[styles.crmCell, styles.crmHead, { width: 150 }]}>Статус</Text>
+                    <Text style={[styles.crmCell, styles.crmHead, { width: 130 }]}>ФИО</Text>
+                    <Text style={[styles.crmCell, styles.crmHead, { width: 140 }]}>Трек-номер</Text>
+                    <Text style={[styles.crmCell, styles.crmHead, { width: 180 }]}>Товар</Text>
+                    <Text style={[styles.crmCell, styles.crmHead, { width: 90 }]}>Сумма</Text>
+                  </View>
+                  {adminOrders.map((order) => {
+                    const itemsLabel = (order.items || [])
+                      .map((i) => `${i.name}${i.size ? ` (${i.size})` : ""}`)
+                      .join(", ");
+                    const isPost = order.delivery === "europost";
+                    return (
+                      <View key={order.id} style={[styles.crmRow, isDark && styles.crmRowDark]}>
+                        <Text style={[styles.crmCell, isDark && styles.textDark, { width: 70, fontWeight: "800" }]}>
+                          #{order.id}
+                        </Text>
+                        <Text style={[styles.crmCell, isDark && styles.textDark, { width: 90 }]}>
+                          {order.date ? new Date(order.date).toLocaleDateString("ru-RU") : "—"}
+                        </Text>
+                        <View style={[styles.crmCell, { width: 150 }]}>
+                          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 4 }}>
+                              {ORDER_STATUSES.map((s) => (
+                                <TouchableOpacity
+                                  key={s}
+                                  style={[
+                                    styles.crmStatusChip,
+                                    order.status === s && { backgroundColor: statusColor(s) },
+                                  ]}
+                                  onPress={() => changeStatus(order.id, s)}
+                                >
+                                  <Text
+                                    style={[
+                                      styles.crmStatusChipText,
+                                      order.status === s && { color: "#fff" },
+                                    ]}
+                                  >
+                                    {s}
+                                  </Text>
+                                </TouchableOpacity>
+                              ))}
+                            </View>
+                          </ScrollView>
+                        </View>
+                        <Text style={[styles.crmCell, isDark && styles.textDark, { width: 130 }]} numberOfLines={2}>
+                          {order.fullName || "—"}
+                        </Text>
+                        <View style={[styles.crmCell, { width: 140 }]}>
+                          {isPost ? (
+                            <TextInput
+                              style={[styles.crmTrackInput, isDark && styles.inputDark]}
+                              placeholder="Трек..."
+                              placeholderTextColor="#999"
+                              value={order.trackingNumber || ""}
+                              onChangeText={(t) => updateTracking(order.id, t)}
+                            />
+                          ) : (
+                            <Text style={[styles.crmMuted, isDark && styles.textDark]}>Курьер</Text>
+                          )}
+                        </View>
+                        <Text style={[styles.crmCell, isDark && styles.textDark, { width: 180 }]} numberOfLines={3}>
+                          {itemsLabel || "—"}
+                        </Text>
+                        <Text style={[styles.crmCell, isDark && styles.textDark, { width: 90, fontWeight: "700" }]}>
+                          {money(order.finalTotal || 0)}
+                        </Text>
+                      </View>
+                    );
+                  })}
+                </View>
+              </ScrollView>
+            )}
 
-                {order.delivery === "europost" && (
-                  <TextInput
-                    style={[styles.trackingInput, isDark && styles.inputDark]}
-                    placeholder="Трек-номер"
-                    placeholderTextColor={isDark ? "#999" : "#888"}
-                    value={order.trackingNumber || ""}
-                    onChangeText={text => updateTracking(order.id, text)}
-                  />
-                )}
+            {/* PROMO CODES */}
+            <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Промокоды</Text>
+            <View style={[styles.promoFormCard, isDark && styles.productEditDark]}>
+              <Text style={[styles.crmMuted, isDark && styles.textDark, { marginBottom: 8 }]}>
+                Новый промокод
+              </Text>
+              <TextInput
+                style={[styles.editInput, isDark && styles.inputDark]}
+                placeholder="Код (SAVE10)"
+                placeholderTextColor="#999"
+                value={promoForm.code}
+                onChangeText={(t) => setPromoForm((f) => ({ ...f, code: t }))}
+                autoCapitalize="characters"
+                blurOnSubmit={false}
+              />
+              <TextInput
+                style={[styles.editInput, isDark && styles.inputDark]}
+                placeholder="Скидка %"
+                placeholderTextColor="#999"
+                value={promoForm.discount}
+                onChangeText={(t) => setPromoForm((f) => ({ ...f, discount: t.replace(/\D/g, "") }))}
+                keyboardType="numeric"
+                blurOnSubmit={false}
+              />
+              <TextInput
+                style={[styles.editInput, isDark && styles.inputDark]}
+                placeholder="Кол-во использований (напр. 50)"
+                placeholderTextColor="#999"
+                value={promoForm.maxUses}
+                onChangeText={(t) => setPromoForm((f) => ({ ...f, maxUses: t.replace(/\D/g, "") }))}
+                keyboardType="numeric"
+                blurOnSubmit={false}
+              />
+              <TextInput
+                style={[styles.editInput, isDark && styles.inputDark]}
+                placeholder="Описание (необязательно)"
+                placeholderTextColor="#999"
+                value={promoForm.description}
+                onChangeText={(t) => setPromoForm((f) => ({ ...f, description: t }))}
+                blurOnSubmit={false}
+              />
+              <TouchableOpacity style={styles.addBtn} onPress={addPromoFromForm}>
+                <Text style={styles.buttonText}>+ Создать промокод</Text>
+              </TouchableOpacity>
+            </View>
 
-                <View style={styles.statusButtons}>
-                  {ORDER_STATUSES.map(s => (
-                    <TouchableOpacity 
-                      key={s} 
-                      style={[styles.statusBtn, order.status === s && styles.statusBtnActive]} 
-                      onPress={() => changeStatus(order.id, s)}
-                    >
-                      <Text style={[styles.statusBtnText, order.status === s && styles.statusBtnTextActive]}>{s}</Text>
+            {promoCodes.map((promo) => {
+              const used = Number(promo.usedCount) || 0;
+              const maxU = promo.maxUses != null ? Number(promo.maxUses) : 999999;
+              const left = Math.max(0, maxU - used);
+              return (
+                <View key={promo.code} style={[styles.productEdit, isDark && styles.productEditDark]}>
+                  <Text style={[styles.productName, isDark && styles.textDark]}>
+                    {promo.code} — {promo.discount}%
+                  </Text>
+                  {!!promo.description && (
+                    <Text style={[styles.brand, isDark && styles.textDark]}>{promo.description}</Text>
+                  )}
+                  <Text style={[styles.crmMuted, isDark && styles.textDark]}>
+                    Использовано: {used} / {maxU >= 999999 ? "∞" : maxU} · Осталось: {maxU >= 999999 ? "∞" : left}
+                  </Text>
+                  <View style={styles.editActions}>
+                    <TouchableOpacity onPress={() => deletePromoCode(promo.code)}>
+                      <Text style={[styles.editAction, { color: "red" }]}>🗑 Удалить</Text>
                     </TouchableOpacity>
-                  ))}
+                  </View>
                 </View>
-              </View>
-            ))}
+              );
+            })}
 
-            <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Управление промокодами</Text>
-            <TouchableOpacity style={styles.addBtn} onPress={addPromoCode}>
-              <Text style={styles.buttonText}>+ Добавить промокод</Text>
-            </TouchableOpacity>
-            {promoCodes.map((promo, index) => (
-              <View key={index} style={[styles.productEdit, isDark && styles.productEditDark]}>
-                <Text style={[styles.productName, isDark && styles.textDark]}>
-                  {promo.code} — {promo.discount}% {promo.active ? '✅' : '❌'}
-                </Text>
-                <Text style={[styles.brand, isDark && styles.textDark]}>{promo.description}</Text>
-                <View style={styles.editActions}>
-                  <TouchableOpacity onPress={() => togglePromoActive(index)}>
-                    <Text style={[styles.editAction, {color: promo.active ? 'green' : 'red'}]}>
-                      {promo.active ? 'Деактивировать' : 'Активировать'}
-                    </Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity onPress={() => deletePromoCode(index)}>
-                    <Text style={[styles.editAction, {color: 'red'}]}>🗑 Удалить</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            ))}
-
+            {/* PRODUCTS */}
             <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Управление товарами</Text>
-            <TouchableOpacity style={styles.addBtn} onPress={addProduct}>
+            <TouchableOpacity style={styles.addBtn} onPress={startAddProduct}>
               <Text style={styles.buttonText}>+ Добавить товар</Text>
             </TouchableOpacity>
-            {products.map(p => (
-              <View key={p.id} style={[styles.productEdit, isDark && styles.productEditDark]}>
-                {editingProduct === p.id ? (
-                  <>
-                    <TextInput style={[styles.editInput, isDark && styles.inputDark]} value={p.brand} onChangeText={t => updateProduct(p.id, "brand", t)} placeholder="Бренд" />
-                    <TextInput style={[styles.editInput, isDark && styles.inputDark]} value={p.name} onChangeText={t => updateProduct(p.id, "name", t)} placeholder="Название" />
-                    <TextInput style={[styles.editInput, isDark && styles.inputDark]} value={String(p.price)} onChangeText={t => updateProduct(p.id, "price", t)} placeholder="Цена" keyboardType="numeric" />
-                    <TextInput style={[styles.editInput, isDark && styles.inputDark]} value={p.image} onChangeText={t => updateProduct(p.id, "image", t)} placeholder="URL картинки" />
-                    <TextInput style={[styles.editInput, isDark && styles.inputDark]} value={p.description || ""} onChangeText={t => updateProduct(p.id, "description", t)} placeholder="Описание" multiline />
-                    <TextInput style={[styles.editInput, isDark && styles.inputDark]} value={p.sizes ? p.sizes.join(', ') : ""} onChangeText={t => updateProduct(p.id, "sizes", t)} placeholder="Размеры (через запятую)" />
-                    <TouchableOpacity style={styles.saveBtn} onPress={() => setEditingProduct(null)}>
-                      <Text style={styles.buttonText}>Сохранить</Text>
-                    </TouchableOpacity>
-                  </>
-                ) : (
-                  <>
-                    <Text style={[styles.productName, isDark && styles.textDark]}>{p.brand} {p.name}</Text>
-                    <Text style={[styles.price, isDark && styles.textDark]}>{money(p.price)}</Text>
-                    <View style={styles.editActions}>
-                      <TouchableOpacity onPress={() => setEditingProduct(p.id)}><Text style={styles.editAction}>✎ Редактировать</Text></TouchableOpacity>
-                      <TouchableOpacity onPress={() => deleteProduct(p.id)}><Text style={styles.editAction}>🗑 Удалить</Text></TouchableOpacity>
-                    </View>
-                  </>
+
+            {/* Product editor (local draft — клавиатура не сбрасывается) */}
+            {productDraft && (
+              <View style={[styles.productEdit, isDark && styles.productEditDark, { borderWidth: 2, borderColor: "#111" }]}>
+                <Text style={[styles.productName, isDark && styles.textDark]}>
+                  {isNewProduct ? "Новый товар" : "Редактирование"}
+                </Text>
+                <TextInput
+                  style={[styles.editInput, isDark && styles.inputDark]}
+                  value={productDraft.brand}
+                  onChangeText={(t) => updateProductDraft("brand", t)}
+                  placeholder="Бренд"
+                  placeholderTextColor="#999"
+                  blurOnSubmit={false}
+                />
+                <TextInput
+                  style={[styles.editInput, isDark && styles.inputDark]}
+                  value={productDraft.name}
+                  onChangeText={(t) => updateProductDraft("name", t)}
+                  placeholder="Название"
+                  placeholderTextColor="#999"
+                  blurOnSubmit={false}
+                />
+                <TextInput
+                  style={[styles.editInput, isDark && styles.inputDark]}
+                  value={productDraft.price}
+                  onChangeText={(t) => updateProductDraft("price", t)}
+                  placeholder="Цена"
+                  placeholderTextColor="#999"
+                  keyboardType="numeric"
+                  blurOnSubmit={false}
+                />
+                <TextInput
+                  style={[styles.editInput, isDark && styles.inputDark]}
+                  value={productDraft.oldPrice}
+                  onChangeText={(t) => updateProductDraft("oldPrice", t)}
+                  placeholder="Старая цена (необязательно)"
+                  placeholderTextColor="#999"
+                  keyboardType="numeric"
+                  blurOnSubmit={false}
+                />
+                <TextInput
+                  style={[styles.editInput, isDark && styles.inputDark]}
+                  value={productDraft.description}
+                  onChangeText={(t) => updateProductDraft("description", t)}
+                  placeholder="Описание"
+                  placeholderTextColor="#999"
+                  multiline
+                  blurOnSubmit={false}
+                />
+                <TextInput
+                  style={[styles.editInput, isDark && styles.inputDark]}
+                  value={productDraft.sizes}
+                  onChangeText={(t) => updateProductDraft("sizes", t)}
+                  placeholder="Размеры через запятую"
+                  placeholderTextColor="#999"
+                  blurOnSubmit={false}
+                />
+                <TextInput
+                  style={[styles.editInput, isDark && styles.inputDark]}
+                  value={productDraft.image}
+                  onChangeText={(t) => updateProductDraft("image", t)}
+                  placeholder="URL картинки или загрузите фото"
+                  placeholderTextColor="#999"
+                  blurOnSubmit={false}
+                  autoCapitalize="none"
+                />
+                <TouchableOpacity style={[styles.addBtn, { marginTop: 4 }]} onPress={pickProductImage}>
+                  <Text style={styles.buttonText}>📷 Загрузить своё фото</Text>
+                </TouchableOpacity>
+                {!!productDraft.image && (
+                  <SmartImage uri={productDraft.image} style={{ width: "100%", height: 140, borderRadius: 12, marginBottom: 8 }} />
                 )}
+                <View style={{ flexDirection: "row", gap: 8 }}>
+                  <TouchableOpacity style={[styles.saveBtn, { flex: 1 }]} onPress={saveProductDraft}>
+                    <Text style={styles.buttonText}>Сохранить</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.saveBtn, { flex: 1, backgroundColor: "#888" }]}
+                    onPress={cancelProductDraft}
+                  >
+                    <Text style={styles.buttonText}>Отмена</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+
+            {products.map((p) => (
+              <View key={p.id} style={[styles.productEdit, isDark && styles.productEditDark]}>
+                <View style={{ flexDirection: "row", alignItems: "center" }}>
+                  {!!p.image && (
+                    <SmartImage uri={p.image} style={{ width: 56, height: 56, borderRadius: 10, marginRight: 10 }} />
+                  )}
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.productName, isDark && styles.textDark]}>
+                      {p.brand} {p.name}
+                    </Text>
+                    <Text style={[styles.price, isDark && styles.textDark]}>{money(p.price)}</Text>
+                  </View>
+                </View>
+                <View style={styles.editActions}>
+                  <TouchableOpacity onPress={() => startEditProduct(p)}>
+                    <Text style={styles.editAction}>✎ Редактировать</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => deleteProduct(p.id)}>
+                    <Text style={[styles.editAction, { color: "red" }]}>🗑 Удалить</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
             ))}
 
+            {/* Broadcast */}
             <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Рассылка</Text>
             <TextInput
               style={[styles.broadcastInput, isDark && styles.inputDark]}
@@ -1930,6 +2286,7 @@ export default function App() {
               value={broadcastText}
               onChangeText={setBroadcastText}
               multiline
+              blurOnSubmit={false}
             />
             <TouchableOpacity style={styles.broadcastBtn} onPress={sendBroadcast}>
               <Text style={styles.buttonText}>📨 Отправить рассылку ({users.length} получателей)</Text>
@@ -1972,13 +2329,19 @@ export default function App() {
         setPromoMsg("Введите промокод");
         return;
       }
-      const found = promoCodes.find(p => p.code.toUpperCase() === code.toUpperCase() && p.active);
+      const found = promoCodes.find((p) => {
+        if (p.code.toUpperCase() !== code.toUpperCase()) return false;
+        if (p.active === false) return false;
+        const maxU = p.maxUses != null ? Number(p.maxUses) : 999999;
+        const used = Number(p.usedCount) || 0;
+        return used < maxU;
+      });
       if (found) {
         setPromoCode(code);
         setPromoMsg(`✓ Скидка ${found.discount}% применена`);
       } else {
         setPromoCode("");
-        setPromoMsg("Неверный или неактивный промокод");
+        setPromoMsg("Неверный, неактивный или исчерпанный промокод");
       }
     };
 
@@ -2609,6 +2972,54 @@ const styles = StyleSheet.create({
     backgroundColor: "#2a2a2a",
   },
   adminStat: { fontSize: 16, marginVertical: 4 },
+  adminStatWhite: { fontSize: 16, marginVertical: 4, color: "#fff", fontWeight: "600" },
+  crmTableScroll: { marginBottom: 16 },
+  crmTable: {
+    borderRadius: 16,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "#e5e5e5",
+    backgroundColor: "#fff",
+  },
+  crmRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    borderBottomWidth: 1,
+    borderBottomColor: "#eee",
+    paddingVertical: 10,
+    paddingHorizontal: 6,
+    backgroundColor: "#fff",
+  },
+  crmRowDark: { backgroundColor: "#2a2a2a", borderBottomColor: "#444" },
+  crmHeaderRow: { backgroundColor: "#111" },
+  crmCell: { fontSize: 12, paddingHorizontal: 4, color: "#111" },
+  crmHead: { color: "#fff", fontWeight: "800", fontSize: 11 },
+  crmMuted: { fontSize: 12, color: "#888" },
+  crmTrackInput: {
+    borderWidth: 1,
+    borderColor: "#ddd",
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    fontSize: 12,
+    backgroundColor: "#fafafa",
+    color: "#111",
+  },
+  crmStatusChip: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 10,
+    backgroundColor: "#eee",
+    marginRight: 4,
+    marginBottom: 4,
+  },
+  crmStatusChipText: { fontSize: 10, color: "#333", fontWeight: "600" },
+  promoFormCard: {
+    backgroundColor: "#fff",
+    padding: 14,
+    borderRadius: 16,
+    marginBottom: 12,
+  },
   statusButtons: { flexDirection: "row", flexWrap: "wrap", marginTop: 8 },
   statusBtn: { padding: 5, borderRadius: 12, backgroundColor: "#eee", marginRight: 6, marginBottom: 4 },
   statusBtnActive: { backgroundColor: "#111" },
