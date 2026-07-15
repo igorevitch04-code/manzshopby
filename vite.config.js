@@ -7,7 +7,6 @@ export default defineConfig({
   resolve: {
     alias: {
       'react-native': 'react-native-web',
-      '@react-native-async-storage/async-storage': path.resolve(__dirname, './src/AsyncStorage.js'),
     },
   },
 });
