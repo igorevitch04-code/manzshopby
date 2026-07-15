@@ -163,6 +163,7 @@ export default function App() {
   // Toast
   const [toastVisible, setToastVisible] = useState(false);
   const [toastMessage, setToastMessage] = useState("");
+  const [pendingProductId, setPendingProductId] = useState(null);
 
   const showToast = (msg) => {
     setToastMessage(msg);
@@ -341,41 +342,74 @@ export default function App() {
     } catch (e) {}
   };
 
-  // Открытие товара по deep link (startapp / start_param)
+  // ===== DEEP LINK: читаем start_param ОДИН раз при старте =====
   useEffect(() => {
-    try {
-      const tg = typeof window !== "undefined" && window.Telegram?.WebApp;
-      if (!tg) return;
-      tg.ready();
-
-      // 1. Основной способ — start_param из Telegram
-      let startParam = tg.initDataUnsafe?.start_param || tg.startParam || "";
-
-      // 2. Fallback: смотрим URL (на всякий случай)
-      if (!startParam && typeof window !== "undefined") {
-        const urlParams = new URLSearchParams(window.location.search);
-        startParam = urlParams.get("tgWebAppStartParam") || urlParams.get("startapp") || "";
-      }
-
-      if (startParam && startParam.startsWith("product_")) {
-        const productId = parseInt(startParam.replace("product_", ""), 10);
-        if (!isNaN(productId)) {
-          const tryOpen = () => {
-            const found = products.find(p => p.id === productId);
-            if (found) {
-              setSelectedProduct(found);
-              setSelectedSize(null);
-              setPage("product");
-            }
-          };
-          if (products.length > 0) tryOpen();
-          else setTimeout(tryOpen, 800);
+    const readStartParam = () => {
+      try {
+        const tg = typeof window !== "undefined" && window.Telegram?.WebApp;
+        if (tg) {
+          tg.ready();
+          tg.expand?.();
         }
+
+        let startParam = "";
+
+        // 1. Главный способ — Telegram WebApp API
+        if (tg?.initDataUnsafe?.start_param) {
+          startParam = tg.initDataUnsafe.start_param;
+        }
+        // 2. Альтернативные поля
+        if (!startParam && tg?.startParam) startParam = tg.startParam;
+        // 3. Из URL (иногда Telegram прокидывает)
+        if (!startParam && typeof window !== "undefined") {
+          const params = new URLSearchParams(window.location.search);
+          startParam =
+            params.get("tgWebAppStartParam") ||
+            params.get("startapp") ||
+            params.get("start") ||
+            "";
+        }
+        // 4. Из hash (#tgWebAppData=... или startapp=)
+        if (!startParam && typeof window !== "undefined" && window.location.hash) {
+          const hash = window.location.hash.replace("#", "");
+          const hashParams = new URLSearchParams(hash);
+          startParam = hashParams.get("tgWebAppStartParam") || hashParams.get("startapp") || "";
+        }
+
+        console.log("[DeepLink] start_param =", startParam);
+
+        if (startParam && startParam.startsWith("product_")) {
+          const id = parseInt(startParam.replace("product_", ""), 10);
+          if (!isNaN(id)) {
+            console.log("[DeepLink] pending product id =", id);
+            setPendingProductId(id);
+          }
+        }
+      } catch (e) {
+        console.warn("[DeepLink] error:", e);
       }
-    } catch (e) {
-      console.warn("Deep link error:", e);
+    };
+
+    // Читаем сразу и ещё раз через 300мс (на случай медленной инициализации Telegram)
+    readStartParam();
+    const t = setTimeout(readStartParam, 300);
+    return () => clearTimeout(t);
+  }, []);
+
+  // Когда products готовы + есть pendingProductId → открываем карточку
+  useEffect(() => {
+    if (pendingProductId == null || !products || products.length === 0) return;
+
+    const found = products.find(p => p.id === pendingProductId);
+    console.log("[DeepLink] looking for id", pendingProductId, "found:", !!found);
+
+    if (found) {
+      setSelectedProduct(found);
+      setSelectedSize(null);
+      setPage("product");
+      setPendingProductId(null); // сбрасываем, чтобы не открывать повторно
     }
-  }, [products]);
+  }, [products, pendingProductId]);
 
   const getRecommended = () => {
     if (orderHistory.length === 0) return [];
