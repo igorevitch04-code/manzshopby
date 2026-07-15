@@ -560,19 +560,28 @@ export default function App() {
     return (
       <ScrollView style={[styles.page, isDark && styles.pageDark]} contentContainerStyle={styles.scrollContent}>
         <View style={styles.productHeader}>
-          <TouchableOpacity onPress={() => setPage("catalog")}>
-            <Text style={[styles.back, isDark && styles.textDark]}>← Назад</Text>
+          <TouchableOpacity style={styles.headerBtn} onPress={() => setPage("catalog")}>
+            <Text style={styles.headerBtnText}>← Назад</Text>
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => shareProduct(selectedProduct)}>
-            <Text style={[styles.shareBtn, isDark && styles.textDark]}>📤</Text>
+          <TouchableOpacity style={styles.headerBtn} onPress={() => shareProduct(selectedProduct)}>
+            <Text style={styles.headerBtnText}>↗ Поделиться</Text>
           </TouchableOpacity>
         </View>
         <Image source={{ uri: selectedProduct.image }} style={styles.bigImage} />
-        <Text style={[styles.brand, isDark && styles.textDark]}>{selectedProduct.brand}</Text>
-        <Text style={[styles.bigTitle, isDark && styles.textDark]}>{selectedProduct.name}</Text>
-        {selectedProduct.oldPrice && <Text style={styles.oldPriceBig}>{money(selectedProduct.oldPrice)}</Text>}
-        <Text style={[styles.bigPrice, isDark && styles.textDark]}>{money(selectedProduct.price)}</Text>
-        {selectedProduct.description && <Text style={[styles.descriptionText, isDark && styles.textDark]}>{selectedProduct.description}</Text>}
+        
+        <Text style={[styles.productBrand, isDark && styles.textDark]}>{selectedProduct.brand}</Text>
+        <Text style={[styles.productTitle, isDark && styles.textDark]}>{selectedProduct.name}</Text>
+        
+        <View style={styles.priceRow}>
+          {selectedProduct.oldPrice && (
+            <Text style={styles.oldPriceBig}>{money(selectedProduct.oldPrice)}</Text>
+          )}
+          <Text style={[styles.productPrice, isDark && styles.textDark]}>{money(selectedProduct.price)}</Text>
+        </View>
+
+        {selectedProduct.description && (
+          <Text style={[styles.descriptionText, isDark && styles.textDark]}>{selectedProduct.description}</Text>
+        )}
         {selectedProduct.averageRating > 0 && (
           <Text style={[styles.ratingDisplay, isDark && styles.textDark]}>⭐ {selectedProduct.averageRating.toFixed(1)} ({selectedProduct.ratings.length} отзывов)</Text>
         )}
@@ -1130,9 +1139,48 @@ const styles = StyleSheet.create({
   productName: { fontSize: 14, fontWeight: "800", marginTop: 4 },
   price: { fontSize: 18, fontWeight: "900", marginTop: 3 },
   oldPrice: { textDecorationLine: "line-through", color: "#999", fontSize: 13 },
-  oldPriceBig: { textDecorationLine: "line-through", color: "#999", fontSize: 16 },
+  oldPriceBig: { textDecorationLine: "line-through", color: "#999", fontSize: 15, marginRight: 10 },
   bigTitle: { fontSize: 24, fontWeight: "900" },
   bigPrice: { fontSize: 28, fontWeight: "900" },
+
+  // Product page new styles
+  productBrand: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#888",
+    letterSpacing: 1.5,
+    textTransform: "uppercase",
+    marginTop: 16,
+    marginBottom: 4,
+  },
+  productTitle: {
+    fontSize: 26,
+    fontWeight: "900",
+    color: "#111",
+    lineHeight: 32,
+    marginBottom: 8,
+  },
+  priceRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  productPrice: {
+    fontSize: 26,
+    fontWeight: "900",
+    color: "#111",
+  },
+  headerBtn: {
+    backgroundColor: "#111",
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 18,
+  },
+  headerBtnText: {
+    color: "#fff",
+    fontSize: 13,
+    fontWeight: "700",
+  },
 
   buyButton: { backgroundColor: "#111", padding: 14, borderRadius: 22, marginTop: 16 },
   buttonText: { color: "#fff", textAlign: "center", fontWeight: "800", fontSize: 13 },
@@ -1348,8 +1396,14 @@ const styles = StyleSheet.create({
 
   back: { fontSize: 16, marginBottom: 12, color: "#555" },
   shareBtn: { fontSize: 22, marginBottom: 12 },
-  productHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  descriptionText: { fontSize: 13, color: "#555", marginVertical: 4 },
+  productHeader: { 
+    flexDirection: "row", 
+    justifyContent: "space-between", 
+    alignItems: "center",
+    marginBottom: 12,
+    marginTop: 4,
+  },
+  descriptionText: { fontSize: 14, color: "#666", marginVertical: 6, lineHeight: 20 },
   loader: { textAlign: "center", padding: 8, color: "#777" },
   empty: { textAlign: "center", padding: 20, color: "#999" },
 
