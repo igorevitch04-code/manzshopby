@@ -3,7 +3,7 @@ import {
   View, Text, StyleSheet, TouchableOpacity, Image, ScrollView, Alert,
   TextInput, Clipboard, FlatList, Modal, Share, Switch
 } from "react-native";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+// import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const tg = typeof window !== "undefined" && window.Telegram?.WebApp;
 const ThemeContext = createContext();
