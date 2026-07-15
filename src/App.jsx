@@ -650,13 +650,26 @@ export default function App() {
     return (
       <ScrollView style={[styles.page, isDark && styles.pageDark]} contentContainerStyle={styles.scrollContent}>
         <View style={styles.productHeader}>
-          <TouchableOpacity style={styles.headerBtn} onPress={() => setPage("catalog")}>
-            <Text style={styles.headerBtnText}>← Назад</Text>
-          </TouchableOpacity>
+          <View style={styles.productHeaderLeft}>
+            <TouchableOpacity style={styles.headerBtn} onPress={() => setPage("catalog")}>
+              <Text style={styles.headerBtnText}>← Назад</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.headerIconBtn, isFav && styles.headerIconBtnActive]}
+              onPress={() => {
+                toggleFavorite(selectedProduct);
+                showToast(isFav ? "Удалено из избранного" : "❤️ Добавлено в избранное");
+              }}
+            >
+              <Text style={styles.headerIconBtnText}>{isFav ? "♥" : "♡"}</Text>
+            </TouchableOpacity>
+          </View>
+
           <TouchableOpacity style={styles.headerBtn} onPress={() => shareProduct(selectedProduct)}>
-            <Text style={styles.headerBtnText}>↗ Поделиться</Text>
+            <Text style={styles.headerBtnText}>↗</Text>
           </TouchableOpacity>
         </View>
+
         <Image source={{ uri: selectedProduct.image }} style={styles.bigImage} />
         
         <Text style={[styles.productBrand, isDark && styles.textDark]}>{selectedProduct.brand}</Text>
@@ -690,19 +703,6 @@ export default function App() {
             ))}
           </View>
         </View>
-
-        {/* Кнопка в избранное на странице товара */}
-        <TouchableOpacity
-          style={[styles.favPageBtn, isFav && styles.favPageBtnActive]}
-          onPress={() => {
-            toggleFavorite(selectedProduct);
-            showToast(isFav ? "Удалено из избранного" : "❤️ Добавлено в избранное");
-          }}
-        >
-          <Text style={[styles.favPageBtnText, isFav && styles.favPageBtnTextActive]}>
-            {isFav ? "♥ В избранном" : "♡ В избранное"}
-          </Text>
-        </TouchableOpacity>
 
         <TouchableOpacity style={styles.buyButton} onPress={handleAddToCart}>
           <Text style={styles.buttonText}>Добавить в корзину</Text>
@@ -1271,29 +1271,6 @@ const styles = StyleSheet.create({
   favoriteBtnTextActive: {
     color: "#ff3b30",
   },
-  // Кнопка «В избранное» на странице товара
-  favPageBtn: {
-    backgroundColor: "#f0f0f0",
-    paddingVertical: 14,
-    borderRadius: 16,
-    alignItems: "center",
-    marginBottom: 10,
-    borderWidth: 1.5,
-    borderColor: "#111",
-  },
-  favPageBtnActive: {
-    backgroundColor: "#111",
-    borderColor: "#111",
-  },
-  favPageBtnText: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: "#111",
-  },
-  favPageBtnTextActive: {
-    color: "#fff",
-  },
-
   brand: { fontSize: 11, color: "#777", marginTop: 6 },
   productName: { fontSize: 14, fontWeight: "800", marginTop: 4 },
   price: { fontSize: 18, fontWeight: "900", marginTop: 3 },
@@ -1338,6 +1315,27 @@ const styles = StyleSheet.create({
   headerBtnText: {
     color: "#fff",
     fontSize: 13,
+    fontWeight: "700",
+  },
+  productHeaderLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  headerIconBtn: {
+    backgroundColor: "#111",
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    marginLeft: 8,
+  },
+  headerIconBtnActive: {
+    backgroundColor: "#111",
+  },
+  headerIconBtnText: {
+    color: "#fff",
+    fontSize: 18,
     fontWeight: "700",
   },
 
