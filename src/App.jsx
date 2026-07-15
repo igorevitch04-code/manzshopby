@@ -1047,16 +1047,18 @@ export default function App() {
 // СТИЛИ (ПОЛНЫЕ)
 // ==============================
 const styles = StyleSheet.create({
-  root: {
+    root: {
     flex: 1,
-    height: '100%',
+    minHeight: '100%',
+    height: '100vh',
     width: '100%',
     backgroundColor: '#F7F7F5',
-    position: 'relative',   // ← добавь эту строку
+    position: 'relative',
   },
   contentContainer: {
     flex: 1,
-    paddingBottom: 90,
+    paddingBottom: 100,
+    overflow: 'auto',
   },
   page: {
     flex: 1,
@@ -1250,7 +1252,7 @@ const styles = StyleSheet.create({
   menuBadgeText: { color: '#fff', fontSize: 10, fontWeight: 'bold' },
 
       menu: {
-    position: 'absolute',
+    position: 'fixed',
     bottom: 0,
     left: 0,
     right: 0,
@@ -1263,8 +1265,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingBottom: 8,
     paddingTop: 4,
-    zIndex: 1000,
-    elevation: 10, // для Android
+    zIndex: 10000,
+    elevation: 20,
+    boxShadow: '0px -4px 12px rgba(0,0,0,0.15)',
   },
   menuDark: {
     backgroundColor: '#1a1a1a',
