@@ -1,7 +1,7 @@
 import React, { useState, useEffect, createContext, useContext } from "react";
 import {
   View, Text, StyleSheet, TouchableOpacity, Image, ScrollView, Alert,
-  TextInput, Clipboard, FlatList, Modal, Share, Switch
+  TextInput, Clipboard, FlatList, Modal, Share, Switch, Animated, PanResponder
 } from "react-native";
 
 // AsyncStorage removed - using only Telegram CloudStorage + local state
@@ -419,6 +419,26 @@ export default function App() {
   }, []);
   const [theme, setTheme] = useState("light");
   const toggleTheme = () => setTheme(t => t === "light" ? "dark" : "light");
+
+  // Синхронизируем фон Telegram WebApp с темой приложения (убирает чёрную полосу)
+  useEffect(() => {
+    const bg = theme === "dark" ? "#1a1a1a" : "#F7F7F5";
+    try {
+      if (tg) {
+        try { tg.setHeaderColor?.(bg); } catch (e) {}
+        try { tg.setBackgroundColor?.(bg); } catch (e) {}
+        try { tg.setBottomBarColor?.(bg); } catch (e) {}
+      }
+    } catch (e) {}
+    try {
+      if (typeof document !== "undefined") {
+        document.documentElement.style.backgroundColor = bg;
+        document.body.style.backgroundColor = bg;
+        const rootEl = document.getElementById("root") || document.getElementById("app");
+        if (rootEl) rootEl.style.backgroundColor = bg;
+      }
+    } catch (e) {}
+  }, [theme]);
   const isAdmin = ADMIN_IDS.map(String).includes(String(user.id));
 
   // Восстанавливаем вкладку только при refresh (sessionStorage), при полном закрытии — с нуля
@@ -426,10 +446,11 @@ export default function App() {
     try {
       if (typeof sessionStorage !== "undefined") {
         const saved = sessionStorage.getItem("krost_page");
-        if (saved) return saved;
+        // home больше нет — стартуем с каталога
+        if (saved && saved !== "home") return saved;
       }
     } catch (e) {}
-    return "home";
+    return "catalog";
   };
   const getInitialProductId = () => {
     try {
@@ -1240,39 +1261,8 @@ export default function App() {
     );
   };
 
-  // ---- Home ----
-  const Home = () => {
-    const popularItems = [...products].sort((a,b) => b.sales - a.sales).slice(0,4);
-    const recommended = getRecommended();
-    const { theme } = useTheme(); const isDark = theme === "dark";
-    return (
-      <ScrollView style={[styles.page, isDark && styles.pageDark]} contentContainerStyle={styles.scrollContent}>
-        <TouchableOpacity onLongPress={toggleAdmin} style={styles.logoWrap} activeOpacity={0.8}>
-          <Image source={{ uri: LOGO_URI }} style={styles.logoImage} resizeMode="contain" />
-        </TouchableOpacity>
-        <Text style={[styles.description, isDark && styles.textDark]}>online-shop одежды</Text>
-        <View style={styles.banner}>
-          <Text style={styles.bannerTitle}>Новые коллекции</Text>
-          <TouchableOpacity style={styles.bannerButton} onPress={() => setPage("catalog")}>
-            <Text>Открыть каталог</Text>
-          </TouchableOpacity>
-        </View>
-        <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Популярное</Text>
-        <View style={styles.grid}>
-          {popularItems.map(item => <ProductCard key={item.id} item={item} />)}
-        </View>
-        {recommended.length > 0 && (
-          <>
-            <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Вам может понравиться</Text>
-            <View style={styles.grid}>
-              {recommended.map(item => <ProductCard key={item.id} item={item} />)}
-            </View>
-          </>
-        )}
-        <View style={{ height: 20 }} />
-      </ScrollView>
-    );
-  };
+  // ---- Home (удалена — старт сразу с каталога) ----
+  const Home = () => null;
 
   // ---- Catalog ----
   const Catalog = () => {
@@ -1483,7 +1473,7 @@ export default function App() {
         {selectedProduct.ratings.length > 0 ? (
           selectedProduct.ratings.slice(0, 5).map((r, idx) => (
             <View key={idx} style={[styles.reviewItem, isDark && styles.reviewItemDark]}>
-              <Text style={[styles.reviewRating, isDark && styles.textDark]}>{"⭐".repeat(r.rating)}</Text>
+              <Text style={[styles.reviewRating, isDark && styles.textDark]}>{"★".repeat(r.rating)}</Text>
               <Text style={[styles.reviewComment, isDark && styles.textDark]}>{r.comment}</Text>
               <Text style={[styles.reviewDate, isDark && styles.textDark]}>{new Date(r.date).toLocaleDateString()}</Text>
             </View>
@@ -1496,7 +1486,12 @@ export default function App() {
             <View style={styles.stars}>
               {[1,2,3,4,5].map(s => (
                 <TouchableOpacity key={s} onPress={() => setRating(s)}>
-                  <Text style={[styles.star, rating >= s && styles.starActive]}>{s <= rating ? "⭐" : "☆"}</Text>
+                  <Text style={[
+                    styles.star,
+                    rating >= s
+                      ? (isDark ? styles.starActiveDark : styles.starActive)
+                      : styles.starInactive
+                  ]}>{rating >= s ? "★" : "☆"}</Text>
                 </TouchableOpacity>
               ))}
             </View>
@@ -1530,23 +1525,106 @@ export default function App() {
   };
 
   // ---- Cart ----
+  const SWIPE_W = 160; // 80 fav + 80 delete
+
+  const SwipeableCartItem = ({ item, idx, isDark }) => {
+    const translateX = React.useRef(new Animated.Value(0)).current;
+    const offsetX = React.useRef(0);
+    const isFav = favorites.some(x => x.id === item.id);
+
+    const panResponder = React.useRef(
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_, g) =>
+          Math.abs(g.dx) > 10 && Math.abs(g.dx) > Math.abs(g.dy) * 1.2,
+        onPanResponderGrant: () => {
+          translateX.stopAnimation((v) => {
+            offsetX.current = v;
+          });
+        },
+        onPanResponderMove: (_, g) => {
+          const next = Math.min(0, Math.max(-SWIPE_W, offsetX.current + g.dx));
+          translateX.setValue(next);
+        },
+        onPanResponderRelease: (_, g) => {
+          translateX.stopAnimation((v) => {
+            const open = v < -SWIPE_W / 2 || g.vx < -0.6;
+            const to = open ? -SWIPE_W : 0;
+            Animated.spring(translateX, {
+              toValue: to,
+              useNativeDriver: true,
+              tension: 90,
+              friction: 14,
+            }).start();
+            offsetX.current = to;
+          });
+        },
+        onPanResponderTerminate: () => {
+          Animated.spring(translateX, {
+            toValue: offsetX.current < -SWIPE_W / 2 ? -SWIPE_W : 0,
+            useNativeDriver: true,
+            tension: 90,
+            friction: 14,
+          }).start();
+        },
+      })
+    ).current;
+
+    const closeSwipe = () => {
+      Animated.spring(translateX, {
+        toValue: 0,
+        useNativeDriver: true,
+        tension: 90,
+        friction: 14,
+      }).start();
+      offsetX.current = 0;
+    };
+
+    const handleFav = () => {
+      toggleFavorite(item);
+      showToast(isFav ? "Удалено из избранного" : "❤️ Добавлено в избранное");
+      closeSwipe();
+    };
+
+    const handleDelete = () => {
+      removeCart(idx);
+    };
+
+    return (
+      <View style={styles.swipeContainer}>
+        <View style={styles.swipeActions}>
+          <TouchableOpacity style={styles.swipeFavBtn} onPress={handleFav} activeOpacity={0.85}>
+            <Text style={styles.swipeFavIcon}>{isFav ? "♥" : "♡"}</Text>
+            <Text style={styles.swipeFavLabel}>В избранное</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.swipeDelBtn} onPress={handleDelete} activeOpacity={0.85}>
+            <Text style={styles.swipeDelIcon}>✕</Text>
+            <Text style={styles.swipeDelLabel}>Удалить</Text>
+          </TouchableOpacity>
+        </View>
+        <Animated.View
+          style={[
+            styles.cartItem,
+            isDark && styles.cartItemDark,
+            { transform: [{ translateX }], marginBottom: 0 },
+          ]}
+          {...panResponder.panHandlers}
+        >
+          <SmartImage uri={item.image} style={styles.cartImage} />
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.productName, isDark && styles.textDark]}>{item.name}</Text>
+            {item.size && <Text style={[styles.sizeText, isDark && styles.textDark]}>Размер: {item.size}</Text>}
+            {!item.size && <Text style={[styles.sizeText, { color: "red" }]}>⚠️ Размер не выбран</Text>}
+            <Text style={[styles.price, isDark && styles.textDark]}>{money(item.price)}</Text>
+          </View>
+        </Animated.View>
+      </View>
+    );
+  };
+
   const Cart = () => {
     const { theme } = useTheme();
     const isDark = theme === "dark";
     const { total, discount, usedBonus, finalTotal } = calculateTotals();
-    const [promoInput, setPromoInput] = useState("");
-
-    const applyPromo = () => {
-      const code = promoInput.trim();
-      if (!code) { Alert.alert("Ошибка", "Введите промокод"); return; }
-      const found = promoCodes.find(p => p.code.toUpperCase() === code.toUpperCase() && p.active);
-      if (found) {
-        setPromoCode(code);
-        Alert.alert("Промокод применён", `Скидка: ${money(total * (found.discount / 100))}`);
-      } else {
-        Alert.alert("Ошибка", "Неверный или неактивный промокод");
-      }
-    };
 
     return (
       <ScrollView style={[styles.page, isDark && styles.pageDark]} contentContainerStyle={styles.scrollContent}>
@@ -1558,30 +1636,9 @@ export default function App() {
         ) : (
           <>
             {cart.map((item, idx) => (
-              <View style={[styles.cartItem, isDark && styles.cartItemDark]} key={idx}>
-                <SmartImage uri={item.image} style={styles.cartImage} />
-                <View style={{ flex: 1 }}>
-                  <Text style={[styles.productName, isDark && styles.textDark]}>{item.name}</Text>
-                  {item.size && <Text style={[styles.sizeText, isDark && styles.textDark]}>Размер: {item.size}</Text>}
-                  {!item.size && <Text style={[styles.sizeText, {color: 'red'}]}>⚠️ Размер не выбран</Text>}
-                  <Text style={[styles.price, isDark && styles.textDark]}>{money(item.price)}</Text>
-                  <TouchableOpacity onPress={() => removeCart(idx)}><Text style={styles.remove}>Удалить</Text></TouchableOpacity>
-                </View>
-              </View>
+              <SwipeableCartItem key={`${item.id}-${idx}-${item.size || ""}`} item={item} idx={idx} isDark={isDark} />
             ))}
 
-            <View style={styles.promoBox}>
-              <TextInput
-                style={[styles.promoInput, isDark && styles.inputDark]}
-                placeholder="Промокод"
-                placeholderTextColor={isDark ? "#999" : "#888"}
-                value={promoInput}
-                onChangeText={setPromoInput}
-              />
-              <TouchableOpacity style={styles.promoButton} onPress={applyPromo}>
-                <Text style={styles.buttonText}>Применить</Text>
-              </TouchableOpacity>
-            </View>
             {discount > 0 && <Text style={[styles.discountText, isDark && styles.textDark]}>Скидка: -{money(discount)}</Text>}
             {bonusBalance > 0 && (
               <TouchableOpacity style={styles.bonusCheckbox} onPress={() => setUseBonus(!useBonus)}>
@@ -1602,7 +1659,9 @@ export default function App() {
         <View style={{ height: 20 }} />
       </ScrollView>
     );
-  };  // ---- Profile ----
+  };
+
+  // ---- Profile ----
   const Profile = () => {
     const { theme, toggleTheme } = useTheme(); const isDark = theme === "dark";
     // При открытии профиля — сразу подтягиваем рефералов (без кнопки)
@@ -1889,20 +1948,40 @@ export default function App() {
     const [delivery, setDelivery] = useState("courier");
     const [useFreeDelivery, setUseFreeDelivery] = useState(false);
     const [errorMsg, setErrorMsg] = useState("");
+    const [promoInput, setPromoInput] = useState("");
+    const [promoMsg, setPromoMsg] = useState("");
     const { theme } = useTheme(); const isDark = theme === "dark";
     useEffect(() => {
       if (!orderModalVisible) { 
-        setFullName(""); setAddress(""); setPhone(""); setDelivery("courier"); setUseFreeDelivery(false); setErrorMsg(""); 
+        setFullName(""); setAddress(""); setPhone(""); setDelivery("courier"); setUseFreeDelivery(false); setErrorMsg("");
+        setPromoInput(""); setPromoMsg("");
       }
     }, [orderModalVisible]);
 
-    const { finalTotal } = calculateTotals();
+    const { total, discount, finalTotal } = calculateTotals();
     let dp = delivery === "europost" ? 12 : 10;
     const fullPhonePreview = phone.replace(/\D/g, "").length >= 9 ? "+375" + phone.replace(/\D/g, "") : "";
     const eligible = fullName.trim() && fullPhonePreview ? isFreeDeliveryEligible(fullPhonePreview, fullName) : false;
     const showFreeDeliveryOption = eligible && orderHistory.length === 0;
     if (useFreeDelivery && showFreeDeliveryOption) dp = 0;
     const orderTotal = finalTotal + dp;
+
+    const applyPromoInModal = () => {
+      const code = promoInput.trim();
+      if (!code) {
+        setPromoMsg("Введите промокод");
+        return;
+      }
+      const found = promoCodes.find(p => p.code.toUpperCase() === code.toUpperCase() && p.active);
+      if (found) {
+        setPromoCode(code);
+        setPromoMsg(`✓ Скидка ${found.discount}% применена`);
+      } else {
+        setPromoCode("");
+        setPromoMsg("Неверный или неактивный промокод");
+      }
+    };
+
     const handlePlace = () => {
       const digits = phone.replace(/\D/g, "");
       if (!fullName.trim() || !address.trim() || digits.length < 9) {
@@ -1924,7 +2003,7 @@ export default function App() {
     return (
       <Modal transparent visible={orderModalVisible} onRequestClose={closeOrderModal} animationType="none">
         <View style={styles.modalOverlay}>
-          <ScrollView contentContainerStyle={styles.modalScrollView}>
+          <ScrollView contentContainerStyle={styles.modalScrollView} keyboardShouldPersistTaps="handled">
             <View style={[styles.modalView, isDark && styles.modalViewDark]}>
               <Text style={[styles.modalTitle, isDark && styles.textDark]}>Оформление заказа</Text>
               
@@ -1963,6 +2042,32 @@ export default function App() {
                   maxLength={9}
                 />
               </View>
+
+              {/* Промокод — в оформлении заказа */}
+              <View style={styles.promoBox}>
+                <TextInput
+                  style={[styles.promoInput, isDark && styles.inputDark]}
+                  placeholder="Промокод"
+                  placeholderTextColor={isDark ? "#999" : "#888"}
+                  value={promoInput}
+                  onChangeText={(t) => { setPromoInput(t); setPromoMsg(""); }}
+                  autoCapitalize="characters"
+                />
+                <TouchableOpacity style={styles.promoButton} onPress={applyPromoInModal}>
+                  <Text style={styles.buttonText}>Применить</Text>
+                </TouchableOpacity>
+              </View>
+              {!!promoMsg && (
+                <Text style={[styles.discountText, isDark && styles.textDark, { marginBottom: 8 }, promoMsg.startsWith("✓") ? null : { color: "#c00" }]}>
+                  {promoMsg}
+                </Text>
+              )}
+              {discount > 0 && (
+                <Text style={[styles.discountText, isDark && styles.textDark, { marginBottom: 4 }]}>
+                  Скидка по промокоду: -{money(discount)}
+                </Text>
+              )}
+
               {showFreeDeliveryOption && (
                 <TouchableOpacity style={styles.bonusCheckbox} onPress={() => setUseFreeDelivery(!useFreeDelivery)}>
                   <Text style={[styles.bonusCheckboxText, isDark && styles.textDark]}>
@@ -2054,8 +2159,7 @@ export default function App() {
   // РЕНДЕР
   // ==============================
   let content;
-  if (page === "home") content = <Home />;
-  else if (page === "catalog") content = <Catalog />;
+  if (page === "home" || page === "catalog") content = <Catalog />; // home больше нет
   else if (page === "product") content = <ProductPage />;
   else if (page === "favorites") content = <Favorites />;
   else if (page === "cart") content = <Cart />;
@@ -2063,8 +2167,8 @@ export default function App() {
 
   return (
     <ThemeContext.Provider value={{ theme, toggleTheme }}>
-      <View style={styles.root}>
-        <View style={styles.contentContainer}>
+      <View style={[styles.root, theme === "dark" && styles.rootDark]}>
+        <View style={[styles.contentContainer, theme === "dark" && styles.pageDark]}>
           {content}
         </View>
         <Menu />
@@ -2083,10 +2187,15 @@ const styles = StyleSheet.create({
       root: {
     flex: 1,
     backgroundColor: '#F7F7F5',
+    minHeight: '100%',
+  },
+  rootDark: {
+    backgroundColor: '#1a1a1a',
   },
   contentContainer: {
     flex: 1,
     paddingBottom: 100,
+    backgroundColor: '#F7F7F5',
   },
   page: {
     flex: 1,
@@ -2229,6 +2338,59 @@ const styles = StyleSheet.create({
 
   cartItem: { backgroundColor: "#fff", padding: 12, borderRadius: 20, flexDirection: "row", marginBottom: 12 },
   cartItemDark: { backgroundColor: "#2a2a2a" },
+  // Свайп в корзине: влево → избранное (белый) + удалить (чёрный)
+  swipeContainer: {
+    marginBottom: 12,
+    borderRadius: 20,
+    overflow: "hidden",
+    position: "relative",
+    backgroundColor: "#E8E8E6",
+  },
+  swipeActions: {
+    position: "absolute",
+    right: 0,
+    top: 0,
+    bottom: 0,
+    width: 160,
+    flexDirection: "row",
+  },
+  swipeFavBtn: {
+    width: 80,
+    backgroundColor: "#fff",
+    justifyContent: "center",
+    alignItems: "center",
+    borderRightWidth: 1,
+    borderRightColor: "#eee",
+  },
+  swipeFavIcon: {
+    fontSize: 22,
+    color: "#111",
+    marginBottom: 4,
+  },
+  swipeFavLabel: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#111",
+    textAlign: "center",
+  },
+  swipeDelBtn: {
+    width: 80,
+    backgroundColor: "#111",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  swipeDelIcon: {
+    fontSize: 22,
+    fontWeight: "700",
+    color: "#fff",
+    marginBottom: 4,
+  },
+  swipeDelLabel: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#fff",
+    textAlign: "center",
+  },
   cartImage: { width: 70, height: 70, borderRadius: 16, marginRight: 12, backgroundColor: "#E8E8E6" },
   remove: { color: "red", marginTop: 6, fontSize: 13 },
   total: { fontSize: 24, fontWeight: "900" },
@@ -2466,7 +2628,7 @@ const styles = StyleSheet.create({
   ratingDisplay: { fontSize: 14, marginVertical: 4 },
   reviewItem: { backgroundColor: "#f0f0f0", padding: 8, borderRadius: 12, marginBottom: 8 },
   reviewItemDark: { backgroundColor: "#333" },
-  reviewRating: { fontSize: 14 },
+  reviewRating: { fontSize: 16, color: "#111", letterSpacing: 2 },
   reviewComment: { fontSize: 13, marginTop: 2 },
   reviewDate: { fontSize: 11, color: "#777", marginTop: 2 },
   noReviews: { fontStyle: "italic", marginVertical: 8, fontSize: 14 },
@@ -2475,7 +2637,9 @@ const styles = StyleSheet.create({
   reviewFormTitle: { fontSize: 16, fontWeight: "600", marginBottom: 8 },
   stars: { flexDirection: "row", marginBottom: 8 },
   star: { fontSize: 28, marginRight: 4 },
-  starActive: { color: "#f5c518" },
+  starActive: { color: "#111" },
+  starActiveDark: { color: "#fff" },
+  starInactive: { color: "#bbb" },
   reviewInput: { borderWidth: 1, borderColor: "#ddd", borderRadius: 12, padding: 8, marginBottom: 8 },
   submitReview: { backgroundColor: "#111", padding: 10, borderRadius: 16, alignItems: "center" },
 
