@@ -1140,30 +1140,61 @@ export default function App() {
           </TouchableOpacity>
         </View>
 
-        <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Ваш уровень</Text>
-        <View style={styles.currentLevel}>
-          <Text style={styles.currentLevelTitle}>{currentLevel.name}</Text>
-          <Text style={styles.currentInfo}>Заказов: {orders}</Text>
-          <Text style={styles.currentInfo}>Кэшбэк: {currentLevel.cashback}%</Text>
-          {nextLevel && (
-            <>
-              <Text style={styles.currentInfo}>До {nextLevel.name}:</Text>
-              <Text style={styles.currentInfo}>Осталось {nextLevel.min - orders} заказов</Text>
-              <View style={styles.progressBackground}><View style={[styles.progress, { width: `${progress}%` }]} /></View>
-              <Text style={styles.currentInfo}>{progress}%</Text>
-            </>
-          )}
-          {!nextLevel && <Text style={styles.currentInfo}>Максимальный уровень</Text>}
-        </View>
         <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Все уровни</Text>
-        {LEVELS.map(item => (
-          <View key={item.name} style={[styles.levelCard, item.name === currentLevel.name && styles.activeLevel, isDark && styles.levelCardDark]}>
-            <Text style={[styles.levelName, item.name === currentLevel.name && styles.activeText, isDark && styles.textDark]}>{item.name}</Text>
-            <Text style={[styles.levelInfo, item.name === currentLevel.name && styles.activeText, isDark && styles.textDark]}>
-              {item.min} - {item.max === 999 ? "∞" : item.max} заказов • {item.cashback}%
-            </Text>
-          </View>
-        ))}
+        {LEVELS.map((item, idx) => {
+          const isActive = item.name === currentLevel.name;
+          // прогресс внутри уровня
+          let levelProgress = 0;
+          if (orders < item.min) {
+            levelProgress = 0;
+          } else if (item.max === 999 || orders > item.max) {
+            levelProgress = 100;
+          } else {
+            const span = item.max - item.min;
+            levelProgress = span <= 0 ? 100 : Math.min(100, Math.round(((orders - item.min) / span) * 100));
+          }
+          const next = LEVELS[idx + 1];
+          const remaining = next && isActive ? Math.max(0, next.min - orders) : 0;
+
+          return (
+            <View
+              key={item.name}
+              style={[
+                styles.levelCard,
+                isActive && styles.activeLevel,
+                !isActive && isDark && styles.levelCardDark,
+              ]}
+            >
+              <Text style={[styles.levelName, isActive && styles.activeText, !isActive && isDark && styles.textDark]}>
+                {item.name}
+              </Text>
+              <Text style={[styles.levelInfo, isActive && styles.activeText, !isActive && isDark && styles.textDark]}>
+                {item.min} – {item.max === 999 ? "∞" : item.max} заказов • {item.cashback}% кэшбэк
+              </Text>
+              {isActive && next && (
+                <Text style={[styles.levelSubInfo, styles.activeText]}>
+                  Осталось {remaining} {remaining === 1 ? "заказ" : remaining < 5 ? "заказа" : "заказов"} до «{next.name}»
+                </Text>
+              )}
+              {isActive && !next && (
+                <Text style={[styles.levelSubInfo, styles.activeText]}>Максимальный уровень</Text>
+              )}
+              {/* белая полоса прогресса */}
+              <View style={[styles.levelProgressTrack, isActive ? styles.levelProgressTrackActive : styles.levelProgressTrackInactive]}>
+                <View
+                  style={[
+                    styles.levelProgressFill,
+                    isActive ? styles.levelProgressFillActive : styles.levelProgressFillInactive,
+                    { width: `${levelProgress}%` },
+                  ]}
+                />
+              </View>
+              <Text style={[styles.levelProgressPct, isActive && styles.activeText, !isActive && isDark && styles.textDark]}>
+                {levelProgress}%
+              </Text>
+            </View>
+          );
+        })}
         <Text style={[styles.sectionTitle, isDark && styles.textDark]}>История заказов</Text>
         {orderHistory.length === 0 ? (
           <Text style={[styles.empty, isDark && styles.textDark]}>Заказов пока нет</Text>
@@ -1715,17 +1746,46 @@ const styles = StyleSheet.create({
   referralHint: { fontSize: 12, color: "#888", marginTop: 8, lineHeight: 18 },
   copyButton: { backgroundColor: "#111", padding: 12, borderRadius: 18 },
 
-  currentLevel: { backgroundColor: "#111", padding: 20, borderRadius: 24 },
-  currentLevelTitle: { fontSize: 24, fontWeight: "900", color: "#fff" },
-  currentInfo: { color: "#fff", marginTop: 6, fontSize: 14 },
-  progressBackground: { height: 8, backgroundColor: "#555", borderRadius: 8, marginTop: 12 },
-  progress: { height: 8, backgroundColor: "#fff", borderRadius: 8 },
-  levelCard: { backgroundColor: "#fff", padding: 18, borderRadius: 24, marginBottom: 12 },
+  levelCard: {
+    backgroundColor: "#fff",
+    padding: 18,
+    borderRadius: 24,
+    marginBottom: 12,
+  },
   levelCardDark: { backgroundColor: "#2a2a2a" },
   activeLevel: { backgroundColor: "#111" },
-  levelName: { fontSize: 18, fontWeight: "900" },
-  levelInfo: { marginTop: 4, fontSize: 14 },
+  levelName: { fontSize: 18, fontWeight: "900", color: "#111" },
+  levelInfo: { marginTop: 4, fontSize: 14, color: "#555" },
+  levelSubInfo: { marginTop: 6, fontSize: 13, color: "rgba(255,255,255,0.75)" },
   activeText: { color: "#fff" },
+  levelProgressTrack: {
+    height: 8,
+    borderRadius: 8,
+    marginTop: 12,
+    overflow: "hidden",
+  },
+  levelProgressTrackActive: {
+    backgroundColor: "rgba(255,255,255,0.25)",
+  },
+  levelProgressTrackInactive: {
+    backgroundColor: "#E8E8E8",
+  },
+  levelProgressFill: {
+    height: 8,
+    borderRadius: 8,
+  },
+  levelProgressFillActive: {
+    backgroundColor: "#fff", // белая полоса на чёрной карточке
+  },
+  levelProgressFillInactive: {
+    backgroundColor: "#111", // чёрная полоса на белой карточке
+  },
+  levelProgressPct: {
+    marginTop: 6,
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#888",
+  },
 
   orderCard: { backgroundColor: "#fff", padding: 14, borderRadius: 18, marginBottom: 12 },
   orderCardDark: { backgroundColor: "#2a2a2a" },
