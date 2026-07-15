@@ -254,7 +254,7 @@ export default function App() {
   const nextLevel = LEVELS[LEVELS.indexOf(currentLevel) + 1];
   let progress = 100;
   if (nextLevel) progress = Math.min(100, Math.floor(((orders - currentLevel.min) / (nextLevel.min - currentLevel.min)) * 100));
-  const referral = `https://t.me/krost_shop_bot?start=${user.id}`;
+  const referral = `https://t.me/manzshop_bot?start=${user.id}`;
 
   const addCart = (item) => setCart([...cart, item]);
   const removeCart = (idx) => setCart(cart.filter((_, i) => i !== idx));
@@ -332,7 +332,11 @@ export default function App() {
   };
 
   const shareProduct = async (product) => {
-    try { await Share.share({ message: `${product.brand} ${product.name} - ${money(product.price)}\nhttps://t.me/krost_shop_bot?start=product_${product.id}` }); } catch (e) {}
+    try {
+      await Share.share({
+        message: `${product.brand} ${product.name} — ${money(product.price)}\n\nОткрыть в магазине:\nhttps://t.me/manzshop_bot/manzshopbyapp?startapp=product_${product.id}`
+      });
+    } catch (e) {}
   };
 
   const getRecommended = () => {
