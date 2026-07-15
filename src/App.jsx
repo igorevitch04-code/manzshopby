@@ -650,27 +650,27 @@ export default function App() {
     return (
       <ScrollView style={[styles.page, isDark && styles.pageDark]} contentContainerStyle={styles.scrollContent}>
         <View style={styles.productHeader}>
-          <View style={styles.productHeaderLeft}>
-            <TouchableOpacity style={styles.headerBtn} onPress={() => setPage("catalog")}>
-              <Text style={styles.headerBtnText}>← Назад</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.headerIconBtn, isFav && styles.headerIconBtnActive]}
-              onPress={() => {
-                toggleFavorite(selectedProduct);
-                showToast(isFav ? "Удалено из избранного" : "❤️ Добавлено в избранное");
-              }}
-            >
-              <Text style={styles.headerIconBtnText}>{isFav ? "♥" : "♡"}</Text>
-            </TouchableOpacity>
-          </View>
+          <TouchableOpacity style={styles.headerBtn} onPress={() => setPage("catalog")}>
+            <Text style={styles.headerBtnText}>← Назад</Text>
+          </TouchableOpacity>
 
           <TouchableOpacity style={styles.headerBtn} onPress={() => shareProduct(selectedProduct)}>
             <Text style={styles.headerBtnText}>↗</Text>
           </TouchableOpacity>
         </View>
 
-        <Image source={{ uri: selectedProduct.image }} style={styles.bigImage} />
+        <View style={styles.bigImageWrap}>
+          <Image source={{ uri: selectedProduct.image }} style={styles.bigImage} />
+          <TouchableOpacity
+            style={[styles.favoriteBtn, styles.favoriteBtnOnImage, isFav && styles.favoriteBtnActive]}
+            onPress={() => {
+              toggleFavorite(selectedProduct);
+              showToast(isFav ? "Удалено из избранного" : "❤️ Добавлено в избранное");
+            }}
+          >
+            <Text style={[styles.favoriteBtnText, isFav && styles.favoriteBtnTextActive]}>{isFav ? "♥" : "♡"}</Text>
+          </TouchableOpacity>
+        </View>
         
         <Text style={[styles.productBrand, isDark && styles.textDark]}>{selectedProduct.brand}</Text>
         <Text style={[styles.productTitle, isDark && styles.textDark]}>{selectedProduct.name}</Text>
@@ -1244,6 +1244,11 @@ const styles = StyleSheet.create({
   grid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between" },
   card: { width: "48%", backgroundColor: "#fff", borderRadius: 20, padding: 8, marginBottom: 12, position: "relative" },
   image: { height: 120, width: "100%", borderRadius: 16 },
+  bigImageWrap: {
+    width: "100%",
+    position: "relative",
+    marginTop: 8,
+  },
   bigImage: { width: "100%", height: 250, borderRadius: 24 },
   favorite: { position: "absolute", right: 12, top: 12 },
   favoriteText: { fontSize: 20 },
@@ -1260,6 +1265,14 @@ const styles = StyleSheet.create({
     alignItems: "center",
     zIndex: 10,
     elevation: 6,
+  },
+  // Чуть крупнее на странице товара
+  favoriteBtnOnImage: {
+    right: 14,
+    top: 14,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
   },
   favoriteBtnActive: {
     backgroundColor: "#111",
