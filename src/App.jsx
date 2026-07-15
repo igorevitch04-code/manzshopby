@@ -1255,6 +1255,15 @@ const styles = StyleSheet.create({
   trackingInput: { borderWidth: 1, borderColor: "#ddd", borderRadius: 8, padding: 4, flex: 1, marginRight: 6, fontSize: 13 },
   broadcastInput: { borderWidth: 1, borderColor: "#ddd", borderRadius: 14, padding: 10, marginBottom: 12, minHeight: 60, fontSize: 14 },
   broadcastBtn: { backgroundColor: "#111", padding: 12, borderRadius: 20, alignItems: "center", marginBottom: 20 },
+    adminStatCard: {
+    backgroundColor: "#111",
+    padding: 20,
+    borderRadius: 24,
+    marginBottom: 20,
+  },
+  adminStatCardDark: {
+    backgroundColor: "#2a2a2a",
+  },
 
   // Отзывы
   ratingDisplay: { fontSize: 14, marginVertical: 4 },
