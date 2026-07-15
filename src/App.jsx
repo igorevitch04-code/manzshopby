@@ -336,7 +336,7 @@ export default function App() {
   const placeOrderWithDetails = (deliveryData) => {
     const { fullName, address, phone, delivery, freeDelivery } = deliveryData;
     const { total, discount, usedBonus, finalTotal } = calculateTotals();
-    let deliveryPrice = delivery === "europost" ? 8 : 10;
+    let deliveryPrice = delivery === "europost" ? 12 : 10;
     if (freeDelivery) {
       deliveryPrice = 0;
       setUsedFreeDelivery(prev => [...prev, { phone: phone.trim(), fullName: fullName.trim() }]);
@@ -1169,23 +1169,21 @@ export default function App() {
     const [fullName, setFullName] = useState("");
     const [address, setAddress] = useState("");
     const [phone, setPhone] = useState("");
-    const [delivery, setDelivery] = useState("europost");
+    const [delivery, setDelivery] = useState("courier");
     const [useFreeDelivery, setUseFreeDelivery] = useState(false);
     const [errorMsg, setErrorMsg] = useState("");
     const { theme } = useTheme(); const isDark = theme === "dark";
     useEffect(() => {
       if (!orderModalVisible) { 
-        setFullName(""); setAddress(""); setPhone(""); setDelivery("europost"); setUseFreeDelivery(false); setErrorMsg(""); 
+        setFullName(""); setAddress(""); setPhone(""); setDelivery("courier"); setUseFreeDelivery(false); setErrorMsg(""); 
       }
     }, [orderModalVisible]);
 
     const { finalTotal } = calculateTotals();
-    let dp = delivery === "europost" ? 8 : 10;
+    let dp = delivery === "europost" ? 12 : 10;
     const eligible = fullName.trim() && phone.trim() ? isFreeDeliveryEligible(phone, fullName) : false;
     const showFreeDeliveryOption = eligible && orderHistory.length === 0;
     if (useFreeDelivery && showFreeDeliveryOption) dp = 0;
-    const days = delivery === "europost" ? "4-5" : "2-3";
-    const label = delivery === "europost" ? "ЕвроПочта" : "Курьер";
     const orderTotal = finalTotal + dp;
     const handlePlace = () => {
       if (!fullName.trim() || !address.trim() || !phone.trim()) {
@@ -1218,14 +1216,13 @@ export default function App() {
 
               <Text style={[styles.deliveryLabel, isDark && styles.textDark]}>Способ доставки</Text>
               <View style={styles.deliveryOptions}>
-                <TouchableOpacity style={[styles.deliveryOption, delivery === "europost" && styles.deliveryOptionActive]} onPress={() => setDelivery("europost")}>
-                  <Text style={delivery === "europost" && styles.deliveryOptionTextActive}>ЕвроПочта</Text>
-                  <Text style={styles.deliveryDetail}>8-12 руб • 4-5 дней</Text>
-                </TouchableOpacity>
                 <TouchableOpacity style={[styles.deliveryOption, delivery === "courier" && styles.deliveryOptionActive]} onPress={() => setDelivery("courier")}>
-                  <Text style={delivery === "courier" && styles.deliveryOptionTextActive}>Курьер</Text>
-                  <Text style={styles.deliveryDetail}>10 руб • 2-3 дня</Text>
-                  <Text style={styles.deliveryNote}>Менеджер свяжется</Text>
+                  <Text style={[styles.deliveryOptionTitle, delivery === "courier" && styles.deliveryOptionTextActive]}>Курьер</Text>
+                  <Text style={[styles.deliveryDetail, delivery === "courier" && styles.deliveryDetailActive]}>10 BYN</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.deliveryOption, delivery === "europost" && styles.deliveryOptionActive]} onPress={() => setDelivery("europost")}>
+                  <Text style={[styles.deliveryOptionTitle, delivery === "europost" && styles.deliveryOptionTextActive]}>ЕвроПочта</Text>
+                  <Text style={[styles.deliveryDetail, delivery === "europost" && styles.deliveryDetailActive]}>12 BYN</Text>
                 </TouchableOpacity>
               </View>
               <TextInput style={[styles.modalInput, isDark && styles.inputDark]} placeholder="ФИО" placeholderTextColor={isDark ? "#999" : "#888"} value={fullName} onChangeText={(t) => { setFullName(t); setErrorMsg(""); }} />
@@ -1238,10 +1235,6 @@ export default function App() {
                   </Text>
                 </TouchableOpacity>
               )}
-              <View style={[styles.deliverySummary, isDark && styles.deliverySummaryDark]}>
-                <Text style={[styles.summaryText, isDark && styles.textDark]}>Доставка: {label} — {dp} руб</Text>
-                <Text style={[styles.summaryText, isDark && styles.textDark]}>Срок: {days} дн.</Text>
-              </View>
               <View style={styles.totalRow}>
                 <Text style={[styles.totalLabel, isDark && styles.textDark]}>Итого к оплате:</Text>
                 <Text style={[styles.totalAmount, isDark && styles.textDark]}>{money(orderTotal)}</Text>
@@ -1563,14 +1556,12 @@ const styles = StyleSheet.create({
 
   deliveryLabel: { fontSize: 15, fontWeight: "600", marginBottom: 8 },
   deliveryOptions: { flexDirection: "row", justifyContent: "space-between", marginBottom: 16 },
-  deliveryOption: { flex: 1, padding: 10, borderRadius: 14, backgroundColor: "#eee", marginHorizontal: 4, alignItems: "center" },
+  deliveryOption: { flex: 1, paddingVertical: 14, paddingHorizontal: 10, borderRadius: 14, backgroundColor: "#eee", marginHorizontal: 4, alignItems: "center", justifyContent: "center" },
   deliveryOptionActive: { backgroundColor: "#111" },
+  deliveryOptionTitle: { fontSize: 14, fontWeight: "700", textAlign: "center", color: "#111" },
   deliveryOptionTextActive: { color: "#fff" },
-  deliveryDetail: { fontSize: 11, color: "#666", marginTop: 3 },
-  deliveryNote: { fontSize: 10, color: "#999", marginTop: 2 },
-  deliverySummary: { backgroundColor: "#f0f0f0", padding: 8, borderRadius: 10, marginBottom: 12, flexDirection: "row", justifyContent: "space-between" },
-  deliverySummaryDark: { backgroundColor: "#333" },
-  summaryText: { fontSize: 13, fontWeight: "500" },
+  deliveryDetail: { fontSize: 13, fontWeight: "600", color: "#666", marginTop: 6, textAlign: "center" },
+  deliveryDetailActive: { color: "#fff" },
 
   promoBox: { flexDirection: "row", marginVertical: 8 },
   promoInput: { flex: 1, borderWidth: 1, borderColor: "#ddd", borderRadius: 18, padding: 8, marginRight: 8, fontSize: 14 },
