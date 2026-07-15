@@ -275,7 +275,7 @@ export default function App() {
     setCart([]);
     closeOrderModal();
     Alert.alert(
-      "Заказ оформлен",
+      "✅ Заказ оформлен",
       `Номер заказа: ${nextNumber}\nСтатус: Ожидает подтверждения\n${freeDelivery ? "Доставка бесплатная (первый заказ)!" : ""}\n\nЕсли у менеджера будут вопросы, он свяжется с вами.\nА если у вас есть вопросы, вы можете связаться по ссылке в описании бота.`,
       [
         { text: "OK" },
@@ -507,6 +507,7 @@ export default function App() {
         return;
       }
       addCart({ ...selectedProduct, size: selectedSize });
+      tg?.showAlert(`✅ ${selectedProduct.name} (${selectedSize}) добавлен в корзину`);
       Alert.alert("Добавлено", `Товар добавлен в корзину (размер ${selectedSize})`);
     };
 
