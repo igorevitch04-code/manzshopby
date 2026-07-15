@@ -802,42 +802,67 @@ export default function App() {
     );
   };
 
-  const AdminPanel = () => {
-    const { theme } = useTheme(); const isDark = theme === "dark";
+    const AdminPanel = () => {
+    const { theme } = useTheme(); 
+    const isDark = theme === "dark";
     if (!showAdmin || !isAdmin) return null;
+
+    // Выручка за сегодня и за месяц
+    const today = new Date().toISOString().split('T')[0];
+    const todayRevenue = adminOrders
+      .filter(o => o.date.startsWith(today))
+      .reduce((sum, o) => sum + o.finalTotal, 0);
+
+    const monthStart = new Date();
+    monthStart.setDate(1);
+    const monthRevenue = adminOrders
+      .filter(o => new Date(o.date) >= monthStart)
+      .reduce((sum, o) => sum + o.finalTotal, 0);
+
     return (
       <Modal visible={showAdmin} animationType="slide" transparent={false}>
         <View style={[styles.page, isDark && styles.pageDark, {paddingTop: 40}]}>
           <TouchableOpacity onPress={() => setShowAdmin(false)} style={styles.closeAdmin}>
             <Text style={[styles.closeAdminText, isDark && styles.textDark]}>✕ Закрыть админку</Text>
           </TouchableOpacity>
-          <Text style={[styles.pageTitle, isDark && styles.textDark]}>Админ-панель</Text>
-          <Text style={[styles.adminStat, isDark && styles.textDark]}>Выручка: {money(adminRevenue)}</Text>
-          <Text style={[styles.adminStat, isDark && styles.textDark]}>Заказов: {adminOrders.length}</Text>
-          <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Популярные товары</Text>
-          {popular.length > 0 ? popular.map(p => (
-            <Text key={p.id} style={[styles.adminItem, isDark && styles.textDark]}>{p.brand} {p.name} — продано {salesMap[p.id] || 0} шт.</Text>
-          )) : <Text style={[styles.empty, isDark && styles.textDark]}>Нет данных</Text>}
 
-          <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Управление заказами</Text>
+          <Text style={[styles.pageTitle, isDark && styles.textDark]}>Админ-панель</Text>
+
+          {/* Статистика */}
+          <View style={[styles.adminStatCard, isDark && styles.adminStatCardDark]}>
+            <Text style={[styles.adminStat, isDark && styles.textDark]}>Сегодня: {money(todayRevenue)}</Text>
+            <Text style={[styles.adminStat, isDark && styles.textDark]}>За месяц: {money(monthRevenue)}</Text>
+            <Text style={[styles.adminStat, isDark && styles.textDark]}>Всего заказов: {adminOrders.length}</Text>
+          </View>
+
+          {/* Управление заказами */}
+          <Text style={[styles.sectionTitle, isDark && styles.textDark]} onPress={() => { /* можно сделать collapsible позже */ }}>
+            Управление заказами
+          </Text>
           {adminOrders.map(order => (
             <View key={order.id} style={[styles.orderCard, isDark && styles.orderCardDark]}>
-              <Text style={[styles.orderId, isDark && styles.textDark]}>#{order.id} — {order.fullName}</Text>
+              <Text style={[styles.orderId, isDark && styles.textDark]}>
+                #{order.id} — {order.fullName} • {new Date(order.date).toLocaleDateString()}
+              </Text>
               <Text style={[styles.orderStatus, isDark && styles.textDark]}>Статус: {order.status}</Text>
+
               {order.delivery === "europost" && (
-                <View style={{flexDirection: 'row', alignItems: 'center', marginTop: 5}}>
-                  <TextInput
-                    style={[styles.trackingInput, isDark && styles.inputDark]}
-                    placeholder="Трек-номер"
-                    placeholderTextColor={isDark ? "#999" : "#888"}
-                    value={order.trackingNumber || ""}
-                    onChangeText={text => updateTracking(order.id, text)}
-                  />
-                </View>
+                <TextInput
+                  style={[styles.trackingInput, isDark && styles.inputDark]}
+                  placeholder="Трек-номер"
+                  placeholderTextColor={isDark ? "#999" : "#888"}
+                  value={order.trackingNumber || ""}
+                  onChangeText={text => updateTracking(order.id, text)}
+                />
               )}
+
               <View style={styles.statusButtons}>
                 {ORDER_STATUSES.map(s => (
-                  <TouchableOpacity key={s} style={[styles.statusBtn, order.status === s && styles.statusBtnActive]} onPress={() => changeStatus(order.id, s)}>
+                  <TouchableOpacity 
+                    key={s} 
+                    style={[styles.statusBtn, order.status === s && styles.statusBtnActive]} 
+                    onPress={() => changeStatus(order.id, s)}
+                  >
                     <Text style={[styles.statusBtnText, order.status === s && styles.statusBtnTextActive]}>{s}</Text>
                   </TouchableOpacity>
                 ))}
@@ -845,6 +870,7 @@ export default function App() {
             </View>
           ))}
 
+          {/* Управление промокодами */}
           <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Управление промокодами</Text>
           <TouchableOpacity style={styles.addBtn} onPress={addPromoCode}>
             <Text style={styles.buttonText}>+ Добавить промокод</Text>
@@ -862,12 +888,13 @@ export default function App() {
                   </Text>
                 </TouchableOpacity>
                 <TouchableOpacity onPress={() => deletePromoCode(index)}>
-                  <Text style={[styles.editAction, {color: 'red'}]}>🗑</Text>
+                  <Text style={[styles.editAction, {color: 'red'}]}>🗑 Удалить</Text>
                 </TouchableOpacity>
               </View>
             </View>
           ))}
 
+          {/* Управление товарами */}
           <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Управление товарами</Text>
           <TouchableOpacity style={styles.addBtn} onPress={addProduct}>
             <Text style={styles.buttonText}>+ Добавить товар</Text>
@@ -891,14 +918,15 @@ export default function App() {
                   <Text style={[styles.productName, isDark && styles.textDark]}>{p.brand} {p.name}</Text>
                   <Text style={[styles.price, isDark && styles.textDark]}>{money(p.price)}</Text>
                   <View style={styles.editActions}>
-                    <TouchableOpacity onPress={() => setEditingProduct(p.id)}><Text style={styles.editAction}>✎</Text></TouchableOpacity>
-                    <TouchableOpacity onPress={() => deleteProduct(p.id)}><Text style={styles.editAction}>🗑</Text></TouchableOpacity>
+                    <TouchableOpacity onPress={() => setEditingProduct(p.id)}><Text style={styles.editAction}>✎ Редактировать</Text></TouchableOpacity>
+                    <TouchableOpacity onPress={() => deleteProduct(p.id)}><Text style={styles.editAction}>🗑 Удалить</Text></TouchableOpacity>
                   </View>
                 </>
               )}
             </View>
           ))}
 
+          {/* Рассылка */}
           <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Рассылка</Text>
           <TextInput
             style={[styles.broadcastInput, isDark && styles.inputDark]}
