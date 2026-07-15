@@ -237,6 +237,81 @@ const loadFromCloud = async (key) => {
 };
 
 // ==============================
+// РЕФЕРАЛЫ МЕЖДУ АККАУНТАМИ (публичные счётчики)
+// CloudStorage у каждого пользователя свой — поэтому для
+// счётчика «приглашено» и 2% используем бесплатный countapi.
+// ==============================
+const REF_NS = "manzshop_ref_v1";
+
+const refApiGet = async (key) => {
+  const urls = [
+    `https://api.countapi.xyz/get/${REF_NS}/${encodeURIComponent(key)}`,
+    `https://api.counterapi.dev/v1/${REF_NS}/${encodeURIComponent(key)}`,
+  ];
+  for (const url of urls) {
+    try {
+      const r = await fetch(url, { cache: "no-store" });
+      if (!r.ok) continue;
+      const j = await r.json();
+      if (typeof j.count === "number") return j.count;
+      if (typeof j.value === "number") return j.value;
+    } catch (e) {}
+  }
+  return null;
+};
+
+const refApiHit = async (key) => {
+  const urls = [
+    `https://api.countapi.xyz/hit/${REF_NS}/${encodeURIComponent(key)}`,
+    `https://api.counterapi.dev/v1/${REF_NS}/${encodeURIComponent(key)}/up`,
+  ];
+  for (const url of urls) {
+    try {
+      const r = await fetch(url, { cache: "no-store" });
+      if (!r.ok) continue;
+      const j = await r.json();
+      if (typeof j.count === "number") return j.count;
+      if (typeof j.value === "number") return j.value;
+    } catch (e) {}
+  }
+  return null;
+};
+
+const refApiSet = async (key, value) => {
+  const v = Math.max(0, Math.floor(Number(value) || 0));
+  const urls = [
+    `https://api.countapi.xyz/set/${REF_NS}/${encodeURIComponent(key)}?value=${v}`,
+    `https://api.counterapi.dev/v1/${REF_NS}/${encodeURIComponent(key)}/set/${v}`,
+  ];
+  for (const url of urls) {
+    try {
+      const r = await fetch(url, { cache: "no-store" });
+      if (!r.ok) continue;
+      const j = await r.json();
+      if (typeof j.count === "number") return j.count;
+      if (typeof j.value === "number") return j.value;
+    } catch (e) {}
+  }
+  return null;
+};
+
+// +N к счётчику (для 2% начисления)
+const refApiAdd = async (key, amount) => {
+  const n = Math.max(0, Math.floor(Number(amount) || 0));
+  if (n <= 0) return await refApiGet(key);
+  const cur = (await refApiGet(key)) || 0;
+  const next = await refApiSet(key, cur + n);
+  if (next != null) return next;
+  // fallback: +1 несколько раз (макс 30)
+  let last = cur;
+  for (let i = 0; i < Math.min(n, 30); i++) {
+    const v = await refApiHit(key);
+    if (v != null) last = v;
+  }
+  return last;
+};
+
+// ==============================
 // КОМПОНЕНТ TOAST
 // ==============================
 const Toast = ({ message, visible, onHide }) => {
@@ -453,51 +528,10 @@ export default function App() {
         setReferralEarnings(cloudReferralEarnings || 0);
         setReferralNotified(!!cloudReferralNotified);
 
-        // Подтягиваем реферальные события, предназначенные текущему пользователю
-        // (CloudStorage + localStorage global — для тестов на одном устройстве)
-        try {
-          let events = (await loadFromCloud(CLOUD_KEYS.refEvents)) || [];
-          try {
-            if (typeof localStorage !== "undefined") {
-              const g = localStorage.getItem("krost_refEvents_global");
-              if (g) {
-                const parsed = JSON.parse(g);
-                if (Array.isArray(parsed) && parsed.length > events.length) events = parsed;
-              }
-            }
-          } catch (e) {}
-          const myId = String(user.id);
-          let newRegs = 0;
-          let newEarn = 0;
-          const remaining = [];
-          events.forEach((ev) => {
-            if (String(ev.to) === myId) {
-              if (ev.type === "register") newRegs += 1;
-              if (ev.type === "order") newEarn += (ev.amount || 0);
-            } else {
-              remaining.push(ev);
-            }
-          });
-          if (newRegs > 0 || newEarn > 0) {
-            if (newRegs > 0) {
-              setReferralCount((c) => c + newRegs);
-              setTimeout(() => showToast(`🎉 По вашей реферальной ссылке зарегистрировались: +${newRegs}`), 800);
-            }
-            if (newEarn > 0) {
-              setReferralEarnings((e) => e + newEarn);
-              setBonusBalance((b) => b + newEarn);
-              setTimeout(() => showToast(`💰 Вам начислено ${money(newEarn)} с покупок реферала (2%)`), 2000);
-            }
-            await saveToCloud(CLOUD_KEYS.refEvents, remaining);
-            try {
-              if (typeof localStorage !== "undefined") {
-                localStorage.setItem("krost_refEvents_global", JSON.stringify(remaining));
-              }
-            } catch (e) {}
-          }
-        } catch (e) {
-          console.warn("refEvents load", e);
-        }
+        // Синхронизируем реферальные счётчики с публичным API (между аккаунтами)
+        setTimeout(() => {
+          try { syncReferralStatsFromCloud(cloudReferralCount || 0, cloudReferralEarnings || 0); } catch (e) {}
+        }, 900);
       } catch (e) {
         console.warn("Ошибка загрузки", e);
       }
@@ -523,6 +557,14 @@ export default function App() {
   useEffect(() => { saveToCloud(CLOUD_KEYS.referralCount, referralCount); }, [referralCount]);
   useEffect(() => { saveToCloud(CLOUD_KEYS.referralEarnings, referralEarnings); }, [referralEarnings]);
   useEffect(() => { saveToCloud(CLOUD_KEYS.referralNotified, referralNotified); }, [referralNotified]);
+
+  // Если referredBy уже есть, а Telegram ID стал числовым — дорегистрируем реферала
+  useEffect(() => {
+    const myId = String(user?.id || "");
+    if (referredBy && /^\d+$/.test(myId) && /^\d+$/.test(String(referredBy)) && String(referredBy) !== myId) {
+      registerReferral(referredBy, myId);
+    }
+  }, [user?.id, referredBy]);
 
   // Сохраняем текущую вкладку только в sessionStorage (живёт при refresh, умирает при полном закрытии)
   useEffect(() => {
@@ -659,22 +701,78 @@ export default function App() {
     }
   };
 
-  // Добавить событие в очередь (для реферера: register / order)
-  const pushRefEvent = async (event) => {
+  // Реферал: регистрация (друг открыл ссылку) — один раз на пользователя
+  const registerReferral = async (referrerId, newUserId) => {
+    if (!referrerId || !newUserId || String(referrerId) === String(newUserId)) return;
+    // Только числовые Telegram ID
+    if (!/^\d+$/.test(String(referrerId)) || !/^\d+$/.test(String(newUserId))) return;
     try {
-      const events = (await loadFromCloud(CLOUD_KEYS.refEvents)) || [];
-      events.push({ ...event, date: new Date().toISOString() });
-      await saveToCloud(CLOUD_KEYS.refEvents, events);
-      // Дублируем в localStorage (общий для браузера — удобно для тестов)
-      try {
-        if (typeof localStorage !== "undefined") {
-          localStorage.setItem("krost_refEvents_global", JSON.stringify(events));
-        }
-      } catch (e) {}
+      const joinedKey = `joined_${newUserId}`;
+      const already = await refApiGet(joinedKey);
+      if (already && already > 0) {
+        console.log("[Ref] already joined", newUserId);
+        return;
+      }
+      await refApiHit(joinedKey); // помечаем, что этот юзер уже посчитан
+      await refApiHit(`ref_${referrerId}`); // +1 к приглашённым реферера
+      console.log("[Ref] registered", newUserId, "→", referrerId);
     } catch (e) {
-      console.warn("pushRefEvent", e);
+      console.warn("registerReferral", e);
     }
   };
+
+  // Реферал: 2% с заказа → начисляем рефереру в публичный счётчик
+  const creditReferralOrder = async (referrerId, amount) => {
+    if (!referrerId || !/^\d+$/.test(String(referrerId))) return;
+    const n = Math.max(0, Math.floor(Number(amount) || 0));
+    if (n <= 0) return;
+    try {
+      await refApiAdd(`earn_${referrerId}`, n);
+      console.log("[Ref] credit", n, "to", referrerId);
+    } catch (e) {
+      console.warn("creditReferralOrder", e);
+    }
+  };
+
+  // Подтянуть актуальные счётчики рефералов с API (для текущего user.id)
+  const syncReferralStatsFromCloud = async (localCount = 0, localEarn = 0) => {
+    const myId = String(user?.id || "");
+    if (!/^\d+$/.test(myId)) return;
+    try {
+      const remoteCount = await refApiGet(`ref_${myId}`);
+      const remoteEarn = await refApiGet(`earn_${myId}`);
+
+      if (remoteCount != null) {
+        if (remoteCount > localCount) {
+          const diff = remoteCount - localCount;
+          setReferralCount(remoteCount);
+          if (diff > 0) {
+            setTimeout(() => showToast(`🎉 По вашей ссылке зарегистрировались: +${diff}`), 600);
+          }
+        } else {
+          setReferralCount(remoteCount);
+        }
+      }
+
+      if (remoteEarn != null) {
+        const prevSynced = (await loadFromCloud("krost_earn_synced")) || 0;
+        if (remoteEarn > prevSynced) {
+          const add = remoteEarn - prevSynced;
+          setReferralEarnings(remoteEarn);
+          setBonusBalance((b) => b + add);
+          await saveToCloud("krost_earn_synced", remoteEarn);
+          setTimeout(() => showToast(`💰 Вам начислено ${money(add)} с покупок реферала (2%)`), 1200);
+        } else {
+          setReferralEarnings(remoteEarn);
+        }
+      }
+    } catch (e) {
+      console.warn("syncReferralStats", e);
+    }
+  };
+
+  // Обёртка для повторного синка (например при открытии профиля)
+  const syncReferralStats = () => syncReferralStatsFromCloud(referralCount, referralEarnings);
   const openOrderModal = () => setOrderModalVisible(true);
   const closeOrderModal = () => { setOrderModalVisible(false); setUseBonus(false); setPromoCode(""); };
 
@@ -707,18 +805,13 @@ export default function App() {
     const nextNumber = lastOrderNumber + 1;
     setLastOrderNumber(nextNumber);
 
-    // 2% рефереру с суммы товаров (без доставки)
+    // 2% рефереру с суммы товаров (без доставки) — пишем в публичный счётчик
     let referralBonus = 0;
-    if (referredBy && String(referredBy) !== String(user.id)) {
+    if (referredBy && String(referredBy) !== String(user.id) && /^\d+$/.test(String(referredBy))) {
       referralBonus = Math.floor(total * 0.02);
-      pushRefEvent({
-        type: "order",
-        to: referredBy,
-        from: user.id,
-        fromName: user.name,
-        amount: referralBonus,
-        orderId: nextNumber
-      });
+      if (referralBonus > 0) {
+        creditReferralOrder(referredBy, referralBonus);
+      }
     }
 
     const order = {
@@ -736,11 +829,6 @@ export default function App() {
     setCart([]);
     closeOrderModal();
     showToast(`✅ Заказ #${nextNumber} оформлен. Если у вас есть вопросы — можете задать их менеджеру в описании бота`);
-    if (referralBonus > 0) {
-      setTimeout(() => {
-        showToast(`🎁 Рефереру начислено ${money(referralBonus)} (2% с вашего заказа)`);
-      }, 2500);
-    }
   };
 
   const addRating = (productId, rating, comment) => {
@@ -812,28 +900,36 @@ export default function App() {
         if (startParam && startParam.startsWith("ref_")) {
           const refId = startParam.replace("ref_", "").trim();
           console.log("[DeepLink] referral from =", refId);
-          if (refId && String(refId) !== String(user.id)) {
-            // Откладываем — чтобы не перезаписать уже загруженный referredBy
+          if (refId && String(refId) !== String(user.id) && /^\d+$/.test(refId)) {
+            // Откладываем — чтобы user.id успел стать числовым + CloudStorage
             setTimeout(async () => {
               try {
                 const existing = await loadFromCloud(CLOUD_KEYS.referredBy);
                 if (existing) {
                   setReferredBy(existing);
+                  return; // уже привязан к рефереру — не дублируем
+                }
+                // Ждём реальный Telegram ID (не guest)
+                let myId = String(user.id);
+                if (!/^\d+$/.test(myId)) {
+                  const u = getTelegramUser();
+                  myId = String(u.id);
+                }
+                if (!/^\d+$/.test(myId)) {
+                  console.warn("[Ref] no real telegram id yet, skip register");
+                  setReferredBy(refId); // всё равно запомним, кто пригласил
+                  await saveToCloud(CLOUD_KEYS.referredBy, refId);
                   return;
                 }
                 setReferredBy(refId);
-                await pushRefEvent({
-                  type: "register",
-                  to: refId,
-                  from: user.id,
-                  fromName: user.name
-                });
-                showToast("🎉 Вы перешли по реферальной ссылке!");
-                setReferralNotified(true);
+                await saveToCloud(CLOUD_KEYS.referredBy, refId);
+                // +1 в счётчик реферера (между аккаунтами)
+                await registerReferral(refId, myId);
+                // toast у приглашённого НЕ показываем (по просьбе)
               } catch (e) {
                 console.warn("ref save error", e);
               }
-            }, 600);
+            }, 800);
           }
         }
       } catch (e) {
@@ -1360,6 +1456,10 @@ export default function App() {
   };  // ---- Profile ----
   const Profile = () => {
     const { theme, toggleTheme } = useTheme(); const isDark = theme === "dark";
+    // При каждом открытии профиля — подтягиваем счётчики рефералов с API
+    useEffect(() => {
+      syncReferralStats();
+    }, []);
     return (
       <ScrollView style={[styles.page, isDark && styles.pageDark]} contentContainerStyle={styles.scrollContent}>
         <Text style={[styles.pageTitle, isDark && styles.textDark]}>Профиль</Text>
@@ -1407,11 +1507,6 @@ export default function App() {
         <View style={[styles.referralBox, isDark && styles.referralBoxDark]}>
           <Text style={[styles.referralText, isDark && styles.textDark]} selectable>
             {referral}
-          </Text>
-          <Text style={{ fontSize: 12, color: hasRealId ? "#2E7D32" : "#C62828", marginBottom: 10 }}>
-            {hasRealId
-              ? `Ваш Telegram ID: ${user.id}`
-              : "⚠️ ID не получен — откройте мини-апп из Telegram (не из браузера)"}
           </Text>
           <TouchableOpacity style={styles.copyButton} onPress={copyReferral}>
             <Text style={styles.buttonText}>📋 Скопировать ссылку</Text>
