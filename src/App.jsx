@@ -51,18 +51,26 @@ const getCloudStorage = () => {
   return null;
 };
 
+// Универсальное сохранение: CloudStorage (Telegram) + fallback localStorage
 const saveToCloud = async (key, data) => {
+  const json = JSON.stringify(data);
   const cloud = getCloudStorage();
   if (cloud) {
     try {
       await new Promise((resolve, reject) => {
-        cloud.setItem(key, JSON.stringify(data), (err) => {
+        cloud.setItem(key, json, (err) => {
           if (err) reject(err);
           else resolve();
         });
       });
     } catch (e) { console.warn("CloudStorage save error:", e); }
   }
+  // Fallback для браузера / Snack / тестирования
+  try {
+    if (typeof localStorage !== "undefined") {
+      localStorage.setItem("krost_" + key, json);
+    }
+  } catch (e) {}
 };
 
 const loadFromCloud = async (key) => {
@@ -75,9 +83,16 @@ const loadFromCloud = async (key) => {
           else resolve(val);
         });
       });
-      return value ? JSON.parse(value) : null;
-    } catch (e) { console.warn("CloudStorage load error:", e); return null; }
+      if (value) return JSON.parse(value);
+    } catch (e) { console.warn("CloudStorage load error:", e); }
   }
+  // Fallback localStorage
+  try {
+    if (typeof localStorage !== "undefined") {
+      const val = localStorage.getItem("krost_" + key);
+      if (val) return JSON.parse(val);
+    }
+  } catch (e) {}
   return null;
 };
 
@@ -165,22 +180,36 @@ export default function App() {
     bonus: "krost_bonus",
     orderHistory: "krost_orderHistory",
     lastOrderNumber: "krost_lastOrderNumber",
-    usedFreeDelivery: "krost_usedFreeDelivery"
+    usedFreeDelivery: "krost_usedFreeDelivery",
+    adminOrders: "krost_adminOrders",
+    promoCodes: "krost_promoCodes",
+    products: "krost_products",
+    theme: "krost_theme"
   };
 
   // ==============================
-  // ЗАГРУЗКА ДАННЫХ (только CloudStorage)
+  // ЗАГРУЗКА ДАННЫХ (CloudStorage + localStorage fallback)
   // ==============================
   useEffect(() => {
     const loadAll = async () => {
       try {
-        const cloudCart = await loadFromCloud(CLOUD_KEYS.cart);
-        const cloudFavorites = await loadFromCloud(CLOUD_KEYS.favorites);
-        const cloudOrders = await loadFromCloud(CLOUD_KEYS.orders);
-        const cloudBonus = await loadFromCloud(CLOUD_KEYS.bonus);
-        const cloudOrderHistory = await loadFromCloud(CLOUD_KEYS.orderHistory);
-        const cloudLastOrderNumber = await loadFromCloud(CLOUD_KEYS.lastOrderNumber);
-        const cloudUsedFreeDelivery = await loadFromCloud(CLOUD_KEYS.usedFreeDelivery);
+        const [
+          cloudCart, cloudFavorites, cloudOrders, cloudBonus,
+          cloudOrderHistory, cloudLastOrderNumber, cloudUsedFreeDelivery,
+          cloudAdminOrders, cloudPromoCodes, cloudProducts, cloudTheme
+        ] = await Promise.all([
+          loadFromCloud(CLOUD_KEYS.cart),
+          loadFromCloud(CLOUD_KEYS.favorites),
+          loadFromCloud(CLOUD_KEYS.orders),
+          loadFromCloud(CLOUD_KEYS.bonus),
+          loadFromCloud(CLOUD_KEYS.orderHistory),
+          loadFromCloud(CLOUD_KEYS.lastOrderNumber),
+          loadFromCloud(CLOUD_KEYS.usedFreeDelivery),
+          loadFromCloud(CLOUD_KEYS.adminOrders),
+          loadFromCloud(CLOUD_KEYS.promoCodes),
+          loadFromCloud(CLOUD_KEYS.products),
+          loadFromCloud(CLOUD_KEYS.theme)
+        ]);
 
         setCart(cloudCart || []);
         setFavorites(cloudFavorites || []);
@@ -189,9 +218,10 @@ export default function App() {
         setOrderHistory(cloudOrderHistory || []);
         setLastOrderNumber(cloudLastOrderNumber || 3340);
         setUsedFreeDelivery(cloudUsedFreeDelivery || []);
-
-        setProducts(DEFAULT_PRODUCTS);
-        setTheme("light");
+        setAdminOrders(cloudAdminOrders || []);
+        setPromoCodes(cloudPromoCodes || []);
+        setProducts(cloudProducts && cloudProducts.length > 0 ? cloudProducts : DEFAULT_PRODUCTS);
+        if (cloudTheme) setTheme(cloudTheme);
       } catch (e) {
         console.warn("Ошибка загрузки", e);
       }
@@ -200,7 +230,7 @@ export default function App() {
   }, []);
 
   // ==============================
-  // СОХРАНЕНИЕ (только CloudStorage)
+  // СОХРАНЕНИЕ (CloudStorage + localStorage)
   // ==============================
   useEffect(() => { saveToCloud(CLOUD_KEYS.cart, cart); }, [cart]);
   useEffect(() => { saveToCloud(CLOUD_KEYS.favorites, favorites); }, [favorites]);
@@ -209,6 +239,10 @@ export default function App() {
   useEffect(() => { saveToCloud(CLOUD_KEYS.orderHistory, orderHistory); }, [orderHistory]);
   useEffect(() => { saveToCloud(CLOUD_KEYS.lastOrderNumber, lastOrderNumber); }, [lastOrderNumber]);
   useEffect(() => { saveToCloud(CLOUD_KEYS.usedFreeDelivery, usedFreeDelivery); }, [usedFreeDelivery]);
+  useEffect(() => { saveToCloud(CLOUD_KEYS.adminOrders, adminOrders); }, [adminOrders]);
+  useEffect(() => { saveToCloud(CLOUD_KEYS.promoCodes, promoCodes); }, [promoCodes]);
+  useEffect(() => { saveToCloud(CLOUD_KEYS.products, products); }, [products]);
+  useEffect(() => { saveToCloud(CLOUD_KEYS.theme, theme); }, [theme]);
 
   useEffect(() => {
     if (user.id !== "guest" && !users.some(u => u.id === user.id)) {
