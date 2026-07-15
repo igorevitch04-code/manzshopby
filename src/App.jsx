@@ -185,6 +185,11 @@ export default function App() {
   const [toastVisible, setToastVisible] = useState(false);
   const [toastMessage, setToastMessage] = useState("");
   const [pendingProductId, setPendingProductId] = useState(null);
+  // Реферальная система
+  const [referredBy, setReferredBy] = useState(null); // id того, кто пригласил
+  const [referralCount, setReferralCount] = useState(0); // сколько пришло по моей ссылке
+  const [referralEarnings, setReferralEarnings] = useState(0); // сколько заработал с рефералов
+  const [referralNotified, setReferralNotified] = useState(false); // уже показали toast о регистрации
 
   const showToast = (msg) => {
     setToastMessage(msg);
@@ -206,7 +211,13 @@ export default function App() {
     adminOrders: "krost_adminOrders",
     promoCodes: "krost_promoCodes",
     products: "krost_products",
-    theme: "krost_theme"
+    theme: "krost_theme",
+    referredBy: "krost_referredBy",
+    referralCount: "krost_referralCount",
+    referralEarnings: "krost_referralEarnings",
+    referralNotified: "krost_referralNotified",
+    // Общая «очередь» реферальных событий (в рамках одного устройства / для демо)
+    refEvents: "krost_refEvents"
   };
 
   // ==============================
@@ -218,7 +229,8 @@ export default function App() {
         const [
           cloudCart, cloudFavorites, cloudOrders, cloudBonus,
           cloudOrderHistory, cloudLastOrderNumber, cloudUsedFreeDelivery,
-          cloudAdminOrders, cloudPromoCodes, cloudProducts, cloudTheme
+          cloudAdminOrders, cloudPromoCodes, cloudProducts, cloudTheme,
+          cloudReferredBy, cloudReferralCount, cloudReferralEarnings, cloudReferralNotified
         ] = await Promise.all([
           loadFromCloud(CLOUD_KEYS.cart),
           loadFromCloud(CLOUD_KEYS.favorites),
@@ -230,7 +242,11 @@ export default function App() {
           loadFromCloud(CLOUD_KEYS.adminOrders),
           loadFromCloud(CLOUD_KEYS.promoCodes),
           loadFromCloud(CLOUD_KEYS.products),
-          loadFromCloud(CLOUD_KEYS.theme)
+          loadFromCloud(CLOUD_KEYS.theme),
+          loadFromCloud(CLOUD_KEYS.referredBy),
+          loadFromCloud(CLOUD_KEYS.referralCount),
+          loadFromCloud(CLOUD_KEYS.referralEarnings),
+          loadFromCloud(CLOUD_KEYS.referralNotified)
         ]);
 
         setCart(cloudCart || []);
@@ -244,6 +260,56 @@ export default function App() {
         setPromoCodes(cloudPromoCodes || []);
         setProducts(cloudProducts && cloudProducts.length > 0 ? cloudProducts : DEFAULT_PRODUCTS);
         if (cloudTheme) setTheme(cloudTheme);
+        if (cloudReferredBy) setReferredBy(cloudReferredBy);
+        setReferralCount(cloudReferralCount || 0);
+        setReferralEarnings(cloudReferralEarnings || 0);
+        setReferralNotified(!!cloudReferralNotified);
+
+        // Подтягиваем реферальные события, предназначенные текущему пользователю
+        // (CloudStorage + localStorage global — для тестов на одном устройстве)
+        try {
+          let events = (await loadFromCloud(CLOUD_KEYS.refEvents)) || [];
+          try {
+            if (typeof localStorage !== "undefined") {
+              const g = localStorage.getItem("krost_refEvents_global");
+              if (g) {
+                const parsed = JSON.parse(g);
+                if (Array.isArray(parsed) && parsed.length > events.length) events = parsed;
+              }
+            }
+          } catch (e) {}
+          const myId = String(user.id);
+          let newRegs = 0;
+          let newEarn = 0;
+          const remaining = [];
+          events.forEach((ev) => {
+            if (String(ev.to) === myId) {
+              if (ev.type === "register") newRegs += 1;
+              if (ev.type === "order") newEarn += (ev.amount || 0);
+            } else {
+              remaining.push(ev);
+            }
+          });
+          if (newRegs > 0 || newEarn > 0) {
+            if (newRegs > 0) {
+              setReferralCount((c) => c + newRegs);
+              setTimeout(() => showToast(`🎉 По вашей реферальной ссылке зарегистрировались: +${newRegs}`), 800);
+            }
+            if (newEarn > 0) {
+              setReferralEarnings((e) => e + newEarn);
+              setBonusBalance((b) => b + newEarn);
+              setTimeout(() => showToast(`💰 Вам начислено ${money(newEarn)} с покупок реферала (2%)`), 2000);
+            }
+            await saveToCloud(CLOUD_KEYS.refEvents, remaining);
+            try {
+              if (typeof localStorage !== "undefined") {
+                localStorage.setItem("krost_refEvents_global", JSON.stringify(remaining));
+              }
+            } catch (e) {}
+          }
+        } catch (e) {
+          console.warn("refEvents load", e);
+        }
       } catch (e) {
         console.warn("Ошибка загрузки", e);
       }
@@ -265,6 +331,10 @@ export default function App() {
   useEffect(() => { saveToCloud(CLOUD_KEYS.promoCodes, promoCodes); }, [promoCodes]);
   useEffect(() => { saveToCloud(CLOUD_KEYS.products, products); }, [products]);
   useEffect(() => { saveToCloud(CLOUD_KEYS.theme, theme); }, [theme]);
+  useEffect(() => { if (referredBy != null) saveToCloud(CLOUD_KEYS.referredBy, referredBy); }, [referredBy]);
+  useEffect(() => { saveToCloud(CLOUD_KEYS.referralCount, referralCount); }, [referralCount]);
+  useEffect(() => { saveToCloud(CLOUD_KEYS.referralEarnings, referralEarnings); }, [referralEarnings]);
+  useEffect(() => { saveToCloud(CLOUD_KEYS.referralNotified, referralNotified); }, [referralNotified]);
 
   // Сохраняем текущую вкладку только в sessionStorage (живёт при refresh, умирает при полном закрытии)
   useEffect(() => {
@@ -301,7 +371,8 @@ export default function App() {
   const nextLevel = LEVELS[LEVELS.indexOf(currentLevel) + 1];
   let progress = 100;
   if (nextLevel) progress = Math.min(100, Math.floor(((orders - currentLevel.min) / (nextLevel.min - currentLevel.min)) * 100));
-  const referral = `https://t.me/manzshop_bot?start=${user.id}`;
+  // Уникальная реферальная ссылка (открывает мини-апп с startapp=ref_USERID)
+  const referral = `https://t.me/manzshop_bot/manzshopbyapp?startapp=ref_${user.id}`;
 
   const addCart = (item) => setCart([...cart, item]);
   const removeCart = (idx) => setCart(cart.filter((_, i) => i !== idx));
@@ -312,7 +383,27 @@ export default function App() {
       : setFavorites([...favorites, item]);
   };
 
-  const copyReferral = () => { Clipboard.setString(referral); Alert.alert("Готово", "Ссылка скопирована"); };
+  const copyReferral = () => {
+    Clipboard.setString(referral);
+    showToast("📋 Реферальная ссылка скопирована");
+  };
+
+  // Добавить событие в очередь (для реферера: register / order)
+  const pushRefEvent = async (event) => {
+    try {
+      const events = (await loadFromCloud(CLOUD_KEYS.refEvents)) || [];
+      events.push({ ...event, date: new Date().toISOString() });
+      await saveToCloud(CLOUD_KEYS.refEvents, events);
+      // Дублируем в localStorage (общий для браузера — удобно для тестов)
+      try {
+        if (typeof localStorage !== "undefined") {
+          localStorage.setItem("krost_refEvents_global", JSON.stringify(events));
+        }
+      } catch (e) {}
+    } catch (e) {
+      console.warn("pushRefEvent", e);
+    }
+  };
   const openOrderModal = () => setOrderModalVisible(true);
   const closeOrderModal = () => { setOrderModalVisible(false); setUseBonus(false); setPromoCode(""); };
 
@@ -344,10 +435,27 @@ export default function App() {
     const orderTotal = finalTotal + deliveryPrice;
     const nextNumber = lastOrderNumber + 1;
     setLastOrderNumber(nextNumber);
+
+    // 2% рефереру с суммы товаров (без доставки)
+    let referralBonus = 0;
+    if (referredBy && String(referredBy) !== String(user.id)) {
+      referralBonus = Math.floor(total * 0.02);
+      pushRefEvent({
+        type: "order",
+        to: referredBy,
+        from: user.id,
+        fromName: user.name,
+        amount: referralBonus,
+        orderId: nextNumber
+      });
+    }
+
     const order = {
       id: nextNumber, items: cart.map(i => ({ ...i })), total, delivery, address, phone, fullName,
       deliveryPrice, discount, usedBonus, finalTotal: orderTotal, date: new Date().toISOString(),
-      status: "Ожидает подтверждения", trackingNumber: null, freeDelivery
+      status: "Ожидает подтверждения", trackingNumber: null, freeDelivery,
+      referredBy: referredBy || null,
+      referralBonus
     };
     setOrderHistory(prev => [order, ...prev]);
     setAdminOrders(prev => [order, ...prev]);
@@ -357,14 +465,11 @@ export default function App() {
     setCart([]);
     closeOrderModal();
     showToast(`✅ Заказ #${nextNumber} оформлен. Если у вас есть вопросы — можете задать их менеджеру в описании бота`);
-    Alert.alert(
-      "Заказ оформлен",
-      `Номер заказа: ${nextNumber}\nСтатус: Ожидает подтверждения\n\nЕсли у вас есть вопросы — можете задать их менеджеру в описании бота.`,
-      [
-        { text: "OK" },
-        { text: "Перейти в историю", onPress: () => setPage("profile") }
-      ]
-    );
+    if (referralBonus > 0) {
+      setTimeout(() => {
+        showToast(`🎁 Рефереру начислено ${money(referralBonus)} (2% с вашего заказа)`);
+      }, 2500);
+    }
   };
 
   const addRating = (productId, rating, comment) => {
@@ -429,6 +534,35 @@ export default function App() {
           if (!isNaN(id)) {
             console.log("[DeepLink] pending product id =", id);
             setPendingProductId(id);
+          }
+        }
+
+        // Реферальная ссылка: ref_USERID
+        if (startParam && startParam.startsWith("ref_")) {
+          const refId = startParam.replace("ref_", "").trim();
+          console.log("[DeepLink] referral from =", refId);
+          if (refId && String(refId) !== String(user.id)) {
+            // Откладываем — чтобы не перезаписать уже загруженный referredBy
+            setTimeout(async () => {
+              try {
+                const existing = await loadFromCloud(CLOUD_KEYS.referredBy);
+                if (existing) {
+                  setReferredBy(existing);
+                  return;
+                }
+                setReferredBy(refId);
+                await pushRefEvent({
+                  type: "register",
+                  to: refId,
+                  from: user.id,
+                  fromName: user.name
+                });
+                showToast("🎉 Вы перешли по реферальной ссылке!");
+                setReferralNotified(true);
+              } catch (e) {
+                console.warn("ref save error", e);
+              }
+            }, 600);
           }
         }
       } catch (e) {
@@ -958,28 +1092,54 @@ export default function App() {
     return (
       <ScrollView style={[styles.page, isDark && styles.pageDark]} contentContainerStyle={styles.scrollContent}>
         <Text style={[styles.pageTitle, isDark && styles.textDark]}>Профиль</Text>
-        <Text style={[styles.userName, isDark && styles.textDark]}>Привет, {user.name} 👋</Text>
+
+        {/* Тёмная тема — в самом верху */}
+        <View style={[styles.themeRow, { marginBottom: 16 }]}>
+          <Text style={[styles.themeLabel, isDark && styles.textDark]}>Тёмная тема</Text>
+          <Switch value={theme === "dark"} onValueChange={toggleTheme} />
+        </View>
+
         {isAdmin && (
           <TouchableOpacity style={styles.adminButton} onPress={() => setShowAdmin(true)}>
             <Text style={styles.buttonText}>⚙️ Админ-панель</Text>
           </TouchableOpacity>
         )}
+
+        {/* Единая плашка: бонусы + рефералы */}
         <View style={styles.balanceCard}>
-          <Text style={styles.balanceLabel}>БОНУСНЫЙ СЧЕТ</Text>
+          <Text style={styles.balanceRowLabel}>Ваш бонусный счёт</Text>
           <Text style={styles.balanceValue}>{money(bonusBalance)}</Text>
-          <Text style={styles.balanceInfo}>Кэшбэк {currentLevel.cashback}%</Text>
+
+          <View style={styles.balanceDivider} />
+
+          <View style={styles.balanceStatRow}>
+            <Text style={styles.balanceStatLabel}>Сумма кэшбэка</Text>
+            <Text style={styles.balanceStatValue}>{currentLevel.cashback}%</Text>
+          </View>
+          <View style={styles.balanceStatRow}>
+            <Text style={styles.balanceStatLabel}>Приглашено друзей</Text>
+            <Text style={styles.balanceStatValue}>{referralCount}</Text>
+          </View>
+          {referralEarnings > 0 && (
+            <View style={styles.balanceStatRow}>
+              <Text style={styles.balanceStatLabel}>Заработано с рефералов</Text>
+              <Text style={styles.balanceStatValue}>{money(referralEarnings)}</Text>
+            </View>
+          )}
+
+          <Text style={styles.balanceHint}>
+            Друг переходит по ссылке → вам начисляется 2% на бонусный счёт
+          </Text>
         </View>
-        <View style={styles.themeRow}>
-          <Text style={[styles.themeLabel, isDark && styles.textDark]}>Тёмная тема</Text>
-          <Switch value={theme === "dark"} onValueChange={toggleTheme} />
-        </View>
-        <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Ваша ссылка</Text>
+
+        <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Ваша реферальная ссылка</Text>
         <View style={[styles.referralBox, isDark && styles.referralBoxDark]}>
-          <Text style={[styles.referralText, isDark && styles.textDark]}>{referral}</Text>
+          <Text style={[styles.referralText, isDark && styles.textDark]} numberOfLines={2}>{referral}</Text>
           <TouchableOpacity style={styles.copyButton} onPress={copyReferral}>
             <Text style={styles.buttonText}>📋 Скопировать ссылку</Text>
           </TouchableOpacity>
         </View>
+
         <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Ваш уровень</Text>
         <View style={styles.currentLevel}>
           <Text style={styles.currentLevelTitle}>{currentLevel.name}</Text>
@@ -1498,15 +1658,61 @@ const styles = StyleSheet.create({
   finalTotal: { fontSize: 20, fontWeight: "900", marginTop: 4 },
   discountText: { fontSize: 16, color: "green", marginTop: 4 },
 
-  balanceCard: { backgroundColor: "#111", padding: 24, borderRadius: 28 },
+  balanceCard: {
+    backgroundColor: "#111",
+    padding: 22,
+    borderRadius: 24,
+    marginBottom: 8,
+  },
+  balanceRowLabel: {
+    color: "rgba(255,255,255,0.7)",
+    fontSize: 13,
+    fontWeight: "600",
+    letterSpacing: 0.3,
+    marginBottom: 4,
+  },
+  balanceValue: {
+    color: "#fff",
+    fontSize: 34,
+    fontWeight: "900",
+    marginBottom: 4,
+  },
+  balanceDivider: {
+    height: 1,
+    backgroundColor: "rgba(255,255,255,0.15)",
+    marginVertical: 14,
+  },
+  balanceStatRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  balanceStatLabel: {
+    color: "rgba(255,255,255,0.75)",
+    fontSize: 14,
+    fontWeight: "500",
+  },
+  balanceStatValue: {
+    color: "#fff",
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  balanceHint: {
+    color: "rgba(255,255,255,0.45)",
+    fontSize: 11,
+    lineHeight: 16,
+    marginTop: 10,
+  },
   balanceLabel: { color: "#fff" },
-  balanceValue: { color: "#fff", fontSize: 36, fontWeight: "900" },
   balanceInfo: { color: "#fff" },
   userName: { fontSize: 18 },
 
   referralBox: { backgroundColor: "#fff", padding: 16, borderRadius: 24 },
   referralBoxDark: { backgroundColor: "#2a2a2a" },
   referralText: { marginBottom: 12, fontSize: 13 },
+  referralStat: { fontSize: 14, fontWeight: "600", marginBottom: 4, color: "#111" },
+  referralHint: { fontSize: 12, color: "#888", marginTop: 8, lineHeight: 18 },
   copyButton: { backgroundColor: "#111", padding: 12, borderRadius: 18 },
 
   currentLevel: { backgroundColor: "#111", padding: 20, borderRadius: 24 },
