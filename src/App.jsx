@@ -315,12 +315,10 @@ export default function App() {
     setCart([]);
     closeOrderModal();
     // Показываем Toast вместо Alert
-    showToast(
-  `Заказ №${nextNumber} оформлен. Если у Вас есть какие-либо вопросы, Вы можете задать их менеджеру по ссылке в описании бота.`
-);
+    showToast(`✅ Заказ #${nextNumber} оформлен`);
     // Дополнительно показываем Alert с деталями
     Alert.alert(
-      `Заказ №${nextNumber} оформлен`,
+      "Заказ оформлен",
       `Номер заказа: ${nextNumber}\nСтатус: Ожидает подтверждения\n${freeDelivery ? "Доставка бесплатная (первый заказ)!" : ""}\n\nЕсли у менеджера будут вопросы, он свяжется с вами.\nА если у вас есть вопросы, вы можете связаться по ссылке в описании бота.`,
       [
         { text: "OK" },
@@ -681,18 +679,8 @@ export default function App() {
           Корзина{cart.length > 0 && <Text style={styles.cartBadge}> ({cart.length})</Text>}
         </Text>
         {cart.length === 0 ? (
-  <View
-    style={{
-      flex: 1,
-      justifyContent: "center",
-      alignItems: "center",
-    }}
-  >
-    <Text style={[styles.empty, isDark && styles.textDark]}>
-      Корзина пуста
-    </Text>
-  </View>
-) : (
+          <Text style={[styles.empty, isDark && styles.textDark]}>Корзина пустая</Text>
+        ) : (
           <>
             {cart.map((item, idx) => (
               <View style={[styles.cartItem, isDark && styles.cartItemDark]} key={idx}>
@@ -1123,10 +1111,7 @@ const styles = StyleSheet.create({
   textDark: { color: "#fff" },
   inputDark: { backgroundColor: "#333", color: "#fff", borderColor: "#555" },
   cardDark: { backgroundColor: "#2a2a2a" },
-  scrollContent: {
-  flexGrow: 1,
-  paddingBottom: 90,
-},
+  scrollContent: { paddingBottom: 10 },
 
   // Логотип и описания
   logo: { fontSize: 30, fontWeight: "900", marginTop: 18 },
