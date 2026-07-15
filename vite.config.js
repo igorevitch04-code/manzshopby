@@ -8,11 +8,10 @@ export default defineConfig({
       'react-native': 'react-native-web',
     },
   },
-  build: {
-    rollupOptions: {
-      output: {
-        manualChunks: undefined,
-      },
-    },
+  optimizeDeps: {
+    include: [
+      '@react-native-async-storage/async-storage',
+      'react-native-web'
+    ],
   },
 });
