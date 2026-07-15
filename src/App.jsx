@@ -141,7 +141,7 @@ export default function App() {
     usedFreeDelivery: "krost_usedFreeDelivery"
   };
 
-  // Загрузка и сохранение (без изменений, как в вашем коде)
+  // Загрузка и сохранение (без изменений)
   useEffect(() => {
     const loadAll = async () => {
       try {
@@ -388,7 +388,7 @@ export default function App() {
   // КОМПОНЕНТЫ
   // ==============================
 
-  const SizeModal = () => null; // не используется
+  const SizeModal = () => null;
 
   // ---- ProductCard (без кнопки, без размеров) ----
   const ProductCard = ({ item }) => {
@@ -495,7 +495,7 @@ export default function App() {
     );
   };
 
-  // ---- ProductPage (исправлена кнопка и выбор размера) ----
+  // ---- ProductPage (с выбором размера и оповещениями) ----
   const ProductPage = () => {
     if (!selectedProduct) return null;
     const { theme } = useTheme(); 
@@ -507,7 +507,7 @@ export default function App() {
     const handleAddToCart = () => {
       // Проверяем, выбран ли размер
       if (!selectedSize) {
-        Alert.alert("Выберите размер", "Пожалуйста, выберите размер перед добавлением в корзину");
+        Alert.alert("Ошибка", "Пожалуйста, выберите размер перед добавлением в корзину");
         return;
       }
       addCart({ ...selectedProduct, size: selectedSize });
