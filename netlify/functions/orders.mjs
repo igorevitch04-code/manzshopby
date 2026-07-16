@@ -78,15 +78,22 @@ async function tgSetDesc(text) {
 }
 
 function parsePointers(desc) {
-  const mz = String(desc).match(/mz:([A-Za-z0-9_-]+)/);
-  const ord = String(desc).match(/ord:([A-Za-z0-9_-]+)/);
-  return { mz: mz ? mz[1] : null, ord: ord ? ord[1] : null };
+  const s = String(desc || "");
+  const mz = s.match(/mz:([A-Za-z0-9_-]+)/);
+  const ord = s.match(/ord:([A-Za-z0-9_-]+)/);
+  const u = s.match(/u:([A-Za-z0-9_-]+)/);
+  return {
+    mz: mz ? mz[1] : null,
+    ord: ord ? ord[1] : null,
+    u: u ? u[1] : null,
+  };
 }
 
-function buildDesc(mz, ord) {
+function buildDesc(mz, ord, u) {
   const parts = [];
-  if (mz) parts.push(`mz:${mz}`);
-  if (ord) parts.push(`ord:${ord}`);
+  if (mz) parts.push("mz:" + mz);
+  if (ord) parts.push("ord:" + ord);
+  if (u) parts.push("u:" + u);
   return parts.join(";");
 }
 
@@ -205,7 +212,7 @@ export default async (req) => {
         return json(500, { ok: false, error: "blob_write_failed" });
       }
       if (written !== ptr.ord) {
-        await tgSetDesc(buildDesc(ptr.mz, written));
+        await tgSetDesc(buildDesc(ptr.mz, written, ptr.u));
       }
 
       return json(200, {
