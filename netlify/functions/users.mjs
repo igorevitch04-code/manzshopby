@@ -14,7 +14,7 @@ const corsHeaders = {
   "Cache-Control": "no-store",
 };
 
-const BOT_TOKEN = "8912775566:AAHEExxwO5Ub39DU0tDT97Hlppw1IfLwjvU";
+const BOT_TOKEN = "7270716853:AAHXqrp795TyLgp3FKEEaRlRqOrVXp5x6bU"; // основной бот мини-аппа (рассылка)
 
 const json = (status, data) =>
   new Response(JSON.stringify(data), { status, headers: corsHeaders });
