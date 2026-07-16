@@ -1073,14 +1073,28 @@ const parseOrderFromText = (text) => {
 
 // ----- Общий каталог товаров (виден всем пользователям / устройствам) -----
 // ==============================
-// ОБЩИЙ КАТАЛОГ ТОВАРОВ (все аккаунты + все устройства)
-// Данные: jsonblob.com (JSON)
-// Адрес каталога (blob id): Telegram setMyShortDescription — точно доступен всем,
-// т.к. sendMessage у вас уже работает с этим BOT_TOKEN.
+// ОБЩИЙ КАТАЛОГ — Netlify Function + Blobs (основное хранилище)
+// URL: /api/catalog  или  /.netlify/functions/catalog
+// Старые fallback (jsonblob/KV) оставлены на всякий случай.
 // ==============================
 const PRODUCT_INDEX_KEY = "mp3_idx";
 const PRODUCT_BLOB_META_KEY = "manzshop_prod_blob_v4";
 const productItemKey = (id) => `mp3_${id}`;
+
+const getCatalogApiUrls = () => {
+  const urls = [];
+  try {
+    if (typeof window !== "undefined" && window.location && window.location.origin) {
+      const origin = window.location.origin;
+      // не ходим на api с localhost telegram webview странных origin
+      if (origin && !origin.startsWith("file:")) {
+        urls.push(`${origin}/api/catalog`);
+        urls.push(`${origin}/.netlify/functions/catalog`);
+      }
+    }
+  } catch (e) {}
+  return urls;
+};
 
 const compactProduct = (p) => {
   const image = (p.image || "").startsWith("data:")
@@ -1099,269 +1113,77 @@ const compactProduct = (p) => {
     averageRating: Number(p.averageRating) || 0,
     pinned: !!p.pinned,
     createdAt: p.createdAt || null,
+    ratings: Array.isArray(p.ratings) ? p.ratings.slice(-20) : [],
   };
 };
 
-// --- Telegram bot short_description как «указатель» на каталог ---
-const tgGetCatalogPointer = async () => {
-  if (!BOT_TOKEN) return null;
-  const urls = [
-    `https://api.telegram.org/bot${BOT_TOKEN}/getMyShortDescription`,
-    `https://corsproxy.io/?${encodeURIComponent(
-      `https://api.telegram.org/bot${BOT_TOKEN}/getMyShortDescription`
-    )}`,
-  ];
-  for (const url of urls) {
+// --- Netlify API ---
+const netlifyCatalogLoad = async () => {
+  for (const url of getCatalogApiUrls()) {
     try {
-      const r = await fetch(url, { cache: "no-store" });
-      const data = await r.json().catch(() => null);
-      const desc =
-        (data && data.result && (data.result.short_description || data.result.description)) ||
-        "";
-      const m = String(desc).match(/mz:([A-Za-z0-9_-]+)/);
-      if (m) return m[1];
-    } catch (e) {}
+      const r = await fetch(url, { method: "GET", cache: "no-store" });
+      if (!r.ok) continue;
+      const data = await r.json();
+      if (data && Array.isArray(data.products)) {
+        console.log("[Products] netlify load OK", data.products.length, url);
+        return data.products;
+      }
+    } catch (e) {
+      console.warn("[Products] netlify load fail", url, e && e.message);
+    }
   }
   return null;
 };
 
-const tgSetCatalogPointer = async (blobId) => {
-  if (!BOT_TOKEN || !blobId) return false;
-  const text = `mz:${blobId}`;
-  // form POST — как для sendMessage
-  try {
-    const body = `short_description=${encodeURIComponent(text)}`;
-    const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setMyShortDescription`, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body,
-      cache: "no-store",
-    });
-    const data = await r.json().catch(() => null);
-    if (data && data.ok) {
-      console.log("[Products] pointer saved to bot short_description", blobId);
-      return true;
+const netlifyCatalogSave = async (products) => {
+  const body = JSON.stringify({
+    products: (products || []).map(compactProduct),
+  });
+  for (const url of getCatalogApiUrls()) {
+    try {
+      const r = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+        cache: "no-store",
+      });
+      const data = await r.json().catch(() => ({}));
+      if (r.ok && data && data.ok !== false) {
+        console.log("[Products] netlify save OK", data.count, url);
+        return true;
+      }
+      console.warn("[Products] netlify save response", url, r.status, data);
+    } catch (e) {
+      console.warn("[Products] netlify save fail", url, e && e.message);
     }
-    console.warn("[Products] setMyShortDescription", data);
-  } catch (e) {
-    console.warn("[Products] setMyShortDescription fail", e);
   }
-  // GET fallback
-  try {
-    const url =
-      `https://api.telegram.org/bot${BOT_TOKEN}/setMyShortDescription` +
-      `?short_description=${encodeURIComponent(text)}`;
-    const r = await fetch(url, { cache: "no-store" });
-    const data = await r.json().catch(() => null);
-    if (data && data.ok) return true;
-  } catch (e) {}
   return false;
 };
 
-// --- jsonblob.com ---
-const jblobRead = async (blobId) => {
-  if (!blobId) return null;
-  const base = `https://jsonblob.com/api/jsonBlob/${blobId}`;
-  const urls = [base, `https://corsproxy.io/?${encodeURIComponent(base)}`];
-  for (const url of urls) {
-    try {
-      const r = await fetch(url, {
-        headers: { Accept: "application/json" },
-        cache: "no-store",
-      });
-      if (!r.ok) continue;
-      const data = await r.json();
-      if (data && (Array.isArray(data.products) || Array.isArray(data))) return data;
-    } catch (e) {}
-  }
-  return null;
-};
-
-const jblobWrite = async (blobId, payload) => {
-  const body = JSON.stringify(payload);
-  if (blobId) {
-    try {
-      const r = await fetch(`https://jsonblob.com/api/jsonBlob/${blobId}`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-        body,
-      });
-      if (r.ok || r.status === 200 || r.status === 201) return blobId;
-    } catch (e) {}
-  }
-  // create new
-  try {
-    const r = await fetch("https://jsonblob.com/api/jsonBlob", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body,
-    });
-    if (r.ok || r.status === 201) {
-      const x =
-        r.headers.get("X-jsonblob") ||
-        r.headers.get("x-jsonblob") ||
-        r.headers.get("X-Jsonblob");
-      if (x) return String(x).trim();
-      const loc = r.headers.get("Location") || r.headers.get("location") || "";
-      const id = loc.split("/").filter(Boolean).pop();
-      if (id) return id;
-    }
-  } catch (e) {
-    console.warn("[Products] jblob create fail", e);
-  }
-  return null;
-};
-
-const resolveProductsBlobId = async () => {
-  // 1) Telegram bot pointer (общий для всех клиентов с этим токеном)
-  const fromTg = await tgGetCatalogPointer();
-  if (fromTg) {
-    try {
-      if (typeof localStorage !== "undefined") {
-        localStorage.setItem(PRODUCT_BLOB_META_KEY, fromTg);
-      }
-    } catch (e) {}
-    return fromTg;
-  }
-  // 2) localStorage
-  try {
-    if (typeof localStorage !== "undefined") {
-      const local = localStorage.getItem(PRODUCT_BLOB_META_KEY);
-      if (local) return local;
-    }
-  } catch (e) {}
-  // 3) KV
-  const fromKv = await kvGetString(PRODUCT_BLOB_META_KEY);
-  if (fromKv) return fromKv;
-  return null;
-};
-
-const persistProductsBlobId = async (blobId) => {
-  if (!blobId) return;
-  try {
-    if (typeof localStorage !== "undefined") {
-      localStorage.setItem(PRODUCT_BLOB_META_KEY, blobId);
-    }
-  } catch (e) {}
-  await kvSetString(PRODUCT_BLOB_META_KEY, blobId);
-  await tgSetCatalogPointer(blobId);
-};
-
 const sharedProductsLoad = async () => {
-  const map = new Map();
+  // 1) Netlify (главное)
+  const fromApi = await netlifyCatalogLoad();
+  if (Array.isArray(fromApi) && fromApi.length > 0) return fromApi;
 
-  // A) jsonblob по указателю из Telegram / KV
-  try {
-    const blobId = await resolveProductsBlobId();
-    if (blobId) {
-      const data = await jblobRead(blobId);
-      const list = Array.isArray(data)
-        ? data
-        : data && Array.isArray(data.products)
-          ? data.products
-          : [];
-      list.forEach((p) => {
-        if (p && p.id != null) map.set(String(p.id), p);
-      });
-    }
-  } catch (e) {
-    console.warn("sharedProductsLoad jblob", e);
+  // 2) Если API ответил пустым массивом — это валидный пустой каталог (не fallback)
+  //    Отличить «нет API» от «пустой каталог»: netlifyCatalogLoad returns null on fail, [] on empty
+  if (Array.isArray(fromApi) && fromApi.length === 0) {
+    // API работает, каталог пока пуст
+    return [];
   }
 
-  // B) индекс + KV (запасной)
-  try {
-    const idxRaw = await kvGetString(PRODUCT_INDEX_KEY);
-    if (idxRaw) {
-      const ids = String(idxRaw).split(",").map((s) => s.trim()).filter(Boolean).slice(0, 80);
-      for (const id of ids) {
-        if (map.has(id)) continue;
-        try {
-          const raw = await kvGetString(productItemKey(id));
-          if (!raw) continue;
-          const obj = JSON.parse(raw);
-          if (obj && obj.id != null) map.set(String(obj.id), obj);
-        } catch (e) {}
-      }
-    }
-  } catch (e) {}
-
-  // C) pantry
-  try {
-    const data = await pantryGetBasket("products");
-    const list = Array.isArray(data)
-      ? data
-      : data && Array.isArray(data.products)
-        ? data.products
-        : [];
-    list.forEach((p) => {
-      if (p && p.id != null && !map.has(String(p.id))) map.set(String(p.id), p);
-    });
-  } catch (e) {}
-
-  const products = Array.from(map.values());
-  console.log("[Products] shared load", products.length);
-  return products.length ? products : null;
+  console.warn("[Products] Netlify API недоступен, пробуем fallback");
+  return null;
 };
 
 const sharedProductsSave = async (products) => {
-  const list = (Array.isArray(products) ? products : []).map(compactProduct);
-  const publishable = list.filter((p) => p && p.name);
-  const payload = {
-    products: publishable,
-    updatedAt: new Date().toISOString(),
-    v: 4,
-  };
-
-  let anyOk = false;
-
-  // 1) jsonblob — основной канал
-  try {
-    let blobId = await resolveProductsBlobId();
-    const writtenId = await jblobWrite(blobId, payload);
-    if (writtenId) {
-      anyOk = true;
-      await persistProductsBlobId(writtenId);
-      console.log("[Products] jblob OK", writtenId, publishable.length);
-    }
-  } catch (e) {
-    console.warn("[Products] jblob save", e);
-  }
-
-  // 2) KV index + items (укороченные)
-  try {
-    const ids = publishable.map((p) => String(p.id));
-    if (await kvSetString(PRODUCT_INDEX_KEY, ids.join(","))) anyOk = true;
-    for (const p of publishable.slice(0, 40)) {
-      let raw = JSON.stringify(p);
-      if (raw.length > 1400) {
-        raw = JSON.stringify({
-          ...p,
-          description: (p.description || "").slice(0, 60),
-          sizes: (p.sizes || []).slice(0, 6),
-        });
-      }
-      if (raw.length <= 1500 && (await kvSetString(productItemKey(p.id), raw))) {
-        anyOk = true;
-      }
-    }
-  } catch (e) {}
-
-  // 3) pantry
-  try {
-    if (await pantryPutBasket("products", payload)) anyOk = true;
-  } catch (e) {}
-
-  console.log("[Products] shared save", anyOk ? "OK" : "FAIL", publishable.length);
-  return anyOk;
+  // Только Netlify — надёжное хранилище для всех пользователей
+  const ok = await netlifyCatalogSave(products);
+  console.log("[Products] shared save", ok ? "OK" : "FAIL", (products || []).length);
+  return ok;
 };
 
-// Слить локальный каталог с общим
+// Слить локальный каталог с общим (общий приоритетнее)
 const mergeProductLists = (localList, sharedList) => {
   const map = new Map();
   (localList || []).forEach((p) => map.set(String(p.id), p));
@@ -1373,14 +1195,17 @@ const mergeProductLists = (localList, sharedList) => {
       map.set(id, {
         ...sp,
         image: local.image,
-        ratings: local.ratings || [],
+        ratings: local.ratings || sp.ratings || [],
       });
     } else {
       map.set(id, {
         ...(local || {}),
         ...sp,
         image: sp.image || (local && local.image) || "",
-        ratings: (local && local.ratings && local.ratings.length ? local.ratings : []) || [],
+        ratings:
+          (local && local.ratings && local.ratings.length
+            ? local.ratings
+            : sp.ratings) || [],
       });
     }
   });
@@ -1628,20 +1453,29 @@ export default function App() {
         setAdminOrders(cloudAdminOrders || []);
         setPromoCodes(cloudPromoCodes || []);
 
-        // Личный CloudStorage + ОБЩИЙ каталог (все устройства и пользователи)
+        // ОБЩИЙ каталог с сервера (Netlify) — источник правды для всех
         let list = cloudProducts && cloudProducts.length > 0 ? cloudProducts : DEFAULT_PRODUCTS;
         try {
-          // несколько попыток — KV/pantry иногда отвечают с задержкой
           let sharedProds = null;
-          for (let attempt = 0; attempt < 3 && !sharedProds; attempt++) {
+          for (let attempt = 0; attempt < 3; attempt++) {
             sharedProds = await sharedProductsLoad();
-            if (!sharedProds || !sharedProds.length) {
-              sharedProds = null;
-              await new Promise((r) => setTimeout(r, 300 * (attempt + 1)));
-            }
+            // null = API недоступен; [] или [...]= ответ сервера
+            if (sharedProds !== null) break;
+            await new Promise((r) => setTimeout(r, 350 * (attempt + 1)));
           }
           if (Array.isArray(sharedProds) && sharedProds.length > 0) {
-            list = mergeProductLists(list, sharedProds);
+            // сервер — главный источник
+            list = mergeProductLists(DEFAULT_PRODUCTS, sharedProds);
+            // локальные base64 подмешиваем если есть
+            if (cloudProducts && cloudProducts.length) {
+              list = mergeProductLists(cloudProducts, list);
+              list = mergeProductLists(list, sharedProds);
+            }
+          } else if (Array.isArray(sharedProds) && sharedProds.length === 0) {
+            // сервер пуст — оставляем local/default, потом админ опубликует
+            console.log("[Products] server catalog empty");
+          } else {
+            console.warn("[Products] server unavailable, using local/default");
           }
         } catch (e) {
           console.warn("shared products merge", e);
@@ -3592,7 +3426,7 @@ export default function App() {
     } else {
       Alert.alert(
         "Не удалось опубликовать",
-        "Проверьте интернет и что в товарах указан URL фото (не загруженный файл). Попробуйте ещё раз."
+        "Сервер Netlify не ответил. Убедитесь, что задеплоены netlify/functions/catalog.mjs и сайт открыт с вашего netlify.app домена."
       );
     }
   };
