@@ -1,256 +1,5419 @@
-/**
- * Каталог: jsonblob (данные) + Telegram short_description (указатель на blob id).
- * GET/POST /api/catalog
- */
+import React, { useState, useEffect, createContext, useContext } from "react";
+import {
+  View, Text, StyleSheet, TouchableOpacity, Image, ScrollView, Alert,
+  TextInput, Clipboard, FlatList, Modal, Share, Switch, Animated, PanResponder
+} from "react-native";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "Content-Type",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Content-Type": "application/json; charset=utf-8",
-  "Cache-Control": "no-store",
-};
+// AsyncStorage removed - using only Telegram CloudStorage + local state
 
-// Тот же токен, что уже в App.jsx (он и так виден в клиенте)
-const BOT_TOKEN = "8912775566:AAHEExxwO5Ub39DU0tDT97Hlppw1IfLwjvU";
+const tg = typeof window !== "undefined" && window.Telegram?.WebApp;
+const ThemeContext = createContext();
+const useTheme = () => useContext(ThemeContext);
 
-const json = (status, data) =>
-  new Response(JSON.stringify(data), { status, headers: corsHeaders });
-
-const normalizeProducts = (list) =>
-  (Array.isArray(list) ? list : []).map((p) => {
-    const image =
-      p && typeof p.image === "string" && p.image.startsWith("data:")
-        ? ""
-        : (p && p.image) || "";
-    return {
-      id: p.id,
-      brand: p.brand || "",
-      name: p.name || "",
-      price: Number(p.price) || 0,
-      oldPrice: p.oldPrice != null ? Number(p.oldPrice) : null,
-      image,
-      description: (p.description || "").slice(0, 500),
-      sizes: Array.isArray(p.sizes) ? p.sizes : [],
-      sales: Number(p.sales) || 0,
-      averageRating: Number(p.averageRating) || 0,
-      pinned: !!p.pinned,
-      hidden: !!p.hidden,
-      createdAt: p.createdAt || null,
-      ratings: Array.isArray(p.ratings)
-        ? p.ratings.slice(-40).map((r) => ({
-            userId: r.userId,
-            userName: (r.userName || "").slice(0, 40),
-            rating: Number(r.rating) || 0,
-            comment: (r.comment || "").slice(0, 400),
-            date: r.date || null,
-            approved: r.approved === true ? true : r.approved === false ? false : false,
-            adminReply: r.adminReply ? String(r.adminReply).slice(0, 300) : null,
-          }))
-        : [],
-    };
-  });
-
-async function tgGetDesc() {
-  try {
-    const r = await fetch(
-      `https://api.telegram.org/bot${BOT_TOKEN}/getMyShortDescription`,
-      { cache: "no-store" }
-    );
-    const data = await r.json();
-    return (data && data.result && data.result.short_description) || "";
-  } catch (e) {
-    return "";
-  }
-}
-
-async function tgGetPointer() {
-  try {
-    const desc = await tgGetDesc();
-    const m = String(desc).match(/mz:([A-Za-z0-9_-]+)/);
-    return m ? m[1] : null;
-  } catch (e) {
-    console.warn("tgGetPointer", e);
-    return null;
-  }
-}
-
-async function tgSetPointer(blobId) {
-  try {
-    const desc = await tgGetDesc();
-    const ord = String(desc).match(/ord:([A-Za-z0-9_-]+)/);
-    const parts = [`mz:${blobId}`];
-    if (ord) parts.push(`ord:${ord[1]}`);
-    const text = parts.join(";");
-    const body = `short_description=${encodeURIComponent(text)}`;
-    const r = await fetch(
-      `https://api.telegram.org/bot${BOT_TOKEN}/setMyShortDescription`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body,
-        cache: "no-store",
-      }
-    );
-    const data = await r.json();
-    console.log("tgSetPointer", data);
-    return !!(data && data.ok);
-  } catch (e) {
-    console.warn("tgSetPointer", e);
-    return false;
-  }
-}
-
-async function blobRead(id) {
-  if (!id) return null;
-  try {
-    const r = await fetch(`https://jsonblob.com/api/jsonBlob/${id}`, {
-      headers: { Accept: "application/json" },
-      cache: "no-store",
-    });
-    if (!r.ok) {
-      console.warn("blobRead status", r.status);
-      return null;
-    }
-    return await r.json();
-  } catch (e) {
-    console.warn("blobRead", e);
-    return null;
-  }
-}
-
-async function blobWrite(id, payload) {
-  const body = JSON.stringify(payload);
-
-  if (id) {
+// Надёжное получение Telegram user id (числовой)
+const getTelegramUser = () => {
+  const parseUserFromInitData = (initData) => {
+    if (!initData || typeof initData !== "string") return null;
     try {
-      const r = await fetch(`https://jsonblob.com/api/jsonBlob/${id}`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-        body,
-      });
-      if (r.ok || r.status === 200 || r.status === 201) return id;
-      console.warn("blob PUT status", r.status, await r.text().catch(() => ""));
-    } catch (e) {
-      console.warn("blob PUT", e);
-    }
-  }
+      // initData = "query_id=...&user=%7B%22id%22%3A123...&auth_date=..."
+      const params = new URLSearchParams(initData);
+      const userStr = params.get("user");
+      if (userStr) {
+        const u = JSON.parse(userStr);
+        if (u && u.id) {
+          return {
+            id: String(u.id),
+            name: u.first_name || "Пользователь",
+            username: u.username || ""
+          };
+        }
+      }
+    } catch (e) {}
+    return null;
+  };
 
   try {
-    const r = await fetch("https://jsonblob.com/api/jsonBlob", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body,
-    });
-    const text = await r.text().catch(() => "");
-    console.log("blob POST status", r.status, "headers x-jsonblob", r.headers.get("X-jsonblob"));
+    const w = typeof window !== "undefined" ? window : null;
+    const tgWeb = w && w.Telegram && w.Telegram.WebApp;
+    if (tgWeb) {
+      try { tgWeb.ready(); } catch (e) {}
+      try { tgWeb.expand && tgWeb.expand(); } catch (e) {}
 
-    if (r.ok || r.status === 201) {
-      const x =
-        r.headers.get("X-jsonblob") ||
-        r.headers.get("x-jsonblob") ||
-        r.headers.get("X-Jsonblob");
-      if (x) return String(x).trim();
-
-      const loc = r.headers.get("Location") || r.headers.get("location") || "";
-      if (loc) {
-        const parts = loc.split("/").filter(Boolean);
-        if (parts.length) return parts[parts.length - 1];
+      // 1) initDataUnsafe.user (самый быстрый)
+      const unsafe = tgWeb.initDataUnsafe;
+      if (unsafe && unsafe.user && unsafe.user.id) {
+        return {
+          id: String(unsafe.user.id),
+          name: unsafe.user.first_name || "Пользователь",
+          username: unsafe.user.username || ""
+        };
       }
 
-      // иногда id в теле
+      // 2) Парсим сырую строку initData
+      if (tgWeb.initData) {
+        const fromInit = parseUserFromInitData(tgWeb.initData);
+        if (fromInit) return fromInit;
+      }
+    }
+
+    // 3) Иногда Telegram кладёт данные в URL hash
+    if (typeof window !== "undefined" && window.location && window.location.hash) {
       try {
-        const parsed = JSON.parse(text);
-        if (parsed && parsed.id) return String(parsed.id);
+        const hash = window.location.hash.replace(/^#/, "");
+        const hp = new URLSearchParams(hash);
+        const tgData = hp.get("tgWebAppData") || "";
+        if (tgData) {
+          const fromHash = parseUserFromInitData(decodeURIComponent(tgData));
+          if (fromHash) return fromHash;
+        }
       } catch (e) {}
     }
   } catch (e) {
-    console.warn("blob POST", e);
+    console.warn("[getTelegramUser]", e);
   }
-  return null;
+
+  // 4) Если уже сохраняли реальный Telegram ID — берём его
+  try {
+    if (typeof localStorage !== "undefined") {
+      const savedReal = localStorage.getItem("krost_real_tg_id");
+      if (savedReal && /^\d+$/.test(savedReal)) {
+        const name = localStorage.getItem("krost_real_tg_name") || "Пользователь";
+        const username = localStorage.getItem("krost_real_tg_username") || "";
+        return { id: savedReal, name, username };
+      }
+    }
+  } catch (e) {}
+
+  // 5) Fallback guest (только если реально нет Telegram)
+  let guestId = "guest";
+  try {
+    if (typeof localStorage !== "undefined") {
+      guestId = localStorage.getItem("krost_guest_id");
+      if (!guestId) {
+        guestId = "g_" + Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-5);
+        localStorage.setItem("krost_guest_id", guestId);
+      }
+    }
+  } catch (e) {}
+  return { id: guestId, name: "Пользователь", username: "guest" };
+};
+
+// Сохраняем реальный Telegram ID, когда он появился
+const persistRealUser = (u) => {
+  if (!u || !u.id || !/^\d+$/.test(String(u.id))) return;
+  try {
+    if (typeof localStorage !== "undefined") {
+      localStorage.setItem("krost_real_tg_id", String(u.id));
+      if (u.name) localStorage.setItem("krost_real_tg_name", u.name);
+      if (u.username) localStorage.setItem("krost_real_tg_username", u.username);
+    }
+  } catch (e) {}
+};
+
+const money = (v) => v.toLocaleString("ru-RU") + " BYN";
+const LOGO_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAARgAAAC1CAYAAACEe+AIAACeuklEQVR42ux9d3gU5fr2MzPbsukhIUDovfcmAlIE6VYQRVGKYkUFFY9yAMXexYoURawoNqogIDZAQVooBkJCSCHJZtv0en9/OJPfmg+wYTnn7H1duZJsmXnnLU8vRHHEEUccccQRRxxxxBFHHHHEEUccccQRRxxxxBFHHHH8bwEAB4CJz0QcccQRRxxxxPEfIbmwABhd188vLy9Pis9IHHHEcbaIC+MQGUmSNEVRptv/u071eTY+ZXHEEcfvITIMwwQtywo5L8dnJo444jhrKpKiKG0BeOMzEkccccQRRxxx/OdJMvGZiCOOOOKII4444ogjjjjiiCOOOOKII4444ogjjjjiiCOOOOKII4444ogjjjjiiCOOOOKII4444ogjjjjiiCOOOOKII4444ogjjjjiiCOOOOKII4444ogjjjjiiCOOOOKII4444ogjjjjiiCOOOOKII4444ogjjjjiiCOOOOKII4444ogjjjjiiCOOOOKII4444ogjjjjiiCOOOOKII4444ogjjjjiiCOOOOKII4444ogjjjjiiCOOOOKII4444ogjjjjiiCOOOOKII4444ogjjjjiiCOOOOKII4444ogjjjjiiCOOOOKII4444ogjjjjiiCOOOOKII4444ogjjjjiiCOOOOKII4444ogjjjjiiCOOOOKIoyYAML/0PgDO/s3+juuzMT+M8/eKFSs4ANzZegZnbDH3YX7p2c7SvbnY+zjz9QtjPeX4ar4W+7/9XFzNeY39/ty5c9m5c+f+bK7PdF177D9bl5j32LM4R7Frw53qOU4zH2dcy9i5PsP7zNkYvzPu33BenD3O/lV78ffC9WdenGEYxCwQS0Swf9if3mYMIjKd+fsd17dqrkHNBXHG8HuJi/19AGBr3i/2+n/0Xqd5PvMU82naG9+ZS2IYBgC4mp93Nt68efMYZ+wAuF27drEMw+hERDt37nQ7f69YsYJr2rRp9XsLFy50t2zZEnl5ecy0adN0IqL777//Z3Md8/wsESFmDszTrcvvWetf2gOn2AunfO107zmEKuZ6cJ7Bnl+WiDj7NdbeuwTAtWvXrt90wHft2hU7Dj32vYULF7p/YT+YcdHl/xatzpm41cGDB+vqun4ZgHqSJJ0TCARSfi1FBuCTJKkP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';
+
+
+// Быстрая картинка: серый placeholder + мгновенный показ (без fade)
+// highQuality=true — для страницы товара (w=700)
+const SmartImage = ({ uri, style, resizeMode = "contain", highQuality = false }) => {
+  const [error, setError] = useState(false);
+  const bg = { backgroundColor: "#FFFFFF" };
+  const w = highQuality ? 700 : 400;
+  const q = highQuality ? 80 : 70;
+  const fastUri = uri
+    ? uri.replace(/w=\d+/, `w=${w}`).replace(/q=\d+/, `q=${q}`)
+    : uri;
+  return (
+    <View style={[style, bg, { overflow: "hidden" }]}>
+      {!error && fastUri ? (
+        <Image
+          source={{ uri: fastUri }}
+          style={StyleSheet.absoluteFill}
+          resizeMode={resizeMode}
+          onError={() => setError(true)}
+        />
+      ) : (
+        <View style={[StyleSheet.absoluteFill, { justifyContent: "center", alignItems: "center" }]}>
+          <Text style={{ fontSize: 28, opacity: 0.25 }}>👟</Text>
+        </View>
+      )}
+    </View>
+  );
+};
+
+// Агрессивная предзагрузка (сразу при старте)
+const preloadImages = (list) => {
+  if (typeof window === "undefined") return;
+  (list || []).forEach((p) => {
+    if (!p?.image) return;
+    try {
+      const url = p.image.replace(/w=\d+/, "w=400").replace(/q=\d+/, "q=70");
+      if (Image.prefetch) {
+        Image.prefetch(url).catch(() => {});
+      }
+      const img = new window.Image();
+      img.src = url;
+    } catch (e) {}
+  });
+};
+
+const getBrands = (products) => [...new Set(products.map(p => p.brand))];
+
+const ADMIN_IDS = [778715828, 987654321];
+// Чтобы заказы приходили вам в Telegram — токен от @BotFather
+// Админ (chat_id) хотя бы раз должен написать боту /start
+const BOT_TOKEN = "8912775566:AAHEExxwO5Ub39DU0tDT97Hlppw1IfLwjvU";
+const ADMIN_NOTIFY_CHAT_ID = ADMIN_IDS[0]; // 778715828
+
+const compactOrderForBot = (o) => ({
+  id: o.id,
+  date: o.date || new Date().toISOString(),
+  status: o.status || "Новый",
+  fullName: o.fullName || "",
+  phone: o.phone || "",
+  address: (o.address || "").slice(0, 120),
+  finalTotal: o.finalTotal,
+  usedBonus: Number(o.usedBonus) || 0,
+  delivery: o.delivery || "courier",
+  trackingNumber: o.trackingNumber || null,
+  tgId: o.tgId || null,
+  tgUsername: o.tgUsername || null,
+  freeDelivery: !!o.freeDelivery,
+  pendingCashback: o.pendingCashback || 0,
+  cashbackCredited: !!o.cashbackCredited,
+  items: (o.items || []).slice(0, 8).map((i) => ({
+    id: i.id,
+    name: i.name,
+    brand: i.brand,
+    size: i.size,
+    price: i.price,
+  })),
+});
+
+// Надёжная отправка в Telegram из WebView/браузера.
+// JSON POST часто режется CORS-preflight — поэтому GET + form-urlencoded + beacon.
+const tgSendMessage = async (text) => {
+  if (!BOT_TOKEN || !ADMIN_NOTIFY_CHAT_ID) {
+    console.warn("[TG] BOT_TOKEN или ADMIN_NOTIFY_CHAT_ID не заданы");
+    return false;
+  }
+  const t = String(text).slice(0, 3500);
+  const chat = String(ADMIN_NOTIFY_CHAT_ID);
+  const token = BOT_TOKEN;
+  const api = `https://api.telegram.org/bot${token}/sendMessage`;
+
+  // 1) form-urlencoded POST — Telegram принимает, часто проходит без preflight
+  try {
+    const body =
+      `chat_id=${encodeURIComponent(chat)}` +
+      `&text=${encodeURIComponent(t)}` +
+      `&disable_web_page_preview=true`;
+    const r = await fetch(api, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body,
+      cache: "no-store",
+    });
+    const data = await r.json().catch(() => null);
+    if (data && data.ok) {
+      console.log("[TG] send OK via form POST");
+      return true;
+    }
+    if (data) console.warn("[TG] form POST response:", data);
+  } catch (e) {
+    console.warn("[TG] form POST fail", e && e.message);
+  }
+
+  // 2) JSON POST (как раньше — у вас пуши уже доходили этим способом)
+  try {
+    const r = await fetch(api, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: Number(chat) || chat,
+        text: t,
+        disable_web_page_preview: true,
+      }),
+      cache: "no-store",
+    });
+    const data = await r.json().catch(() => null);
+    if (data && data.ok) {
+      console.log("[TG] send OK via JSON POST");
+      return true;
+    }
+    if (data) console.warn("[TG] JSON POST response:", data);
+  } catch (e) {
+    console.warn("[TG] JSON POST fail", e && e.message);
+  }
+
+  // 3) GET (короткие сообщения)
+  if (t.length < 1200) {
+    const getUrl =
+      `${api}?chat_id=${encodeURIComponent(chat)}` +
+      `&text=${encodeURIComponent(t)}` +
+      `&disable_web_page_preview=true`;
+    try {
+      const r = await fetch(getUrl, { method: "GET", cache: "no-store" });
+      const data = await r.json().catch(() => null);
+      if (data && data.ok) {
+        console.log("[TG] send OK via GET");
+        return true;
+      }
+    } catch (e) {
+      console.warn("[TG] GET fail", e && e.message);
+    }
+    // beacon только как последний шанс
+    try {
+      if (typeof Image !== "undefined") {
+        await new Promise((resolve) => {
+          const img = new Image();
+          img.onload = img.onerror = () => resolve();
+          img.src = getUrl;
+          setTimeout(resolve, 1500);
+        });
+        console.log("[TG] send attempted via Image beacon");
+        return true;
+      }
+    } catch (e) {}
+  }
+
+  return false;
+};
+
+const notifyAdminNewOrder = async (order) => {
+  if (!BOT_TOKEN) {
+    console.warn("[TG] BOT_TOKEN пустой");
+    return false;
+  }
+  try {
+    const deliveryLabel = order.delivery === "europost" ? "Европочта" : "Курьер";
+    const itemsShort = (order.items || [])
+      .map((i) => `${i.brand || ""} ${i.name}${i.size ? ` (${i.size})` : ""}`.trim())
+      .join(", ")
+      .slice(0, 400);
+    const tgPart = order.tgUsername
+      ? `@${order.tgUsername}`
+      : order.tgId
+        ? `id:${order.tgId}`
+        : "—";
+
+    const humanText =
+      `🛍 Новый заказ #${order.id}\n` +
+      `ФИО: ${order.fullName || "—"}\n` +
+      `Тел: ${order.phone || "—"}\n` +
+      `TG: ${tgPart}\n` +
+      `Доставка: ${deliveryLabel}\n` +
+      `Адрес: ${(order.address || "—").slice(0, 160)}\n` +
+      `Сумма: ${order.finalTotal} BYN` +
+      (Number(order.usedBonus) > 0 ? ` (использовано ${order.usedBonus} бонусов)` : "") +
+      `
+` +
+      `Товар: ${itemsShort || "—"}`;
+
+    const ok = await tgSendMessage(humanText);
+    console.log("[TG] notify order", order.id, "ok:", ok);
+    return ok;
+  } catch (e) {
+    console.warn("notifyAdminNewOrder", e);
+    return false;
+  }
+};
+
+// Загрузить заказы из сообщений бота (getUpdates) → в таблицу CRM
+const fetchOrdersFromBot = async () => {
+  if (!BOT_TOKEN) return [];
+  try {
+    const base = `https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?limit=100`;
+    const urls = [
+      base,
+      `https://corsproxy.io/?${encodeURIComponent(base)}`,
+      `https://api.allorigins.win/raw?url=${encodeURIComponent(base)}`,
+    ];
+    let results = [];
+    for (const url of urls) {
+      try {
+        const r = await fetch(url, { cache: "no-store", mode: "cors" });
+        if (!r.ok) continue;
+        const data = await r.json();
+        if (data && data.ok && Array.isArray(data.result)) {
+          results = data.result;
+          break;
+        }
+      } catch (e) {}
+    }
+
+    const orders = [];
+    for (const upd of results) {
+      const msg = upd.message || upd.edited_message || upd.channel_post;
+      const text = msg?.text || "";
+      if (!text) continue;
+
+      // 1) Машинный блок
+      const m = text.match(/#ORD#([\s\S]*?)#END#/);
+      if (m) {
+        try {
+          const obj = JSON.parse(m[1]);
+          if (obj && obj.id != null) orders.push(obj);
+          continue;
+        } catch (e) {}
+      }
+
+      // 2) Парсинг человекочитаемого формата
+      if (text.includes("Новый заказ") || text.includes("новый заказ")) {
+        const idMatch = text.match(/#(\d+)/);
+        const phoneMatch = text.match(/\+?\d{9,15}/);
+        const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
+        let fullName = "";
+        let address = "";
+        let phone = phoneMatch ? phoneMatch[0] : "";
+        let delivery = "courier";
+        let total = 0;
+        let tgUsername = null;
+        let items = [];
+
+        for (const line of lines) {
+          if (line.startsWith("ФИО:")) fullName = line.replace("ФИО:", "").trim();
+          if (line.startsWith("Тел:")) phone = line.replace("Тел:", "").trim();
+          if (line.startsWith("TG:") && line.includes("@")) {
+            tgUsername = line.replace("TG:", "").trim().replace("@", "");
+          }
+          if (line.startsWith("Доставка:") && line.toLowerCase().includes("евро")) delivery = "europost";
+          if (line.startsWith("Адрес:")) address = line.replace("Адрес:", "").trim();
+          if (line.startsWith("Сумма:")) {
+            const tm = line.match(/(\d+(?:[.,]\d+)?)/);
+            if (tm) total = parseFloat(tm[1].replace(",", "."));
+          }
+          if (line.startsWith("Товар:")) {
+            const after = line.replace("Товар:", "").trim();
+            if (after) items = [{ name: after, price: total }];
+          }
+          if (line.includes("Способ доставки и адрес:")) {
+            const rest = line.split(":")[1] || "";
+            if (rest.toLowerCase().includes("евро")) delivery = "europost";
+            const parts = rest.split(",").map((s) => s.trim());
+            if (parts.length > 1) address = parts.slice(1).join(", ");
+            else address = rest.trim();
+          }
+        }
+
+        if (idMatch || fullName || phone) {
+          orders.push({
+            id: idMatch ? parseInt(idMatch[1], 10) : Date.now(),
+            date: msg.date ? new Date(msg.date * 1000).toISOString() : new Date().toISOString(),
+            status: "Новый",
+            fullName,
+            phone,
+            address,
+            finalTotal: total,
+            delivery,
+            tgUsername,
+            items,
+          });
+        }
+      }
+    }
+    return orders;
+  } catch (e) {
+    console.warn("fetchOrdersFromBot", e);
+    return [];
+  }
+};
+
+const DEFAULT_PRODUCTS = [
+  { id: 1, brand: "NIKE", name: "Dunk Low Panda", price: 18990, oldPrice: null, image: "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=400&q=70&auto=format&fit=crop", sales: 120, ratings: [], averageRating: 0, description: "Классические Nike Dunk Low Panda.", sizes: ["40","41","42","43","44"] },
+  { id: 2, brand: "ADIDAS", name: "Ozweego Core Black", price: 21990, oldPrice: null, image: "https://images.unsplash.com/photo-1600185365483-26d7a4cc7519?w=400&q=70&auto=format&fit=crop", sales: 95, ratings: [], averageRating: 0, description: "Adidas Ozweego с массивной подошвой.", sizes: ["41","42","43"] },
+  { id: 3, brand: "NIKE", name: "Air Force Shadow", price: 13990, oldPrice: 17990, image: "https://images.unsplash.com/photo-1549298916-b41d501d3772?w=400&q=70&auto=format&fit=crop", sales: 180, ratings: [], averageRating: 0, description: "Nike Air Force Shadow – классика.", sizes: ["39","40","41","42"] },
+  { id: 4, brand: "NEW BALANCE", name: "9060 Sea Salt", price: 15990, oldPrice: 19990, image: "https://images.unsplash.com/photo-1552346154-21d32810aba3?w=400&q=70&auto=format&fit=crop", sales: 240, ratings: [], averageRating: 0, description: "New Balance 9060 – комфорт и стиль.", sizes: ["40","41","42","43"] },
+  { id: 5, brand: "JORDAN", name: "Jordan Retro", price: 24990, oldPrice: 29990, image: "https://images.unsplash.com/photo-1460353581641-37baddab0fa2?w=400&q=70&auto=format&fit=crop", sales: 80, ratings: [], averageRating: 0, description: "Культовые Jordan Retro.", sizes: ["42","43","44","45"] },
+  { id: 6, brand: "PUMA", name: "Puma Classic", price: 11990, oldPrice: null, image: "https://images.unsplash.com/photo-1495555961986-6d4c1ecb7be3?w=400&q=70&auto=format&fit=crop", sales: 60, ratings: [], averageRating: 0, description: "Puma Classic – надёжная классика.", sizes: ["40","41","42"] }
+];
+
+// Сразу при загрузке файла начинаем тянуть картинки
+if (typeof window !== "undefined") {
 }
 
-export default async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response("", { status: 204, headers: corsHeaders });
+const LEVELS = [
+  { name: "Новичок", min: 0, max: 4, cashback: 2 },
+  { name: "Постоянный клиент", min: 5, max: 14, cashback: 5 },
+  { name: "VIP клиент", min: 15, max: 999, cashback: 10 }
+];
+const ORDER_STATUSES = ["Новый", "Отправить", "Ждем поставку", "Доставляется", "Забрать деньги", "Деньги получены"];
+
+// Маппинг статуса для клиента
+const getClientStatus = (adminStatus) => {
+  if (adminStatus === "Отправить" || adminStatus === "Ждем поставку") return "На сборке";
+  if (adminStatus === "Доставляется") return "Доставляется";
+  if (adminStatus === "Забрать деньги" || adminStatus === "Деньги получены") return "Завершен";
+  if (adminStatus === "Новый") return "Ожидает подтверждения";
+  return adminStatus || "Ожидает подтверждения";
+};
+
+// Цвета плашек статуса в CRM
+const getStatusBadgeStyle = (status) => {
+  switch (status) {
+    case "Новый":
+      return { backgroundColor: "#111111", color: "#FFFFFF", borderColor: "#111111" };
+    case "Отправить":
+      return { backgroundColor: "#DC2626", color: "#FFFFFF", borderColor: "#DC2626" };
+    case "Ждем поставку":
+      return { backgroundColor: "#F9A8D4", color: "#831843", borderColor: "#F9A8D4" };
+    case "Доставляется":
+      return { backgroundColor: "#FACC15", color: "#713F12", borderColor: "#FACC15" };
+    case "Забрать деньги":
+      return { backgroundColor: "#22C55E", color: "#FFFFFF", borderColor: "#22C55E" };
+    case "Деньги получены":
+      return { backgroundColor: "#FFFFFF", color: "#111111", borderColor: "#111111" };
+    default:
+      return { backgroundColor: "#111111", color: "#FFFFFF", borderColor: "#111111" };
+  }
+};
+
+// CloudStorage
+const getCloudStorage = () => {
+  if (typeof window !== "undefined" && window.Telegram?.WebApp?.CloudStorage) {
+    return window.Telegram.WebApp.CloudStorage;
+  }
+  return null;
+};
+
+// Лимит Telegram CloudStorage: 4096 байт на ключ. Крупные данные режем на части.
+const CLOUD_CHUNK_SIZE = 3500;
+
+const cloudSetItem = (cloud, key, value) =>
+  new Promise((resolve, reject) => {
+    try {
+      cloud.setItem(key, value, (err) => (err ? reject(err) : resolve()));
+    } catch (e) {
+      reject(e);
+    }
+  });
+
+const cloudGetItem = (cloud, key) =>
+  new Promise((resolve, reject) => {
+    try {
+      cloud.getItem(key, (err, val) => (err ? reject(err) : resolve(val)));
+    } catch (e) {
+      reject(e);
+    }
+  });
+
+const cloudRemoveItem = (cloud, key) =>
+  new Promise((resolve) => {
+    try {
+      cloud.removeItem(key, () => resolve());
+    } catch (e) {
+      resolve();
+    }
+  });
+
+// Универсальное сохранение: CloudStorage (с разбиением) + localStorage
+const saveToCloud = async (key, data) => {
+  const json = JSON.stringify(data);
+
+  // Всегда пишем localStorage (быстрый fallback на устройстве)
+  try {
+    if (typeof localStorage !== "undefined") {
+      localStorage.setItem("krost_" + key, json);
+    }
+  } catch (e) {}
+
+  const cloud = getCloudStorage();
+  if (!cloud) return;
+
+  try {
+    // Удаляем старые чанки (до 40)
+    const prevMeta = await cloudGetItem(cloud, key);
+    if (prevMeta && String(prevMeta).startsWith("__CHUNKS__:")) {
+      const n = parseInt(String(prevMeta).split(":")[1], 10) || 0;
+      for (let i = 0; i < n; i++) {
+        await cloudRemoveItem(cloud, `${key}_c${i}`);
+      }
+    }
+
+    if (json.length <= CLOUD_CHUNK_SIZE) {
+      await cloudSetItem(cloud, key, json);
+      return;
+    }
+
+    // Режем на чанки
+    const chunks = [];
+    for (let i = 0; i < json.length; i += CLOUD_CHUNK_SIZE) {
+      chunks.push(json.slice(i, i + CLOUD_CHUNK_SIZE));
+    }
+    await cloudSetItem(cloud, key, `__CHUNKS__:${chunks.length}`);
+    for (let i = 0; i < chunks.length; i++) {
+      await cloudSetItem(cloud, `${key}_c${i}`, chunks[i]);
+    }
+    console.log("[Cloud] saved", key, "chunks:", chunks.length, "len:", json.length);
+  } catch (e) {
+    console.warn("CloudStorage save error:", key, e);
+  }
+};
+
+const loadFromCloud = async (key) => {
+  const cloud = getCloudStorage();
+
+  // 1) Telegram CloudStorage (приоритет — синхронизация между устройствами)
+  if (cloud) {
+    try {
+      const value = await cloudGetItem(cloud, key);
+      if (value) {
+        if (String(value).startsWith("__CHUNKS__:")) {
+          const n = parseInt(String(value).split(":")[1], 10) || 0;
+          let full = "";
+          for (let i = 0; i < n; i++) {
+            const part = await cloudGetItem(cloud, `${key}_c${i}`);
+            if (part) full += part;
+          }
+          if (full) {
+            try {
+              return JSON.parse(full);
+            } catch (e) {
+              console.warn("CloudStorage chunk parse error", key, e);
+            }
+          }
+        } else {
+          try {
+            return JSON.parse(value);
+          } catch (e) {
+            console.warn("CloudStorage parse error", key, e);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("CloudStorage load error:", key, e);
+    }
+  }
+
+  // 2) Fallback localStorage (только это устройство)
+  try {
+    if (typeof localStorage !== "undefined") {
+      const val = localStorage.getItem("krost_" + key);
+      if (val) return JSON.parse(val);
+    }
+  } catch (e) {}
+  return null;
+};
+
+// ==============================
+// РЕФЕРАЛЫ МЕЖДУ АККАУНТАМИ
+// CloudStorage у каждого свой — используем публичные KV/counter API + CORS-proxy fallback.
+// ==============================
+const REF_NS = "manzshop_ref_v3";
+
+const parseCount = (j) => {
+  if (j == null) return null;
+  if (typeof j === "number" && !isNaN(j)) return j;
+  if (typeof j === "string" && j !== "" && !isNaN(Number(j))) return Number(j);
+  if (typeof j.count === "number") return j.count;
+  if (typeof j.value === "number") return j.value;
+  if (typeof j.value === "string" && j.value !== "" && !isNaN(Number(j.value))) return Number(j.value);
+  if (typeof j.data === "number") return j.data;
+  if (typeof j.result === "number") return j.result;
+  if (typeof j.contents === "string") {
+    try {
+      const inner = JSON.parse(j.contents);
+      return parseCount(inner);
+    } catch (e) {
+      if (!isNaN(Number(j.contents))) return Number(j.contents);
+    }
+  }
+  return null;
+};
+
+const safeFetchJson = async (url, opts = {}) => {
+  try {
+    const r = await fetch(url, { cache: "no-store", mode: "cors", ...opts });
+    if (!r.ok) return null;
+    const text = await r.text();
+    if (!text) return null;
+    try { return JSON.parse(text); } catch (e) {
+      if (!isNaN(Number(text.trim()))) return { value: Number(text.trim()) };
+      return null;
+    }
+  } catch (e) {
+    return null;
+  }
+};
+
+// CORS-proxy fallbacks (если прямой запрос блокируется WebView)
+const withProxies = (url) => ([
+  url,
+  `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+  `https://corsproxy.io/?${encodeURIComponent(url)}`,
+]);
+
+const refApiGet = async (key) => {
+  const k = encodeURIComponent(String(key));
+  const bases = [
+    `https://abacus.jasoncameron.dev/get/${REF_NS}/${k}`,
+    `https://api.counterapi.dev/v1/${REF_NS}/${k}`,
+    `https://api.counterapi.dev/v1/${REF_NS}/${k}/`,
+  ];
+  for (const base of bases) {
+    for (const url of withProxies(base)) {
+      const j = await safeFetchJson(url);
+      const n = parseCount(j);
+      if (n != null) return n;
+    }
+  }
+  return null;
+};
+
+const refApiHit = async (key) => {
+  const k = encodeURIComponent(String(key));
+  const bases = [
+    `https://abacus.jasoncameron.dev/hit/${REF_NS}/${k}`,
+    `https://api.counterapi.dev/v1/${REF_NS}/${k}/up`,
+  ];
+  for (const base of bases) {
+    for (const url of withProxies(base)) {
+      const j = await safeFetchJson(url);
+      const n = parseCount(j);
+      if (n != null) return n;
+    }
+  }
+  const cur = (await refApiGet(key)) || 0;
+  return await refApiSet(key, cur + 1);
+};
+
+const refApiSet = async (key, value) => {
+  const v = Math.max(0, Math.floor(Number(value) || 0));
+  const k = encodeURIComponent(String(key));
+  const bases = [
+    `https://abacus.jasoncameron.dev/set/${REF_NS}/${k}?value=${v}`,
+    `https://api.counterapi.dev/v1/${REF_NS}/${k}/set/${v}`,
+  ];
+  for (const base of bases) {
+    for (const url of withProxies(base)) {
+      const j = await safeFetchJson(url);
+      if (j != null) {
+        const n = parseCount(j);
+        if (n != null) return n;
+        if (j === true || j.success) return v;
+      }
+    }
+  }
+  return null;
+};
+
+const refApiAdd = async (key, amount) => {
+  const n = Math.max(0, Math.floor(Number(amount) || 0));
+  if (n <= 0) return await refApiGet(key);
+  const cur = (await refApiGet(key)) || 0;
+  const next = await refApiSet(key, cur + n);
+  if (next != null) return next;
+  let last = cur;
+  for (let i = 0; i < Math.min(n, 30); i++) {
+    const v = await refApiHit(key);
+    if (v != null) last = v;
+  }
+  return last;
+};
+
+// ==============================
+// ОБЩЕЕ ХРАНИЛИЩЕ ЗАКАЗОВ (видно админу от всех клиентов)
+// CloudStorage у каждого свой — пишем заказы по одному ключу + индекс ID.
+// getUpdates НЕ видит сообщения, которые бот сам отправил админу — на него нельзя полагаться.
+// ==============================
+const SHARED_ORDERS_KEY = "manzshop_orders_v3";
+const SHARED_PRODUCTS_KEY = "manzshop_products_v2";
+const SHARED_BLOB_KEY = "manzshop_orders_blob_id";
+const SHARED_PANTRY_KEY = "manzshop_pantry_id_v3";
+const ORDER_INDEX_KEY = "mo3_idx";
+const orderItemKey = (id) => `mo3_${id}`;
+// Можно вписать свой pantryId с getpantry.cloud вручную (если уже есть):
+const HARDCODED_PANTRY_ID = "";
+
+// --- KV helpers (keyvalue.immanuel.co) ---
+const kvGetString = async (key) => {
+  const base = `https://keyvalue.immanuel.co/api/KeyVal/GetValue/manzshopby/${encodeURIComponent(String(key))}`;
+  const urls = [
+    base,
+    `https://corsproxy.io/?${encodeURIComponent(base)}`,
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(base)}`,
+  ];
+  for (const url of urls) {
+    try {
+      const r = await fetch(url, { cache: "no-store", mode: "cors" });
+      if (!r.ok) continue;
+      let text = (await r.text()) || "";
+      // allorigins/corsproxy иногда оборачивают в кавычки
+      text = text.replace(/^"|"$/g, "").trim();
+      if (text && text !== "null" && text !== "undefined" && text.length > 0) return text;
+    } catch (e) {}
+  }
+  return null;
+};
+
+const kvSetString = async (key, value) => {
+  const raw = String(value);
+  if (raw.length > 1500) {
+    console.warn("[KV] value too long", key, raw.length);
+    return false;
+  }
+  const base =
+    `https://keyvalue.immanuel.co/api/KeyVal/UpdateValue/manzshopby/` +
+    `${encodeURIComponent(String(key))}/${encodeURIComponent(raw)}`;
+
+  // 1) GET — без CORS-preflight
+  try {
+    const r = await fetch(base, { method: "GET", mode: "cors", cache: "no-store" });
+    if (r.ok) return true;
+  } catch (e) {}
+
+  // 2) Image-beacon GET
+  try {
+    if (typeof Image !== "undefined") {
+      await new Promise((resolve) => {
+        const img = new Image();
+        let done = false;
+        const finish = () => {
+          if (done) return;
+          done = true;
+          resolve();
+        };
+        img.onload = finish;
+        img.onerror = finish;
+        img.src = base;
+        setTimeout(finish, 2000);
+      });
+      return true;
+    }
+  } catch (e) {}
+
+  // 3) POST + proxies
+  for (const url of [base, `https://corsproxy.io/?${encodeURIComponent(base)}`]) {
+    try {
+      const r = await fetch(url, { method: "POST", mode: "cors", cache: "no-store" });
+      if (r.ok) return true;
+    } catch (e) {}
+  }
+  return false;
+};
+
+const ensurePantryId = async () => {
+  if (HARDCODED_PANTRY_ID) return HARDCODED_PANTRY_ID;
+
+  const remote = await kvGetString(SHARED_PANTRY_KEY);
+  if (remote && remote.length > 8) {
+    try {
+      if (typeof localStorage !== "undefined") localStorage.setItem("krost_pantry_id", remote);
+    } catch (e) {}
+    return remote;
   }
 
   try {
-    if (req.method === "GET") {
-      const blobId = await tgGetPointer();
-      const data = blobId ? await blobRead(blobId) : null;
-      const products =
-        data && Array.isArray(data.products)
-          ? data.products
-          : Array.isArray(data)
-            ? data
-            : [];
-      return json(200, {
-        ok: true,
-        products,
-        updatedAt: (data && data.updatedAt) || null,
-        storage: blobId ? "jsonblob+tg" : "empty",
-        blobId: blobId || null,
-      });
+    if (typeof localStorage !== "undefined") {
+      const local = localStorage.getItem("krost_pantry_id");
+      if (local && local.length > 8) {
+        await kvSetString(SHARED_PANTRY_KEY, local);
+        return local;
+      }
     }
+  } catch (e) {}
 
-    if (req.method === "POST") {
-      let body = {};
+  // создаём pantry один раз
+  try {
+    const createUrls = [
+      "https://getpantry.cloud/apiv1/pantry",
+      `https://corsproxy.io/?${encodeURIComponent("https://getpantry.cloud/apiv1/pantry")}`,
+    ];
+    for (const createUrl of createUrls) {
       try {
-        body = await req.json();
-      } catch (e) {
-        return json(400, { ok: false, error: "invalid_json" });
-      }
-
-      const products = normalizeProducts(body.products);
-      const payload = {
-        products,
-        updatedAt: new Date().toISOString(),
-        v: 2,
-      };
-
-      let blobId = await tgGetPointer();
-      const written = await blobWrite(blobId, payload);
-      if (!written) {
-        return json(500, {
-          ok: false,
-          error: "blob_write_failed",
-          products: [],
+        const r = await fetch(createUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: "manzshop_orders_v3",
+            description: "Shared orders for manzshop mini app",
+          }),
         });
-      }
+        if (r.ok) {
+          const data = await r.json();
+          const id = data?.pantryId || data?.id || null;
+          if (id) {
+            try {
+              if (typeof localStorage !== "undefined") localStorage.setItem("krost_pantry_id", id);
+            } catch (e) {}
+            await kvSetString(SHARED_PANTRY_KEY, id);
+            console.log("[Orders] created pantry", id);
+            return id;
+          }
+        }
+      } catch (e) {}
+    }
+  } catch (e) {
+    console.warn("ensurePantryId create", e);
+  }
 
-      const pointerOk = await tgSetPointer(written);
-      // перечитаем для проверки
-      const verify = await blobRead(written);
+  const again = await kvGetString(SHARED_PANTRY_KEY);
+  if (again) return again;
+  return null;
+};
 
-      return json(200, {
-        ok: true,
-        count: products.length,
-        updatedAt: payload.updatedAt,
-        storage: "jsonblob+tg",
-        blobId: written,
-        pointerOk,
-        verified: !!(verify && (verify.products || Array.isArray(verify))),
+const compactOrder = (o) => ({
+  id: o.id,
+  date: o.date,
+  status: o.status || "Новый",
+  fullName: o.fullName || "",
+  phone: o.phone || "",
+  address: (o.address || "").slice(0, 140),
+  finalTotal: o.finalTotal,
+  delivery: o.delivery || "courier",
+  trackingNumber: o.trackingNumber || null,
+  tgId: o.tgId || null,
+  tgUsername: o.tgUsername || null,
+  freeDelivery: !!o.freeDelivery,
+  items: (o.items || []).slice(0, 6).map((i) => ({
+    id: i.id,
+    name: i.name,
+    brand: i.brand,
+    size: i.size,
+    price: i.price,
+  })),
+});
+
+const ultraCompactOrder = (o) => ({
+  id: o.id,
+  date: o.date,
+  status: o.status || "Новый",
+  fullName: (o.fullName || "").slice(0, 40),
+  phone: o.phone || "",
+  address: (o.address || "").slice(0, 60),
+  finalTotal: o.finalTotal,
+  delivery: o.delivery || "courier",
+  tgId: o.tgId || null,
+  tgUsername: o.tgUsername || null,
+  items: (o.items || []).slice(0, 2).map((i) => ({
+    name: i.name,
+    size: i.size,
+    price: i.price,
+  })),
+});
+
+const pantryBasketUrls = (pantryId, basket) => {
+  const base = `https://getpantry.cloud/apiv1/pantry/${pantryId}/basket/${basket}`;
+  return [
+    base,
+    `https://corsproxy.io/?${encodeURIComponent(base)}`,
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(base)}`,
+  ];
+};
+
+const pantryGetBasket = async (basket) => {
+  const pantryId = await ensurePantryId();
+  if (!pantryId) return null;
+  for (const url of pantryBasketUrls(pantryId, basket)) {
+    try {
+      const r = await fetch(url, { cache: "no-store", mode: "cors" });
+      if (!r.ok) continue;
+      const data = await r.json();
+      return data;
+    } catch (e) {}
+  }
+  return null;
+};
+
+const pantryPutBasket = async (basket, payload) => {
+  const pantryId = await ensurePantryId();
+  if (!pantryId) return false;
+  for (const url of pantryBasketUrls(pantryId, basket)) {
+    for (const method of ["PUT", "POST"]) {
+      try {
+        const r = await fetch(url, {
+          method,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (r.ok) return true;
+      } catch (e) {}
+    }
+  }
+  return false;
+};
+
+// Загрузка: индекс ID → каждый заказ; + pantry; + старый bulk-ключ
+const sharedOrdersLoad = async () => {
+  // 0) Netlify API — основной канал
+  try {
+    const fromApi = await netlifyOrdersLoad();
+    if (Array.isArray(fromApi)) {
+      return fromApi.sort((a, b) => {
+        const da = a.date ? new Date(a.date).getTime() : 0;
+        const db = b.date ? new Date(b.date).getTime() : 0;
+        return db - da;
       });
     }
+  } catch (e) {}
 
-    return json(405, { ok: false, error: "method_not_allowed" });
+  const map = new Map();
+
+  // A) индекс + отдельные ключи (fallback)
+  try {
+    const idxRaw = await kvGetString(ORDER_INDEX_KEY);
+    if (idxRaw) {
+      const ids = String(idxRaw)
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .slice(0, 50);
+      for (const id of ids) {
+        try {
+          const raw = await kvGetString(orderItemKey(id));
+          if (!raw) continue;
+          const obj = JSON.parse(raw);
+          if (obj && obj.id != null) map.set(String(obj.id), obj);
+        } catch (e) {}
+      }
+    }
   } catch (e) {
-    console.error("[catalog]", e);
-    return json(500, {
-      ok: false,
-      error: String(e && e.message ? e.message : e),
-      products: [],
+    console.warn("sharedOrdersLoad index", e);
+  }
+
+  // B) pantry
+  try {
+    const data = await pantryGetBasket("orders");
+    const list = Array.isArray(data) ? data : data && Array.isArray(data.orders) ? data.orders : [];
+    list.forEach((o) => {
+      if (o && o.id != null && !map.has(String(o.id))) map.set(String(o.id), o);
     });
+  } catch (e) {}
+
+  // C) старый bulk KV
+  try {
+    const raw = await kvGetString(SHARED_ORDERS_KEY);
+    if (raw) {
+      let parsed = JSON.parse(raw);
+      if (typeof parsed === "string") parsed = JSON.parse(parsed);
+      const list = Array.isArray(parsed) ? parsed : parsed && Array.isArray(parsed.orders) ? parsed.orders : [];
+      list.forEach((o) => {
+        if (o && o.id != null && !map.has(String(o.id))) map.set(String(o.id), o);
+      });
+    }
+  } catch (e) {}
+
+  const orders = Array.from(map.values()).sort((a, b) => {
+    const da = a.date ? new Date(a.date).getTime() : 0;
+    const db = b.date ? new Date(b.date).getTime() : 0;
+    return db - da;
+  });
+  console.log("[Orders] shared load", orders.length);
+  return orders;
+};
+
+const sharedOrdersSave = async (orders) => {
+  const list = (Array.isArray(orders) ? orders : []).slice(0, 50).map(compactOrder);
+  let anyOk = false;
+
+  // пишем каждый заказ + индекс
+  const ids = list.map((o) => String(o.id));
+  const idxOk = await kvSetString(ORDER_INDEX_KEY, ids.join(","));
+  if (idxOk) anyOk = true;
+
+  for (const o of list.slice(0, 30)) {
+    let raw = JSON.stringify(o);
+    if (raw.length > 1400) raw = JSON.stringify(ultraCompactOrder(o));
+    if (raw.length > 1400) continue;
+    const ok = await kvSetString(orderItemKey(o.id), raw);
+    if (ok) anyOk = true;
+  }
+
+  // pantry best-effort
+  const okPantry = await pantryPutBasket("orders", {
+    orders: list,
+    updatedAt: new Date().toISOString(),
+  });
+  if (okPantry) anyOk = true;
+
+  console.log("[Orders] shared save", anyOk ? "OK" : "FAIL", list.length, "pantry", okPantry);
+  return anyOk;
+};
+
+const sharedOrdersPush = async (order) => {
+  try {
+    const c = compactOrder(order);
+    // Netlify first
+    const okNetlify = await netlifyOrdersPushOne(c);
+    if (okNetlify) {
+      console.log("[Orders] shared push netlify OK", c.id);
+      return [c];
+    }
+
+    let raw = JSON.stringify(c);
+    if (raw.length > 1400) raw = JSON.stringify(ultraCompactOrder(c));
+
+    // 1) сам заказ (главное)
+    const okItem = raw.length <= 1500 ? await kvSetString(orderItemKey(c.id), raw) : false;
+
+    // 2) индекс: prepend id
+    let ids = [];
+    try {
+      const idxRaw = await kvGetString(ORDER_INDEX_KEY);
+      if (idxRaw) ids = String(idxRaw).split(",").map((s) => s.trim()).filter(Boolean);
+    } catch (e) {}
+    ids = [String(c.id), ...ids.filter((x) => x !== String(c.id))].slice(0, 50);
+    const okIdx = await kvSetString(ORDER_INDEX_KEY, ids.join(","));
+
+    // 3) pantry — подтягиваем текущие и мержим
+    try {
+      const current = await sharedOrdersLoad();
+      const without = current.filter((o) => String(o.id) !== String(c.id));
+      const next = [c, ...without].slice(0, 50);
+      await pantryPutBasket("orders", { orders: next, updatedAt: new Date().toISOString() });
+    } catch (e) {}
+
+    const ok = okItem || okIdx;
+    console.log("[Orders] shared push", ok ? "OK" : "FAIL", c.id, "item", okItem, "idx", okIdx);
+    return ok ? [c] : null;
+  } catch (e) {
+    console.warn("sharedOrdersPush", e);
+    return null;
   }
 };
 
-export const config = {
-  path: "/api/catalog",
+const sharedOrdersUpdate = async (orderId, patch) => {
+  try {
+    const okNetlify = await netlifyOrdersPatch(orderId, patch);
+    if (okNetlify) {
+      console.log("[Orders] patch netlify OK", orderId, patch);
+      return true;
+    }
+    // fallback KV
+    let cur = null;
+    try {
+      const raw = await kvGetString(orderItemKey(orderId));
+      if (raw) cur = JSON.parse(raw);
+    } catch (e) {}
+    if (!cur) {
+      const all = await sharedOrdersLoad();
+      cur = all.find((o) => String(o.id) === String(orderId)) || { id: orderId };
+    }
+    const next = { ...cur, ...patch };
+    let raw = JSON.stringify(compactOrder(next));
+    if (raw.length > 1400) raw = JSON.stringify(ultraCompactOrder(next));
+    await kvSetString(orderItemKey(orderId), raw);
+
+    // pantry merge
+    const list = await sharedOrdersLoad();
+    const merged = list.map((o) => (String(o.id) === String(orderId) ? { ...o, ...patch } : o));
+    await pantryPutBasket("orders", { orders: merged.map(compactOrder), updatedAt: new Date().toISOString() });
+    return merged;
+  } catch (e) {
+    console.warn("sharedOrdersUpdate", e);
+    return null;
+  }
 };
+
+// Разбор текста #ORD#...#END# (из пуша / буфера обмена)
+const parseOrderFromText = (text) => {
+  if (!text) return null;
+  const m = String(text).match(/#ORD#([\s\S]*?)#END#/);
+  if (!m) return null;
+  try {
+    const obj = JSON.parse(m[1]);
+    if (obj && obj.id != null) return obj;
+  } catch (e) {}
+  return null;
+};
+
+// ----- Общий каталог товаров (виден всем пользователям / устройствам) -----
+// ==============================
+// ОБЩИЙ КАТАЛОГ — Netlify Function + Blobs (основное хранилище)
+// URL: /api/catalog  или  /.netlify/functions/catalog
+// Старые fallback (jsonblob/KV) оставлены на всякий случай.
+// ==============================
+const PRODUCT_INDEX_KEY = "mp3_idx";
+const PRODUCT_BLOB_META_KEY = "manzshop_prod_blob_v4";
+const productItemKey = (id) => `mp3_${id}`;
+
+const getCatalogApiUrls = () => {
+  const urls = [];
+  try {
+    if (typeof window !== "undefined" && window.location && window.location.origin) {
+      const origin = window.location.origin;
+      if (origin && !origin.startsWith("file:")) {
+        urls.push(`${origin}/api/catalog`);
+        urls.push(`${origin}/.netlify/functions/catalog`);
+      }
+    }
+  } catch (e) {}
+  return urls;
+};
+
+const getOrdersApiUrls = () => {
+  const urls = [];
+  try {
+    if (typeof window !== "undefined" && window.location && window.location.origin) {
+      const origin = window.location.origin;
+      if (origin && !origin.startsWith("file:")) {
+        urls.push(`${origin}/api/orders`);
+        urls.push(`${origin}/.netlify/functions/orders`);
+      }
+    }
+  } catch (e) {}
+  return urls;
+};
+
+const netlifyOrdersLoad = async () => {
+  for (const url of getOrdersApiUrls()) {
+    try {
+      const r = await fetch(url, { method: "GET", cache: "no-store" });
+      if (!r.ok) continue;
+      const data = await r.json();
+      if (data && Array.isArray(data.orders)) {
+        console.log("[Orders] netlify load OK", data.orders.length, url);
+        return data.orders;
+      }
+    } catch (e) {}
+  }
+  return null;
+};
+
+const netlifyOrdersSave = async (orders) => {
+  const body = JSON.stringify({ orders: (orders || []).slice(0, 80) });
+  for (const url of getOrdersApiUrls()) {
+    try {
+      const r = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+        cache: "no-store",
+      });
+      const data = await r.json().catch(() => ({}));
+      if (r.ok && data && data.ok !== false) {
+        console.log("[Orders] netlify save OK", data.count, url);
+        return true;
+      }
+    } catch (e) {}
+  }
+  return false;
+};
+
+const netlifyOrdersPushOne = async (order) => {
+  const body = JSON.stringify({ order });
+  for (const url of getOrdersApiUrls()) {
+    try {
+      const r = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+        cache: "no-store",
+      });
+      const data = await r.json().catch(() => ({}));
+      if (r.ok && data && data.ok !== false) return true;
+    } catch (e) {}
+  }
+  return false;
+};
+
+const netlifyOrdersPatch = async (orderId, patch) => {
+  const body = JSON.stringify({ patch: { id: orderId, ...patch } });
+  for (const url of getOrdersApiUrls()) {
+    try {
+      const r = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+        cache: "no-store",
+      });
+      const data = await r.json().catch(() => ({}));
+      if (r.ok && data && data.ok !== false) return true;
+    } catch (e) {}
+  }
+  return false;
+};
+
+const compactProduct = (p) => {
+  const image = (p.image || "").startsWith("data:")
+    ? ""
+    : String(p.image || "").slice(0, 400);
+  return {
+    id: p.id,
+    brand: (p.brand || "").slice(0, 40),
+    name: (p.name || "").slice(0, 80),
+    price: Number(p.price) || 0,
+    oldPrice: p.oldPrice != null ? Number(p.oldPrice) : null,
+    image,
+    description: (p.description || "").slice(0, 220),
+    sizes: Array.isArray(p.sizes) ? p.sizes.slice(0, 12) : [],
+    sales: Number(p.sales) || 0,
+    averageRating: Number(p.averageRating) || 0,
+    pinned: !!p.pinned,
+    hidden: !!p.hidden,
+    createdAt: p.createdAt || null,
+    ratings: Array.isArray(p.ratings) ? p.ratings.slice(-20) : [],
+  };
+};
+
+// --- Netlify API ---
+const netlifyCatalogLoad = async () => {
+  for (const url of getCatalogApiUrls()) {
+    try {
+      const r = await fetch(url, { method: "GET", cache: "no-store" });
+      if (!r.ok) continue;
+      const data = await r.json();
+      if (data && Array.isArray(data.products)) {
+        console.log("[Products] netlify load OK", data.products.length, url);
+        return data.products;
+      }
+    } catch (e) {
+      console.warn("[Products] netlify load fail", url, e && e.message);
+    }
+  }
+  return null;
+};
+
+const netlifyCatalogSave = async (products) => {
+  const body = JSON.stringify({
+    products: (products || []).map(compactProduct),
+  });
+  for (const url of getCatalogApiUrls()) {
+    try {
+      const r = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+        cache: "no-store",
+      });
+      const data = await r.json().catch(() => ({}));
+      if (r.ok && data && data.ok !== false) {
+        console.log("[Products] netlify save OK", data.count, url);
+        return true;
+      }
+      console.warn("[Products] netlify save response", url, r.status, data);
+    } catch (e) {
+      console.warn("[Products] netlify save fail", url, e && e.message);
+    }
+  }
+  return false;
+};
+
+const sharedProductsLoad = async () => {
+  // 1) Netlify (главное)
+  const fromApi = await netlifyCatalogLoad();
+  if (Array.isArray(fromApi) && fromApi.length > 0) return fromApi;
+
+  // 2) Если API ответил пустым массивом — это валидный пустой каталог (не fallback)
+  //    Отличить «нет API» от «пустой каталог»: netlifyCatalogLoad returns null on fail, [] on empty
+  if (Array.isArray(fromApi) && fromApi.length === 0) {
+    // API работает, каталог пока пуст
+    return [];
+  }
+
+  console.warn("[Products] Netlify API недоступен, пробуем fallback");
+  return null;
+};
+
+const sharedProductsSave = async (products) => {
+  // Только Netlify — надёжное хранилище для всех пользователей
+  const ok = await netlifyCatalogSave(products);
+  console.log("[Products] shared save", ok ? "OK" : "FAIL", (products || []).length);
+  return ok;
+};
+
+// Слить локальный каталог с общим (общий приоритетнее)
+const mergeRatingsLists = (a, b) => {
+  const map = new Map();
+  const keyOf = (r) =>
+    `${r.userId || ""}|${r.date || ""}|${(r.comment || "").slice(0, 40)}|${r.rating || 0}`;
+  const put = (r) => {
+    if (!r) return;
+    const k = keyOf(r);
+    const prev = map.get(k);
+    if (!prev) {
+      map.set(k, r);
+      return;
+    }
+    map.set(k, {
+      ...prev,
+      ...r,
+      // одобренный побеждает
+      approved:
+        prev.approved === true || r.approved === true
+          ? true
+          : r.approved === false || prev.approved === false
+            ? false
+            : prev.approved,
+      adminReply: r.adminReply || prev.adminReply || null,
+    });
+  };
+  (a || []).forEach(put);
+  (b || []).forEach(put);
+  return Array.from(map.values()).slice(-40);
+};
+
+// Сервер — источник правды: чего нет на сервере, того нет в каталоге (удаления синхронизируются)
+const applyServerCatalog = (localList, serverList) => {
+  if (!Array.isArray(serverList)) return localList || [];
+  const localMap = new Map();
+  (localList || []).forEach((p) => {
+    if (p && p.id != null) localMap.set(String(p.id), p);
+  });
+  const result = serverList
+    .filter((sp) => sp && sp.id != null)
+    .map((sp) => {
+      const id = String(sp.id);
+      const local = localMap.get(id);
+      if (local && local.image && String(local.image).startsWith("data:") && !sp.image) {
+        return {
+          ...sp,
+          image: local.image,
+          ratings: mergeRatingsLists(local.ratings, sp.ratings),
+        };
+      }
+      return {
+        ...sp,
+        image: sp.image || (local && local.image) || "",
+        ratings: mergeRatingsLists(sp.ratings, local && local.ratings),
+      };
+    });
+  result.sort((a, b) => {
+    if (!!b.pinned !== !!a.pinned) return (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0);
+    const ta = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+    const tb = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+    return tb - ta;
+  });
+  return result;
+};
+
+// обратная совместимость имени
+const mergeProductLists = (localList, sharedList) => applyServerCatalog(localList, sharedList);
+
+// ==============================
+// КОМПОНЕНТ TOAST
+// ==============================
+const Toast = ({ message, visible, onHide }) => {
+  useEffect(() => {
+    if (visible) {
+      const timer = setTimeout(() => {
+        onHide();
+      }, 2500);
+      return () => clearTimeout(timer);
+    }
+  }, [visible]);
+
+  if (!visible) return null;
+
+  const webFixed =
+    typeof document !== "undefined"
+      ? { position: "fixed", top: 50, left: 0, right: 0, zIndex: 2147483647 }
+      : null;
+
+  return (
+    <View style={[styles.toastContainer, webFixed]} pointerEvents="none">
+      <View style={styles.toast}>
+        <Text style={styles.toastText}>{message}</Text>
+      </View>
+    </View>
+  );
+};
+
+// ==============================
+// ГЛАВНЫЙ КОМПОНЕНТ
+// ==============================
+export default function App() {
+  const [user, setUser] = useState(() => getTelegramUser());
+
+  // Перечитываем Telegram user после ready (initData иногда приходит с задержкой)
+  useEffect(() => {
+    const tryRead = () => {
+      const u = getTelegramUser();
+      if (!u || !u.id) return;
+      const isReal = /^\d+$/.test(String(u.id));
+      if (isReal) {
+        persistRealUser(u);
+        setUser((prev) => {
+          if (String(prev.id) === String(u.id)) return prev;
+          console.log("[User] Telegram ID:", u.id, u.name);
+          return u;
+        });
+      }
+    };
+    tryRead();
+    const timers = [100, 300, 600, 1200, 2500].map((ms) => setTimeout(tryRead, ms));
+    try {
+      if (tg) {
+        try { tg.ready(); } catch (e) {}
+        if (tg.onEvent) {
+          tg.onEvent("viewportChanged", tryRead);
+          tg.onEvent("themeChanged", tryRead);
+        }
+      }
+    } catch (e) {}
+    // Периодически пробуем первые 5 секунд
+    const interval = setInterval(tryRead, 500);
+    const stop = setTimeout(() => clearInterval(interval), 5000);
+    return () => {
+      timers.forEach(clearTimeout);
+      clearInterval(interval);
+      clearTimeout(stop);
+    };
+  }, []);
+  const [theme, setTheme] = useState("light");
+  const toggleTheme = () => setTheme(t => t === "light" ? "dark" : "light");
+
+  // Синхронизируем фон Telegram WebApp с темой приложения (убирает чёрную полосу)
+  useEffect(() => {
+    const bg = theme === "dark" ? "#1a1a1a" : "#F7F7F5";
+    try {
+      if (tg) {
+        try { tg.setHeaderColor?.(bg); } catch (e) {}
+        try { tg.setBackgroundColor?.(bg); } catch (e) {}
+        try { tg.setBottomBarColor?.(bg); } catch (e) {}
+      }
+    } catch (e) {}
+    try {
+      if (typeof document !== "undefined") {
+        document.documentElement.style.backgroundColor = bg;
+        document.body.style.backgroundColor = bg;
+        const rootEl = document.getElementById("root") || document.getElementById("app");
+        if (rootEl) rootEl.style.backgroundColor = bg;
+      }
+    } catch (e) {}
+  }, [theme]);
+  const isAdmin = ADMIN_IDS.map(String).includes(String(user.id));
+
+  // Восстанавливаем вкладку только при refresh (sessionStorage), при полном закрытии — с нуля
+  const getInitialPage = () => {
+    try {
+      if (typeof sessionStorage !== "undefined") {
+        const saved = sessionStorage.getItem("krost_page");
+        // home больше нет — стартуем с каталога
+        if (saved && saved !== "home") return saved;
+      }
+    } catch (e) {}
+    return "catalog";
+  };
+  const getInitialProductId = () => {
+    try {
+      if (typeof sessionStorage !== "undefined") {
+        const id = sessionStorage.getItem("krost_productId");
+        if (id) return parseInt(id);
+      }
+    } catch (e) {}
+    return null;
+  };
+
+  const [page, setPage] = useState(getInitialPage);
+  const [cart, setCart] = useState([]);
+  const [favorites, setFavorites] = useState([]);
+  const [orders, setOrders] = useState(0);
+  const [bonusBalance, setBonusBalance] = useState(0);
+  const [selectedProduct, setSelectedProduct] = useState(null);
+  const [selectedSize, setSelectedSize] = useState(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedBrand, setSelectedBrand] = useState(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [restoredProductId] = useState(getInitialProductId);
+  const [orderModalVisible, setOrderModalVisible] = useState(false);
+  // Запрос отзыва после завершения заказа
+  const [reviewPrompt, setReviewPrompt] = useState(null); // { orderId, product, rating, comment }
+  const [useBonus, setUseBonus] = useState(false);
+  const [promoCode, setPromoCode] = useState("");
+  const [minPrice, setMinPrice] = useState("");
+  const [maxPrice, setMaxPrice] = useState("");
+  const [orderHistory, setOrderHistory] = useState([]);
+  const [products, setProducts] = useState([]); // только сервер/облако — без цветных демо-карточек
+  const [dataReady, setDataReady] = useState(false);
+  // CRM form local state (на уровне App — чтобы Modal не размонтировался при re-render)
+  const [localBroadcast, setLocalBroadcast] = useState("");
+  const [productSearch, setProductSearch] = useState("");
+  const [localPromo, setLocalPromo] = useState({ code: "", discount: "", maxUses: "", description: "" });
+  const [localProduct, setLocalProduct] = useState(null);
+  const [localIsNew, setLocalIsNew] = useState(false);
+  const [openStatusId, setOpenStatusId] = useState(null);
+  const [reviewRating, setReviewRating] = useState(0);
+  const [reviewComment, setReviewComment] = useState("");
+  // Сразу предзагружаем картинки, чтобы не было пустых карточек
+  useEffect(() => {
+  }, []);
+  const [adminOrders, setAdminOrders] = useState([]);
+  const [showAdmin, setShowAdmin] = useState(false);
+  const [editingProduct, setEditingProduct] = useState(null);
+  const [productDraft, setProductDraft] = useState(null);
+  const [isNewProduct, setIsNewProduct] = useState(false);
+  const [promoForm, setPromoForm] = useState({ code: "", discount: "", maxUses: "", description: "" });
+  const [lastOrderNumber, setLastOrderNumber] = useState(3340);
+  const [users, setUsers] = useState([]);
+  const [broadcastText, setBroadcastText] = useState("");
+  const [promoCodes, setPromoCodes] = useState([]);
+  const [usedFreeDelivery, setUsedFreeDelivery] = useState([]);
+
+  const [sizeModalVisible, setSizeModalVisible] = useState(false);
+  const [sizeModalProduct, setSizeModalProduct] = useState(null);
+  const [tempSelectedSize, setTempSelectedSize] = useState(null);
+
+  // Toast
+  const [toastVisible, setToastVisible] = useState(false);
+  const [toastMessage, setToastMessage] = useState("");
+  const [pendingProductId, setPendingProductId] = useState(null);
+  // Реферальная система
+  const [referredBy, setReferredBy] = useState(null); // id того, кто пригласил
+  const [referralCount, setReferralCount] = useState(0); // сколько пришло по моей ссылке
+  const [referralEarnings, setReferralEarnings] = useState(0); // сколько заработал с рефералов
+  const [referralNotified, setReferralNotified] = useState(false); // уже показали toast о регистрации
+
+  const showToast = (msg) => {
+    setToastMessage(msg);
+    setToastVisible(true);
+  };
+
+  const hideToast = () => {
+    setToastVisible(false);
+  };
+
+  const CLOUD_KEYS = {
+    cart: "krost_cart",
+    favorites: "krost_favorites",
+    orders: "krost_orders",
+    bonus: "krost_bonus",
+    orderHistory: "krost_orderHistory",
+    lastOrderNumber: "krost_lastOrderNumber",
+    usedFreeDelivery: "krost_usedFreeDelivery",
+    adminOrders: "krost_adminOrders",
+    promoCodes: "krost_promoCodes",
+    products: "krost_products",
+    theme: "krost_theme",
+    referredBy: "krost_referredBy",
+    referralCount: "krost_referralCount",
+    referralEarnings: "krost_referralEarnings",
+    referralNotified: "krost_referralNotified",
+    // Общая «очередь» реферальных событий (в рамках одного устройства / для демо)
+    refEvents: "krost_refEvents"
+  };
+
+  // ==============================
+  // ЗАГРУЗКА ДАННЫХ (CloudStorage + localStorage fallback)
+  // ==============================
+  useEffect(() => {
+    const loadAll = async () => {
+      try {
+        const [
+          cloudCart, cloudFavorites, cloudOrders, cloudBonus,
+          cloudOrderHistory, cloudLastOrderNumber, cloudUsedFreeDelivery,
+          cloudAdminOrders, cloudPromoCodes, cloudProducts, cloudTheme,
+          cloudReferredBy, cloudReferralCount, cloudReferralEarnings, cloudReferralNotified
+        ] = await Promise.all([
+          loadFromCloud(CLOUD_KEYS.cart),
+          loadFromCloud(CLOUD_KEYS.favorites),
+          loadFromCloud(CLOUD_KEYS.orders),
+          loadFromCloud(CLOUD_KEYS.bonus),
+          loadFromCloud(CLOUD_KEYS.orderHistory),
+          loadFromCloud(CLOUD_KEYS.lastOrderNumber),
+          loadFromCloud(CLOUD_KEYS.usedFreeDelivery),
+          loadFromCloud(CLOUD_KEYS.adminOrders),
+          loadFromCloud(CLOUD_KEYS.promoCodes),
+          loadFromCloud(CLOUD_KEYS.products),
+          loadFromCloud(CLOUD_KEYS.theme),
+          loadFromCloud(CLOUD_KEYS.referredBy),
+          loadFromCloud(CLOUD_KEYS.referralCount),
+          loadFromCloud(CLOUD_KEYS.referralEarnings),
+          loadFromCloud(CLOUD_KEYS.referralNotified)
+        ]);
+
+        setCart(cloudCart || []);
+        setFavorites(cloudFavorites || []);
+        setOrders(cloudOrders || 0);
+        setBonusBalance(cloudBonus || 0);
+        setOrderHistory(cloudOrderHistory || []);
+        setLastOrderNumber(cloudLastOrderNumber || 3340);
+        setUsedFreeDelivery(cloudUsedFreeDelivery || []);
+        setAdminOrders(cloudAdminOrders || []);
+        setPromoCodes(cloudPromoCodes || []);
+
+        // Каталог: сервер → облако. Демо DEFAULT_PRODUCTS больше не подмешиваем.
+        let list = Array.isArray(cloudProducts) ? cloudProducts : [];
+        try {
+          let sharedProds = null;
+          for (let attempt = 0; attempt < 3; attempt++) {
+            sharedProds = await sharedProductsLoad();
+            if (sharedProds !== null) break;
+            await new Promise((r) => setTimeout(r, 350 * (attempt + 1)));
+          }
+          if (Array.isArray(sharedProds) && sharedProds.length > 0) {
+            list = applyServerCatalog(list, sharedProds);
+          } else if (Array.isArray(sharedProds) && sharedProds.length === 0) {
+            // сервер пуст — показываем только локальное облако (без демо)
+            console.log("[Products] server catalog empty");
+          } else {
+            console.warn("[Products] server unavailable, using cloud only");
+          }
+        } catch (e) {
+          console.warn("shared products merge", e);
+        }
+        setProducts(list);
+        preloadImages(list);
+
+        // Общие заказы (другие пользователи / другое устройство)
+        try {
+          const remoteOrders = await sharedOrdersLoad();
+          if (Array.isArray(remoteOrders) && remoteOrders.length) {
+            const map = new Map();
+            (cloudAdminOrders || []).forEach((o) => map.set(String(o.id), o));
+            remoteOrders.forEach((o) => {
+              const id = String(o.id);
+              if (!map.has(id)) map.set(id, o);
+              else {
+                const local = map.get(id);
+                map.set(id, {
+                  ...local,
+                  ...o,
+                  status: local.status && local.status !== "Новый" ? local.status : (o.status || local.status),
+                  trackingNumber: o.trackingNumber || local.trackingNumber || null,
+                  items: (local.items && local.items.length ? local.items : o.items) || [],
+                });
+              }
+            });
+            const merged = Array.from(map.values()).sort((a, b) => {
+              const da = a.date ? new Date(a.date).getTime() : 0;
+              const db = b.date ? new Date(b.date).getTime() : 0;
+              return db - da;
+            });
+            setAdminOrders(merged);
+          }
+        } catch (e) {
+          console.warn("shared orders merge on load", e);
+        }
+
+        if (cloudTheme) setTheme(cloudTheme);
+        if (cloudReferredBy) setReferredBy(cloudReferredBy);
+        setReferralCount(cloudReferralCount || 0);
+        setReferralEarnings(cloudReferralEarnings || 0);
+        setReferralNotified(!!cloudReferralNotified);
+
+        // ВАЖНО: разрешаем сохранение только после загрузки — иначе пустой стейт затирает CloudStorage
+        setDataReady(true);
+
+        setTimeout(() => {
+          try { syncReferralStatsFromCloud(); } catch (e) {}
+        }, 900);
+      } catch (e) {
+        console.warn("Ошибка загрузки", e);
+        setDataReady(true);
+      }
+    };
+    loadAll();
+  }, []);
+
+  // ==============================
+  // СОХРАНЕНИЕ (CloudStorage + localStorage)
+  // Не пишем до dataReady — иначе стартовые [] / DEFAULT затирают данные на других устройствах
+  // ==============================
+  useEffect(() => { if (!dataReady) return; saveToCloud(CLOUD_KEYS.cart, cart); }, [cart, dataReady]);
+  useEffect(() => { if (!dataReady) return; saveToCloud(CLOUD_KEYS.favorites, favorites); }, [favorites, dataReady]);
+  useEffect(() => { if (!dataReady) return; saveToCloud(CLOUD_KEYS.orders, orders); }, [orders, dataReady]);
+  useEffect(() => { if (!dataReady) return; saveToCloud(CLOUD_KEYS.bonus, bonusBalance); }, [bonusBalance, dataReady]);
+  useEffect(() => { if (!dataReady) return; saveToCloud(CLOUD_KEYS.orderHistory, orderHistory); }, [orderHistory, dataReady]);
+  useEffect(() => { if (!dataReady) return; saveToCloud(CLOUD_KEYS.lastOrderNumber, lastOrderNumber); }, [lastOrderNumber, dataReady]);
+  useEffect(() => { if (!dataReady) return; saveToCloud(CLOUD_KEYS.usedFreeDelivery, usedFreeDelivery); }, [usedFreeDelivery, dataReady]);
+  useEffect(() => { if (!dataReady) return; saveToCloud(CLOUD_KEYS.adminOrders, adminOrders); }, [adminOrders, dataReady]);
+  useEffect(() => { if (!dataReady) return; saveToCloud(CLOUD_KEYS.promoCodes, promoCodes); }, [promoCodes, dataReady]);
+  useEffect(() => { if (!dataReady) return; saveToCloud(CLOUD_KEYS.products, products); }, [products, dataReady]);
+  useEffect(() => { if (!dataReady) return; saveToCloud(CLOUD_KEYS.theme, theme); }, [theme, dataReady]);
+  useEffect(() => { if (!dataReady) return; if (referredBy != null) saveToCloud(CLOUD_KEYS.referredBy, referredBy); }, [referredBy, dataReady]);
+  useEffect(() => { if (!dataReady) return; saveToCloud(CLOUD_KEYS.referralCount, referralCount); }, [referralCount, dataReady]);
+  useEffect(() => { if (!dataReady) return; saveToCloud(CLOUD_KEYS.referralEarnings, referralEarnings); }, [referralEarnings, dataReady]);
+  useEffect(() => { if (!dataReady) return; saveToCloud(CLOUD_KEYS.referralNotified, referralNotified); }, [referralNotified, dataReady]);
+
+  // Если referredBy уже есть, а Telegram ID стал числовым — дорегистрируем реферала
+  useEffect(() => {
+    const myId = String(user?.id || "");
+    if (referredBy && /^\d+$/.test(myId) && /^\d+$/.test(String(referredBy)) && String(referredBy) !== myId) {
+      registerReferral(referredBy, myId);
+    }
+  }, [user?.id, referredBy]);
+
+  // Авто-синхронизация рефералов (без кнопки): каждые 12 сек + при возврате в приложение
+  // Пока открыта админка или окно заказа — не трогаем, чтобы не сбивать формы
+  useEffect(() => {
+    if (showAdmin || orderModalVisible) return;
+    const tick = () => {
+      ensureReferralRegistered();
+      syncReferralStatsFromCloud();
+    };
+    const t1 = setTimeout(tick, 1500);
+    const interval = setInterval(tick, 12000);
+    const onVis = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") tick();
+    };
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", onVis);
+    }
+    return () => {
+      clearTimeout(t1);
+      clearInterval(interval);
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", onVis);
+      }
+    };
+  }, [user?.id, showAdmin, orderModalVisible]);
+
+  // Сохраняем текущую вкладку только в sessionStorage (живёт при refresh, умирает при полном закрытии)
+  useEffect(() => {
+    try {
+      if (typeof sessionStorage !== "undefined") {
+        sessionStorage.setItem("krost_page", page);
+        if (page === "product" && selectedProduct) {
+          sessionStorage.setItem("krost_productId", String(selectedProduct.id));
+        } else if (page !== "product") {
+          sessionStorage.removeItem("krost_productId");
+        }
+      }
+    } catch (e) {}
+  }, [page, selectedProduct]);
+
+  // Восстанавливаем товар после загрузки products (при refresh)
+  // и всегда подтягиваем актуальные данные товара (цена, фото и т.д.)
+  useEffect(() => {
+    if (products.length === 0) return;
+
+    // 1) Восстановление после обновления страницы
+    if (restoredProductId && !selectedProduct) {
+      const p = products.find(x => x.id === restoredProductId);
+      if (p) {
+        setSelectedProduct(p);
+        setPage("product");
+      }
+      return;
+    }
+
+    // 2) Если уже открыта карточка — обновляем её свежими данными из каталога
+    if (selectedProduct) {
+      const fresh = products.find(x => x.id === selectedProduct.id);
+      if (fresh) {
+        // Обновляем только если данные реально изменились
+        if (
+          fresh.price !== selectedProduct.price ||
+          fresh.image !== selectedProduct.image ||
+          fresh.name !== selectedProduct.name ||
+          fresh.oldPrice !== selectedProduct.oldPrice ||
+          fresh.description !== selectedProduct.description ||
+          JSON.stringify(fresh.sizes) !== JSON.stringify(selectedProduct.sizes) ||
+          JSON.stringify(fresh.ratings) !== JSON.stringify(selectedProduct.ratings)
+        ) {
+          setSelectedProduct(fresh);
+        }
+      }
+    }
+  }, [products, restoredProductId]);
+
+  // Начисление кэшбэка клиенту после статуса «Деньги получены»
+  useEffect(() => {
+    if (!orderHistory.length) return;
+    let totalCredit = 0;
+    const updated = orderHistory.map((o) => {
+      if (
+        o.status === "Деньги получены" &&
+        o.pendingCashback &&
+        !o.cashbackCredited &&
+        (String(o.tgId) === String(user?.id) || !o.tgId)
+      ) {
+        totalCredit += Number(o.pendingCashback) || 0;
+        return { ...o, cashbackCredited: true };
+      }
+      return o;
+    });
+    if (totalCredit > 0) {
+      setBonusBalance((b) => b + totalCredit);
+      setOrderHistory(updated);
+      showToast(`💰 Начислено бонусов: ${totalCredit}`);
+    }
+  }, [orderHistory, user?.id]);
+
+  // Подтягиваем статусы своих заказов с сервера (бонусы + отзыв)
+  useEffect(() => {
+    if (!dataReady || !user?.id) return;
+    let stopped = false;
+    const syncMyOrders = async () => {
+      try {
+        const remote = await sharedOrdersLoad();
+        if (stopped || !Array.isArray(remote) || !remote.length) return;
+        let bonusToAdd = 0;
+        setOrderHistory((prev) => {
+          if (!prev.length) return prev;
+          let changed = false;
+          const next = prev.map((local) => {
+            const r = remote.find((o) => String(o.id) === String(local.id));
+            if (!r) return local;
+            const newStatus = r.status || local.status;
+            const statusChanged = newStatus !== local.status;
+            const reviewChanged = !!r.askReview !== !!local.askReview;
+            const trackChanged =
+              (r.trackingNumber || null) !== (local.trackingNumber || null);
+            // кэшбэк: статус стал «Деньги получены» и ещё не начисляли
+            let credited = local.cashbackCredited;
+            if (
+              newStatus === "Деньги получены" &&
+              !local.cashbackCredited &&
+              Number(local.pendingCashback) > 0
+            ) {
+              bonusToAdd += Number(local.pendingCashback) || 0;
+              credited = true;
+              changed = true;
+            }
+            if (!statusChanged && !reviewChanged && !trackChanged && credited === local.cashbackCredited) {
+              return local;
+            }
+            changed = true;
+            return {
+              ...local,
+              status: newStatus,
+              askReview: r.askReview != null ? !!r.askReview : local.askReview,
+              // трек всегда с сервера (CRM), если пришёл
+              trackingNumber:
+                r.trackingNumber != null && String(r.trackingNumber).trim() !== ""
+                  ? String(r.trackingNumber).trim()
+                  : local.trackingNumber || null,
+              delivery: r.delivery || local.delivery || "courier",
+              cashbackCredited: credited,
+            };
+          });
+          return changed ? next : prev;
+        });
+        if (bonusToAdd > 0) {
+          setBonusBalance((b) => b + bonusToAdd);
+          showToast(`+${bonusToAdd} BYN на бонусный счёт`);
+        }
+      } catch (e) {}
+    };
+    syncMyOrders();
+    const t = setInterval(syncMyOrders, 12000);
+    return () => {
+      stopped = true;
+      clearInterval(t);
+    };
+  }, [dataReady, user?.id]);
+
+  // Сброс черновика отзыва при новом запросе
+  useEffect(() => {
+    if (reviewPrompt) {
+      setReviewRating(0);
+      setReviewComment("");
+    }
+  }, [reviewPrompt?.orderId, reviewPrompt?.product?.id]);
+
+  // Запрос отзыва: если есть завершённый заказ с askReview — показываем модалку
+  // Если нажали «Позже» — больше не показываем (сохраняем в localStorage)
+  useEffect(() => {
+    if (reviewPrompt || orderModalVisible || showAdmin) return;
+    if (!orderHistory.length || !products.length) return;
+
+    let dismissed = [];
+    try {
+      if (typeof localStorage !== "undefined") {
+        dismissed = JSON.parse(localStorage.getItem("krost_dismissed_reviews") || "[]");
+      }
+    } catch (e) {}
+
+    for (const order of orderHistory) {
+      if (!order.askReview || order.reviewDone) continue;
+      if (dismissed.includes(order.id)) continue;
+      // Берём первый товар из заказа, который пользователь ещё не оценивал
+      for (const item of order.items || []) {
+        const product = products.find((p) => p.id === item.id);
+        if (!product) continue;
+        const alreadyRated = (product.ratings || []).some(
+          (r) => String(r.userId) === String(user.id)
+        );
+        if (!alreadyRated) {
+          setReviewPrompt({
+            orderId: order.id,
+            product,
+            rating: 0,
+            comment: "",
+          });
+          return;
+        }
+      }
+      // Все товары уже оценены — помечаем заказ
+      setOrderHistory((prev) =>
+        prev.map((o) => (o.id === order.id ? { ...o, reviewDone: true, askReview: false } : o))
+      );
+    }
+  }, [orderHistory, products, user.id, reviewPrompt, orderModalVisible, showAdmin]);
+
+  useEffect(() => {
+    if (user.id !== "guest" && !users.some(u => u.id === user.id)) {
+      setUsers(prev => [...prev, user]);
+    }
+  }, [user]);
+
+  const currentLevel = LEVELS.find(l => orders >= l.min && orders <= l.max) || LEVELS[0];
+  const nextLevel = LEVELS[LEVELS.indexOf(currentLevel) + 1];
+  let progress = 100;
+  if (nextLevel) progress = Math.min(100, Math.floor(((orders - currentLevel.min) / (nextLevel.min - currentLevel.min)) * 100));
+  // Уникальная реферальная ссылка — только если есть реальный числовой Telegram ID
+  const hasRealId = /^\d+$/.test(String(user.id));
+  const referral = hasRealId
+    ? `https://t.me/manzshop_bot/manzshopbyapp?startapp=ref_${user.id}`
+    : `https://t.me/manzshop_bot/manzshopbyapp?startapp=ref_${user.id}`;
+
+  const addCart = (item) => setCart([...cart, item]);
+  const removeCart = (idx) => setCart(cart.filter((_, i) => i !== idx));
+
+  const toggleFavorite = (item) => {
+    const isAlreadyFav = favorites.some(x => x.id === item.id);
+    if (isAlreadyFav) {
+      setFavorites(favorites.filter(x => x.id !== item.id));
+    } else {
+      setFavorites([...favorites, item]);
+      // При добавлении в избранное — убираем товар из корзины
+      setCart(prev => prev.filter(c => c.id !== item.id));
+    }
+  };
+
+  const copyReferral = async () => {
+    // Ещё раз пробуем прочитать Telegram ID перед копированием
+    const u = getTelegramUser();
+    if (u && /^\d+$/.test(String(u.id))) {
+      persistRealUser(u);
+      if (String(u.id) !== String(user.id)) setUser(u);
+    }
+    const realId = (u && /^\d+$/.test(String(u.id))) ? u.id : user.id;
+    const text = `https://t.me/manzshop_bot/manzshopbyapp?startapp=ref_${realId}`;
+
+    let ok = false;
+
+    // 1) Telegram WebApp clipboard (если есть)
+    try {
+      if (tg && typeof tg.readTextFromClipboard === "function") {
+        // write через clipboard API ниже
+      }
+    } catch (e) {}
+
+    // 2) Современный Clipboard API
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+        ok = true;
+      }
+    } catch (e) {}
+
+    // 3) Fallback: textarea + execCommand (часто работает в WebView)
+    if (!ok && typeof document !== "undefined") {
+      try {
+        const el = document.createElement("textarea");
+        el.value = text;
+        el.setAttribute("readonly", "");
+        el.style.position = "fixed";
+        el.style.top = "-9999px";
+        el.style.left = "0";
+        el.style.opacity = "0";
+        document.body.appendChild(el);
+        el.focus();
+        el.select();
+        el.setSelectionRange(0, text.length);
+        ok = document.execCommand("copy");
+        document.body.removeChild(el);
+      } catch (e) {}
+    }
+
+    // 4) React Native Clipboard
+    if (!ok) {
+      try {
+        if (Clipboard && Clipboard.setString) {
+          Clipboard.setString(text);
+          ok = true;
+        }
+      } catch (e) {}
+    }
+
+    // 5) Web Share API (на телефоне часто удобнее)
+    if (!ok && typeof navigator !== "undefined" && navigator.share) {
+      try {
+        await navigator.share({ title: "MENZ", text: "Заходи в магазин:", url: text });
+        showToast("📋 Ссылка отправлена");
+        return;
+      } catch (e) {}
+    }
+
+    if (ok) {
+      showToast("📋 Реферальная ссылка скопирована");
+      try {
+        if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred("success");
+      } catch (e) {}
+      // На всякий случай показываем ссылку (Telegram iOS часто врёт про clipboard)
+      try {
+        Alert.alert("Ссылка скопирована", text);
+      } catch (e) {}
+    } else {
+      // Показываем ссылку — пользователь может зажать и скопировать
+      try {
+        Alert.alert("Ваша реферальная ссылка", text + "\n\nЗажмите текст и скопируйте");
+      } catch (e) {
+        showToast(text);
+      }
+      showToast("Зажмите ссылку и скопируйте");
+    }
+  };
+
+  // Реферал: регистрация (друг открыл ссылку) — строго 1 раз на уникального пользователя
+  // Порядок: сначала claim joined_USERID (atomic hit), и только если мы первые — +1 к ref_REFERRER
+  const registerReferral = async (referrerId, newUserId) => {
+    if (!referrerId || !newUserId || String(referrerId) === String(newUserId)) return false;
+    if (!/^\d+$/.test(String(referrerId)) || !/^\d+$/.test(String(newUserId))) return false;
+    try {
+      // 1) Локальный флаг — самый быстрый (тот же браузер/WebView)
+      try {
+        if (typeof localStorage !== "undefined" && localStorage.getItem(`krost_ref_joined_${newUserId}`) === "1") {
+          console.log("[Ref] already joined (local)", newUserId);
+          return true;
+        }
+      } catch (e) {}
+
+      // 2) CloudStorage флаг этого пользователя (Telegram CloudStorage — per-user)
+      try {
+        const cloudReg = await loadFromCloud("krost_ref_registered");
+        if (cloudReg === true || cloudReg === "true" || cloudReg === 1) {
+          try { localStorage.setItem(`krost_ref_joined_${newUserId}`, "1"); } catch (e) {}
+          console.log("[Ref] already joined (cloud)", newUserId);
+          return true;
+        }
+      } catch (e) {}
+
+      const joinedKey = `joined_${newUserId}`;
+
+      // 3) Удалённая проверка: уже помечен?
+      const already = await refApiGet(joinedKey);
+      if (already != null && already > 0) {
+        console.log("[Ref] already joined (remote get)", newUserId, already);
+        try { localStorage.setItem(`krost_ref_joined_${newUserId}`, "1"); } catch (e) {}
+        await saveToCloud("krost_ref_registered", true);
+        return true;
+      }
+
+      // 4) Atomic claim: hit на joined_USERID
+      //    Первый вызов → 1  = мы первые, можно +1 к счётчику реферера
+      //    Повторный     → >1 = пользователь уже был засчитан, НЕ трогаем счётчик
+      const joinedVal = await refApiHit(joinedKey);
+      if (joinedVal != null && joinedVal > 1) {
+        console.log("[Ref] already joined (remote hit>1)", newUserId, joinedVal);
+        try { localStorage.setItem(`krost_ref_joined_${newUserId}`, "1"); } catch (e) {}
+        await saveToCloud("krost_ref_registered", true);
+        return true;
+      }
+
+      // joinedVal === 1 → мы первые; null → API недоступен, не рискуем оверсчётом
+      if (joinedVal == null) {
+        console.warn("[Ref] API unavailable for claim, will retry later");
+        return false;
+      }
+
+      // 5) Только сейчас +1 к счётчику реферера (уникальный пользователь)
+      let cnt = await refApiHit(`ref_${referrerId}`);
+      if (cnt == null) {
+        const cur = (await refApiGet(`ref_${referrerId}`)) || 0;
+        cnt = await refApiSet(`ref_${referrerId}`, cur + 1);
+      }
+
+      try { localStorage.setItem(`krost_ref_joined_${newUserId}`, "1"); } catch (e) {}
+      await saveToCloud("krost_ref_registered", true);
+      console.log("[Ref] registered OK (unique)", newUserId, "→", referrerId, "count=", cnt, "joined=", joinedVal);
+      return true;
+    } catch (e) {
+      console.warn("registerReferral", e);
+      return false;
+    }
+  };
+
+  // Реферал: 2% с заказа → начисляем рефереру в публичный счётчик
+  const creditReferralOrder = async (referrerId, amount) => {
+    if (!referrerId || !/^\d+$/.test(String(referrerId))) return false;
+    const n = Math.max(0, Math.floor(Number(amount) || 0));
+    if (n <= 0) return false;
+    try {
+      const result = await refApiAdd(`earn_${referrerId}`, n);
+      console.log("[Ref] credit", n, "to", referrerId, "→", result);
+      return result != null;
+    } catch (e) {
+      console.warn("creditReferralOrder", e);
+      return false;
+    }
+  };
+
+  // Подтянуть актуальные счётчики рефералов (автоматически)
+  const syncReferralStatsFromCloud = async () => {
+    let myId = String(user?.id || "");
+    if (!/^\d+$/.test(myId)) {
+      const u = getTelegramUser();
+      myId = String(u?.id || "");
+    }
+    if (!/^\d+$/.test(myId)) {
+      console.warn("[Ref] sync skip — no real id");
+      return;
+    }
+    try {
+      console.log("[Ref] auto-sync for", myId);
+      const remoteCount = await refApiGet(`ref_${myId}`);
+      const remoteEarn = await refApiGet(`earn_${myId}`);
+      console.log("[Ref] remote count=", remoteCount, "earn=", remoteEarn);
+
+      // Обновляем счётчики тихо. Toast показываем ТОЛЬКО на странице профиля,
+      // чтобы не сбивать оформление заказа и админку.
+      if (remoteCount != null) {
+        setReferralCount((prev) => {
+          return remoteCount;
+        });
+      }
+
+      if (remoteEarn != null) {
+        const prevSynced = Number((await loadFromCloud("krost_earn_synced")) || 0);
+        if (remoteEarn > prevSynced) {
+          const add = remoteEarn - prevSynced;
+          setReferralEarnings(remoteEarn);
+          setBonusBalance((b) => b + add);
+          await saveToCloud("krost_earn_synced", remoteEarn);
+          if (page === "profile" && !orderModalVisible && !showAdmin) {
+            setTimeout(() => showToast(`💰 Вам начислено ${money(add)} с покупок реферала (2%)`), 700);
+          }
+        } else {
+          setReferralEarnings(remoteEarn);
+        }
+      }
+    } catch (e) {
+      console.warn("syncReferralStats", e);
+    }
+  };
+
+  // Если я пришёл по реф. ссылке, но API-регистрация не прошла — пробуем снова
+  const ensureReferralRegistered = async () => {
+    try {
+      const refId = referredBy || (await loadFromCloud(CLOUD_KEYS.referredBy));
+      if (!refId || !/^\d+$/.test(String(refId))) return;
+      let myId = String(user?.id || "");
+      if (!/^\d+$/.test(myId)) {
+        const u = getTelegramUser();
+        myId = String(u?.id || "");
+      }
+      if (!/^\d+$/.test(myId)) return;
+      if (String(refId) === myId) return;
+      await registerReferral(refId, myId);
+    } catch (e) {
+      console.warn("ensureReferralRegistered", e);
+    }
+  };
+  const openOrderModal = () => setOrderModalVisible(true);
+  const closeOrderModal = () => { setOrderModalVisible(false); setUseBonus(false); setPromoCode(""); };
+
+  const calculateTotals = () => {
+    const total = cart.reduce((s, i) => s + i.price, 0);
+    let discount = 0;
+    const foundPromo = promoCodes.find(p => {
+      if (p.code.toUpperCase() !== promoCode.toUpperCase()) return false;
+      if (p.active === false) return false;
+      const maxU = p.maxUses != null ? Number(p.maxUses) : 999999;
+      const used = Number(p.usedCount) || 0;
+      return used < maxU;
+    });
+    if (foundPromo) {
+      discount = total * (foundPromo.discount / 100);
+    }
+    let finalTotal = total - discount;
+    let usedBonus = 0;
+    if (useBonus && bonusBalance > 0) { usedBonus = Math.min(bonusBalance, finalTotal); finalTotal -= usedBonus; }
+    return { total, discount, usedBonus, finalTotal };
+  };
+
+  const isFreeDeliveryEligible = (phone, fullName) => {
+    return !usedFreeDelivery.some(item => item.phone === phone.trim() && item.fullName === fullName.trim());
+  };
+
+  const placeOrderWithDetails = (deliveryData) => {
+    const { fullName, address, phone, delivery, freeDelivery } = deliveryData;
+    const { total, discount, usedBonus, finalTotal } = calculateTotals();
+    let deliveryPrice = delivery === "europost" ? 12 : 10;
+    if (freeDelivery) {
+      deliveryPrice = 0;
+      setUsedFreeDelivery(prev => [...prev, { phone: phone.trim(), fullName: fullName.trim() }]);
+    }
+    const orderTotal = finalTotal + deliveryPrice;
+    // Уникальный номер: локальный счётчик + хвост из времени (чтобы не пересекались у разных клиентов)
+    const nextNumber = Math.max(lastOrderNumber + 1, Number(String(Date.now()).slice(-6)));
+    setLastOrderNumber(nextNumber);
+
+    // 2% рефереру с суммы товаров (без доставки) — пишем в публичный счётчик
+    let referralBonus = 0;
+    if (referredBy && String(referredBy) !== String(user.id) && /^\d+$/.test(String(referredBy))) {
+      referralBonus = Math.floor(total * 0.02);
+      if (referralBonus > 0) {
+        creditReferralOrder(referredBy, referralBonus);
+      }
+    }
+
+    // Кэшбэк начислим только после получения заказа (статус «Деньги получены»)
+    const pendingCashback = Math.floor(total * (currentLevel.cashback / 100));
+    const order = {
+      id: nextNumber, items: cart.map(i => ({ ...i })), total, delivery, address, phone, fullName,
+      deliveryPrice, discount, usedBonus, finalTotal: orderTotal, date: new Date().toISOString(),
+      status: "Новый", trackingNumber: null, freeDelivery,
+      referredBy: referredBy || null,
+      referralBonus,
+      tgId: user?.id || null,
+      tgUsername: user?.username || null,
+      tgName: user?.name || null,
+      pendingCashback,
+      cashbackCredited: false,
+    };
+    setOrderHistory(prev => [order, ...prev]);
+    setAdminOrders(prev => [order, ...prev]);
+    // Дублируем в общее хранилище + уведомление админу в Telegram (с ретраями)
+    (async () => {
+      let pushed = null;
+      for (let attempt = 0; attempt < 3 && !pushed; attempt++) {
+        pushed = await sharedOrdersPush(order);
+        if (!pushed) await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+      }
+      if (!pushed) {
+        console.warn("[Orders] Не удалось сохранить заказ в общее хранилище после 3 попыток");
+      } else {
+        console.log("[Orders] shared storage OK", order.id);
+      }
+      let notified = false;
+      for (let attempt = 0; attempt < 3 && !notified; attempt++) {
+        notified = await notifyAdminNewOrder(order);
+        if (!notified) await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+      }
+      if (!notified) {
+        console.warn("[Orders] push в Telegram не дошёл. Проверьте BOT_TOKEN и что админ написал боту /start");
+      } else {
+        console.log("[Orders] Telegram notify OK", order.id);
+      }
+    })();
+    // Увеличиваем счётчик использований промокода
+    if (promoCode) {
+      const codeUp = promoCode.toUpperCase();
+      setPromoCodes(prev => prev.map(p =>
+        p.code.toUpperCase() === codeUp
+          ? { ...p, usedCount: (Number(p.usedCount) || 0) + 1 }
+          : p
+      ));
+    }
+    // Списываем только использованные бонусы; кэшбэк — после доставки
+    if (usedBonus > 0) {
+      setBonusBalance(prev => Math.max(0, prev - usedBonus));
+    }
+    setOrders(orders + 1);
+    setCart([]);
+    closeOrderModal();
+    showToast(`✅ Заказ #${nextNumber} оформлен. Бонусы за заказ начислятся после получения`);
+  };
+
+  const addRating = (productId, rating, comment) => {
+    setProducts((prev) => {
+      const next = prev.map((p) => {
+        if (p.id !== productId) return p;
+        const newRatings = [
+          ...(p.ratings || []),
+          {
+            userId: user.id,
+            userName: user.name || "Пользователь",
+            rating,
+            comment,
+            date: new Date().toISOString(),
+            approved: false,
+            adminReply: null,
+          },
+        ];
+        const approvedOnly = newRatings.filter((r) => r.approved === true);
+        const avg =
+          approvedOnly.length > 0
+            ? approvedOnly.reduce((s, r) => s + r.rating, 0) / approvedOnly.length
+            : p.averageRating || 0;
+        return { ...p, ratings: newRatings, averageRating: avg };
+      });
+      // чтобы админ увидел отзыв на модерации
+      sharedProductsSave(next).catch(() => {});
+      return next;
+    });
+  };
+
+  // Одобрить / отклонить отзыв (админ)
+  const moderateReview = (productId, reviewIndex, approve) => {
+    setProducts((prev) => {
+      const next = prev.map((p) => {
+        if (p.id !== productId) return p;
+        const newRatings = (p.ratings || [])
+          .map((r, i) => {
+            if (i !== reviewIndex) return r;
+            if (approve) return { ...r, approved: true };
+            return null;
+          })
+          .filter(Boolean);
+        const approvedOnly = newRatings.filter((r) => r.approved === true);
+        const avg =
+          approvedOnly.length > 0
+            ? approvedOnly.reduce((s, r) => s + r.rating, 0) / approvedOnly.length
+            : 0;
+        return { ...p, ratings: newRatings, averageRating: avg };
+      });
+      sharedProductsSave(next).then((ok) => {
+        if (ok) showToast(approve ? "✅ Отзыв опубликован" : "Отзыв отклонён");
+        else showToast("⚠️ Не удалось сохранить на сервере");
+      });
+      return next;
+    });
+  };
+
+  // Ответ админа на отзыв
+  const replyToReview = (productId, reviewIndex, replyText) => {
+    setProducts(prev => prev.map(p => {
+      if (p.id !== productId) return p;
+      const newRatings = p.ratings.map((r, i) =>
+        i === reviewIndex ? { ...r, adminReply: replyText } : r
+      );
+      return { ...p, ratings: newRatings };
+    }));
+  };
+
+  const shareProduct = async (product) => {
+    try {
+      // Правильная ссылка на Mini App + start_param
+      const link = `https://t.me/manzshop_bot/manzshopbyapp?startapp=product_${product.id}`;
+      await Share.share({
+        message: `${product.brand} ${product.name} — ${money(product.price)}\n\nОткрыть в магазине:\n${link}`
+      });
+    } catch (e) {}
+  };
+
+  // ===== DEEP LINK: читаем start_param ОДИН раз при старте =====
+  useEffect(() => {
+    const readStartParam = () => {
+      try {
+        const tg = typeof window !== "undefined" && window.Telegram?.WebApp;
+        if (tg) {
+          tg.ready();
+          tg.expand?.();
+        }
+
+        let startParam = "";
+
+        // 1. Главный способ — Telegram WebApp API
+        if (tg?.initDataUnsafe?.start_param) {
+          startParam = tg.initDataUnsafe.start_param;
+        }
+        // 2. Альтернативные поля
+        if (!startParam && tg?.startParam) startParam = tg.startParam;
+        // 3. Из URL (иногда Telegram прокидывает)
+        if (!startParam && typeof window !== "undefined") {
+          const params = new URLSearchParams(window.location.search);
+          startParam =
+            params.get("tgWebAppStartParam") ||
+            params.get("startapp") ||
+            params.get("start") ||
+            "";
+        }
+        // 4. Из hash (#tgWebAppData=... или startapp=)
+        if (!startParam && typeof window !== "undefined" && window.location.hash) {
+          const hash = window.location.hash.replace("#", "");
+          const hashParams = new URLSearchParams(hash);
+          startParam = hashParams.get("tgWebAppStartParam") || hashParams.get("startapp") || "";
+        }
+
+        console.log("[DeepLink] start_param =", startParam);
+
+        if (startParam && startParam.startsWith("product_")) {
+          const id = parseInt(startParam.replace("product_", ""), 10);
+          if (!isNaN(id)) {
+            console.log("[DeepLink] pending product id =", id);
+            setPendingProductId(id);
+          }
+        }
+
+        // Реферальная ссылка: ref_USERID
+        if (startParam && startParam.startsWith("ref_")) {
+          const refId = startParam.replace("ref_", "").trim();
+          console.log("[DeepLink] referral from =", refId);
+          if (refId && /^\d+$/.test(refId)) {
+            // Откладываем — чтобы user.id успел стать числовым + CloudStorage
+            const tryRegister = async (attempt) => {
+              try {
+                // Ждём реальный Telegram ID (не guest)
+                let myId = String(getTelegramUser().id || user.id || "");
+                if (!/^\d+$/.test(myId)) {
+                  console.warn("[Ref] no real telegram id yet, attempt", attempt);
+                  if (attempt < 8) {
+                    setTimeout(() => tryRegister(attempt + 1), 700);
+                  } else {
+                    // Запомним реферера даже без id — зарегистрируем позже
+                    setReferredBy(refId);
+                    await saveToCloud(CLOUD_KEYS.referredBy, refId);
+                  }
+                  return;
+                }
+                if (String(refId) === myId) {
+                  console.log("[Ref] self-referral ignored");
+                  return;
+                }
+
+                const existing = await loadFromCloud(CLOUD_KEYS.referredBy);
+                if (existing && String(existing) !== String(refId)) {
+                  // Уже привязан к другому — не меняем
+                  setReferredBy(existing);
+                  await registerReferral(existing, myId); // дорегистрируем если не успели
+                  return;
+                }
+
+                setReferredBy(refId);
+                await saveToCloud(CLOUD_KEYS.referredBy, refId);
+                // +1 в счётчик реферера (между аккаунтами)
+                const ok = await registerReferral(refId, myId);
+                console.log("[Ref] register result", ok);
+                // toast у приглашённого НЕ показываем (по просьбе)
+              } catch (e) {
+                console.warn("ref save error", e);
+              }
+            };
+            setTimeout(() => tryRegister(1), 500);
+          }
+        }
+      } catch (e) {
+        console.warn("[DeepLink] error:", e);
+      }
+    };
+
+    // Читаем сразу и ещё раз через 300мс (на случай медленной инициализации Telegram)
+    readStartParam();
+    const t = setTimeout(readStartParam, 300);
+    return () => clearTimeout(t);
+  }, []);
+
+  // Когда products готовы + есть pendingProductId → открываем карточку
+  useEffect(() => {
+    if (pendingProductId == null || !products || products.length === 0) return;
+
+    const found = products.find(p => p.id === pendingProductId);
+    console.log("[DeepLink] looking for id", pendingProductId, "found:", !!found);
+
+    if (found) {
+      setSelectedProduct(found);
+      setSelectedSize(null);
+      setPage("product");
+      setPendingProductId(null); // сбрасываем, чтобы не открывать повторно
+    }
+  }, [products, pendingProductId]);
+
+  const getRecommended = () => {
+    if (orderHistory.length === 0) return [];
+    const lastOrder = orderHistory[0];
+    const brands = lastOrder.items.map(i => i.brand);
+    return products.filter(p => brands.includes(p.brand) && !lastOrder.items.some(i => i.id === p.id)).slice(0, 4);
+  };
+
+  const filtered = products.filter(p => {
+    const matchName = p.name.toLowerCase().includes(searchQuery.toLowerCase()) || p.brand.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchBrand = selectedBrand ? p.brand === selectedBrand : true;
+    const matchPrice = (minPrice === "" || p.price >= parseInt(minPrice)) && (maxPrice === "" || p.price <= parseInt(maxPrice));
+    return matchName && matchBrand && matchPrice;
+  });
+  const PAGE_SIZE = 4;
+  const paginated = filtered.slice(0, currentPage * PAGE_SIZE);
+  const hasMore = paginated.length < filtered.length;
+  const loadMore = () => {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    setTimeout(() => { setCurrentPage(prev => prev + 1); setLoadingMore(false); }, 500);
+  };
+  useEffect(() => {
+    if (page === "catalog") { setCurrentPage(1); setLoadingMore(false); }
+  }, [page, searchQuery, selectedBrand, minPrice, maxPrice]);
+
+  const toggleAdmin = () => {
+    if (!isAdmin) { Alert.alert("Доступ запрещён", "У вас нет прав администратора"); return; }
+    setShowAdmin(!showAdmin);
+  };
+
+  // Подтянуть заказы из ОБЩЕГО хранилища (только по кнопке / при открытии CRM)
+  const syncSharedOrders = async (showFeedback = false) => {
+    try {
+      const remote = await sharedOrdersLoad().catch(() => []);
+      const incoming = Array.isArray(remote) ? remote : [];
+
+      if (incoming.length === 0) {
+        if (showFeedback) {
+          showToast("Новых заказов пока нет");
+        }
+        return 0;
+      }
+
+      let added = 0;
+      let changed = false;
+      setAdminOrders((prev) => {
+        const map = new Map();
+        prev.forEach((o) => map.set(String(o.id), o));
+        incoming.forEach((o) => {
+          const id = String(o.id);
+          if (!map.has(id)) {
+            added += 1;
+            changed = true;
+            map.set(id, o);
+          } else {
+            const local = map.get(id);
+            const merged = {
+              ...local,
+              ...o,
+              status: local.status && local.status !== "Новый" ? local.status : (o.status || local.status),
+              trackingNumber: o.trackingNumber || local.trackingNumber || null,
+              phone: o.phone || local.phone,
+              fullName: o.fullName || local.fullName,
+              address: o.address || local.address,
+              items: (local.items && local.items.length ? local.items : o.items) || [],
+            };
+            // не трогаем стейт, если ничего важного не изменилось
+            if (
+              local.status !== merged.status ||
+              local.trackingNumber !== merged.trackingNumber ||
+              local.phone !== merged.phone ||
+              local.fullName !== merged.fullName
+            ) {
+              changed = true;
+            }
+            map.set(id, merged);
+          }
+        });
+        if (!changed) return prev; // без лишнего re-render CRM
+        return Array.from(map.values()).sort((a, b) => {
+          const da = a.date ? new Date(a.date).getTime() : 0;
+          const db = b.date ? new Date(b.date).getTime() : 0;
+          return db - da;
+        });
+      });
+
+      if (showFeedback) {
+        showToast(added > 0 ? `Добавлено заказов: ${added}` : `Синхронизировано: ${incoming.length}`);
+      }
+      return incoming.length;
+    } catch (e) {
+      console.warn("syncSharedOrders", e);
+      if (showFeedback) showToast("Ошибка синхронизации заказов");
+      return 0;
+    }
+  };
+
+
+  // Подтягиваем общий каталог для ВСЕХ (и админа на другом устройстве)
+  useEffect(() => {
+    if (!dataReady) return;
+    let stopped = false;
+    const pullProducts = async () => {
+      if (showAdmin) return; // не дёргаем форму CRM
+      try {
+        const sharedProds = await sharedProductsLoad();
+        // null = сервер недоступен — не трогаем локальный каталог
+        if (stopped || sharedProds === null || !Array.isArray(sharedProds)) return;
+        // даже пустой массив с сервера = источник правды (все удалены)
+        // но полностью пустой каталог опасен при первом запуске — применяем только если на сервере уже что-то было
+        // или локально есть товары, которых нет на сервере (удаление)
+        setProducts((prev) => {
+          if (sharedProds.length === 0) {
+            // сервер явно пуст после публикации — очищаем каталог
+            return prev.length ? [] : prev;
+          }
+          const merged = applyServerCatalog(prev, sharedProds);
+          const prevKey = prev.map((p) => `${p.id}:${p.price}:${p.name}:${p.pinned ? 1 : 0}`).join("|");
+          const nextKey = merged.map((p) => `${p.id}:${p.price}:${p.name}:${p.pinned ? 1 : 0}`).join("|");
+          return prevKey === nextKey ? prev : merged;
+        });
+      } catch (e) {}
+    };
+    pullProducts();
+    const t = setInterval(pullProducts, 20000);
+    return () => {
+      stopped = true;
+      clearInterval(t);
+    };
+  }, [dataReady, showAdmin]);
+
+  const confirmAction = (msg) => {
+    try {
+      if (typeof window !== "undefined" && typeof window.confirm === "function") {
+        return window.confirm(msg);
+      }
+    } catch (e) {}
+    return true;
+  };
+
+  const deleteProduct = (id) => {
+    if (!confirmAction("Удалить этот товар?")) return;
+    setProducts((prev) => {
+      const next = prev.filter((p) => p.id !== id);
+      // сразу публикуем каталог без удалённого — у всех исчезнет после pull
+      sharedProductsSave(next).then((ok) => {
+        if (ok) showToast("🗑 Удалено у всех");
+        else showToast("⚠️ Удалено локально, сервер не обновился");
+      });
+      return next;
+    });
+    setEditingProduct((cur) => (cur === id ? null : cur));
+    setProductDraft((d) => (d && d.id === id ? null : d));
+    setLocalProduct((d) => (d && d.id === id ? null : d));
+  };
+
+  // Закрепить / открепить товар (закреплённые всегда сверху в каталоге)
+  const togglePinProduct = (id) => {
+    setProducts((prev) => {
+      const next = prev.map((p) => (p.id === id ? { ...p, pinned: !p.pinned } : p));
+      sharedProductsSave(next).catch(() => {});
+      return next;
+    });
+  };
+
+  // Скрыть / показать товар в каталоге (без удаления)
+  const toggleHideProduct = (id) => {
+    setProducts((prev) => {
+      const next = prev.map((p) => (p.id === id ? { ...p, hidden: !p.hidden } : p));
+      sharedProductsSave(next).then((ok) => {
+        const nowHidden = next.find((p) => p.id === id)?.hidden;
+        if (ok) showToast(nowHidden ? "🙈 Скрыто из каталога" : "👁 Снова в каталоге");
+        else showToast("⚠️ Не удалось сохранить на сервере");
+      });
+      return next;
+    });
+  };
+
+  const startAddProduct = () => {
+    const id = Date.now();
+    setIsNewProduct(true);
+    setProductDraft({
+      id,
+      brand: "",
+      name: "",
+      price: "",
+      oldPrice: "",
+      image: "",
+      description: "",
+      sizes: "40, 41, 42",
+    });
+    setEditingProduct(id);
+  };
+
+  const startEditProduct = (p) => {
+    setIsNewProduct(false);
+    setProductDraft({
+      id: p.id,
+      brand: p.brand || "",
+      name: p.name || "",
+      price: String(p.price ?? ""),
+      oldPrice: p.oldPrice != null ? String(p.oldPrice) : "",
+      image: p.image || "",
+      description: p.description || "",
+      sizes: Array.isArray(p.sizes) ? p.sizes.join(", ") : "",
+    });
+    setEditingProduct(p.id);
+  };
+
+  const updateProductDraft = (field, value) => {
+    setProductDraft((d) => (d ? { ...d, [field]: value } : d));
+  };
+
+  const pickProductImage = (onPicked) => {
+    try {
+      if (typeof document === "undefined") {
+        Alert.alert("Ошибка", "Загрузка фото доступна в Telegram / браузере");
+        return;
+      }
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = "image/*";
+      input.onchange = (e) => {
+        const file = e.target?.files?.[0];
+        if (!file) return;
+        if (file.size > 2.5 * 1024 * 1024) {
+          Alert.alert("Файл слишком большой", "Максимум 2.5 МБ. Сожмите фото или укажите URL.");
+          return;
+        }
+        const reader = new FileReader();
+        reader.onload = () => {
+          const dataUrl = String(reader.result || "");
+          // Обновляем и глобальный draft, и локальную форму (через callback)
+          updateProductDraft("image", dataUrl);
+          if (typeof onPicked === "function") onPicked(dataUrl);
+        };
+        reader.readAsDataURL(file);
+      };
+      input.click();
+    } catch (err) {
+      console.warn("pickProductImage", err);
+      Alert.alert("Ошибка", "Не удалось открыть выбор файла");
+    }
+  };
+
+  // draftOverride — чтобы сохранять из локальной формы AdminPanel без гонки setState
+  const saveProductDraft = (draftOverride, isNewOverride) => {
+    const draft = draftOverride || productDraft;
+    const makingNew = typeof isNewOverride === "boolean" ? isNewOverride : isNewProduct;
+    if (!draft) return;
+    const brand = (draft.brand || "").trim() || "Бренд";
+    const name = (draft.name || "").trim() || "Товар";
+    const price = parseInt(String(draft.price).replace(/\D/g, ""), 10) || 0;
+    const oldRaw = String(draft.oldPrice || "").replace(/\D/g, "");
+    const oldPrice = oldRaw ? parseInt(oldRaw, 10) : null;
+    const image = (draft.image || "").trim() || "https://via.placeholder.com/400?text=Photo";
+    const description = (draft.description || "").trim();
+    const sizes = String(draft.sizes || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (!name || name === "Товар") {
+      // если пользователь ничего не ввёл — всё равно сохраняем, но предупреждаем
+      console.warn("[Product] name empty, using placeholder");
+    }
+    if (!price) {
+      Alert.alert("Цена", "Укажите цену товара");
+      return;
+    }
+    const payload = {
+      brand,
+      name,
+      price,
+      oldPrice,
+      image,
+      description,
+      sizes: sizes.length ? sizes : ["40", "41", "42"],
+    };
+    let nextProducts = null;
+    if (makingNew) {
+      nextProducts = [
+        {
+          id: draft.id,
+          ...payload,
+          sales: 0,
+          ratings: [],
+          averageRating: 0,
+          createdAt: new Date().toISOString(),
+          pinned: false,
+        },
+        ...products,
+      ];
+      setProducts(nextProducts);
+    } else {
+      nextProducts = products.map((p) => (p.id === draft.id ? { ...p, ...payload } : p));
+      setProducts(nextProducts);
+    }
+    setEditingProduct(null);
+    setProductDraft(null);
+    setIsNewProduct(false);
+
+    const hasDataImage = String(payload.image || "").startsWith("data:");
+    // Публикуем в ОБЩЕЕ хранилище (все устройства + все пользователи)
+    (async () => {
+      let ok = false;
+      for (let attempt = 0; attempt < 3 && !ok; attempt++) {
+        ok = await sharedProductsSave(nextProducts);
+        if (!ok) await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+      }
+      if (!ok) {
+        console.warn("[Products] shared save failed");
+        showToast("⚠️ Товар локально. Общее сохранение не удалось — повторите");
+      } else if (hasDataImage) {
+        showToast("✅ Сохранено. Для всех устройств лучше URL фото, не файл");
+      } else {
+        showToast("✅ Товар виден на всех устройствах");
+      }
+    })();
+  };
+
+  const cancelProductDraft = () => {
+    setEditingProduct(null);
+    setProductDraft(null);
+    setIsNewProduct(false);
+  };
+
+  const changeStatus = (orderId, newStatus) => {
+    // При завершении заказа просим клиента оставить отзыв
+    const askReview = newStatus === "Забрать деньги" || newStatus === "Деньги получены";
+    // Бонусы клиенту — только когда деньги получены
+    const creditCashback = newStatus === "Деньги получены";
+
+    setAdminOrders((prev) =>
+      prev.map((o) => {
+        if (o.id !== orderId) return o;
+        const patch = { ...o, status: newStatus };
+        if (askReview) patch.askReview = true;
+        if (creditCashback && o.pendingCashback && !o.cashbackCredited) {
+          patch.cashbackCredited = true;
+        }
+        return patch;
+      })
+    );
+    setOrderHistory((prev) =>
+      prev.map((o) => {
+        if (o.id !== orderId) return o;
+        const patch = { ...o, status: newStatus };
+        if (askReview) patch.askReview = true;
+        if (creditCashback && o.pendingCashback && !o.cashbackCredited) {
+          // Начисляем бонусы владельцу заказа (если это текущий пользователь)
+          if (String(o.tgId) === String(user?.id) || !o.tgId) {
+            setBonusBalance((b) => b + (Number(o.pendingCashback) || 0));
+          }
+          patch.cashbackCredited = true;
+        }
+        return patch;
+      })
+    );
+    // cashbackCredited на сервер НЕ ставим — клиент начислит бонусы сам при синхронизации статуса
+    sharedOrdersUpdate(orderId, {
+      status: newStatus,
+      ...(askReview ? { askReview: true } : {}),
+    }).catch(() => {});
+  };
+
+  const updateTracking = (orderId, trackingNumber) => {
+    const track = String(trackingNumber || "").trim();
+    let snapshot = null;
+    setAdminOrders((prev) => {
+      const next = prev.map((o) => {
+        if (String(o.id) !== String(orderId)) return o;
+        const updated = { ...o, trackingNumber: track || null };
+        snapshot = updated;
+        return updated;
+      });
+      return next;
+    });
+    setOrderHistory((prev) =>
+      prev.map((o) =>
+        String(o.id) === String(orderId) ? { ...o, trackingNumber: track || null } : o
+      )
+    );
+    (async () => {
+      let ok = await sharedOrdersUpdate(orderId, { trackingNumber: track || null });
+      if (!ok && snapshot) {
+        ok = !!(await sharedOrdersPush(snapshot));
+      }
+      if (ok) showToast(track ? "📦 Трек сохранён" : "Трек очищен");
+      else showToast("⚠️ Трек не сохранился на сервере");
+    })();
+  };
+
+  const closeAdminPanel = () => {
+    // при закрытии CRM принудительно сохраняем заказы (треки/статусы)
+    const snapshot = adminOrders;
+    if (Array.isArray(snapshot) && snapshot.length > 0) {
+      netlifyOrdersSave(snapshot).catch(() => {});
+    }
+    setShowAdmin(false);
+    setOpenStatusId(null);
+  };
+
+  const sendBroadcast = () => {
+    if (!broadcastText.trim()) {
+      Alert.alert("Ошибка", "Введите текст");
+      return;
+    }
+    Alert.alert("Рассылка отправлена", `Сообщение: ${broadcastText}\nПолучателей: ${users.length}`);
+    setBroadcastText("");
+  };
+
+  const addPromoFromForm = () => {
+    const code = (promoForm.code || "").trim().toUpperCase();
+    const discount = parseInt(String(promoForm.discount || ""), 10);
+    const maxUses = parseInt(String(promoForm.maxUses || ""), 10);
+    if (!code) {
+      Alert.alert("Ошибка", "Введите код промокода");
+      return;
+    }
+    if (!discount || discount < 1 || discount > 100) {
+      Alert.alert("Ошибка", "Скидка должна быть от 1 до 100%");
+      return;
+    }
+    if (promoCodes.some((p) => p.code.toUpperCase() === code)) {
+      Alert.alert("Ошибка", "Такой промокод уже есть");
+      return;
+    }
+    setPromoCodes((prev) => [
+      ...prev,
+      {
+        code,
+        discount,
+        description: (promoForm.description || "").trim(),
+        maxUses: maxUses > 0 ? maxUses : 999999,
+        usedCount: 0,
+        active: true,
+      },
+    ]);
+    setPromoForm({ code: "", discount: "", maxUses: "", description: "" });
+    showToast("✅ Промокод добавлен");
+  };
+
+  const deletePromoCode = (code) => {
+    if (!confirmAction(`Удалить промокод ${code}?`)) return;
+    setPromoCodes((prev) => prev.filter((p) => p.code !== code));
+  };
+
+  let adminRevenue = 0;
+  const salesMap = {};
+  adminOrders.forEach(o => { adminRevenue += o.finalTotal; o.items.forEach(i => { salesMap[i.id] = (salesMap[i.id] || 0) + 1; }); });
+  const popular = Object.keys(salesMap).sort((a,b) => salesMap[b] - salesMap[a]).slice(0,5).map(id => products.find(p => p.id === parseInt(id))).filter(Boolean);
+
+  // ==============================
+  // КОМПОНЕНТЫ СТРАНИЦ
+  // ==============================
+
+  const SizeModal = () => null;
+
+  // ---- ProductCard ----
+  const ProductCard = ({ item }) => {
+    const isFav = favorites.some(x => x.id === item.id);
+    const { theme } = useTheme();
+    const isDark = theme === "dark";
+
+    return (
+      <View style={[styles.card, isDark && styles.cardDark]}>
+        <View style={{ position: "relative" }}>
+          <TouchableOpacity 
+            activeOpacity={0.9}
+            onPress={() => { 
+              setSelectedProduct(item); 
+              setSelectedSize(null); 
+              setPage("product"); 
+            }}
+          >
+            <SmartImage uri={item.image} style={styles.image} />
+          </TouchableOpacity>
+          
+          {/* Кнопка избранного на фото */}
+          <TouchableOpacity
+            style={[styles.favoriteBtn, isFav && styles.favoriteBtnActive]}
+            onPress={(e) => {
+              e?.stopPropagation?.();
+              toggleFavorite(item);
+              setCart(prev => prev.filter(c => c.id !== item.id));
+              showToast(isFav ? "Удалено из избранного" : "❤️ Добавлено в избранное");
+            }}
+            activeOpacity={0.7}
+          >
+            <Text style={[styles.favoriteBtnText, isFav && styles.favoriteBtnTextActive]}>
+              {isFav ? "♥" : "♡"}
+            </Text>
+          </TouchableOpacity>
+
+        </View>
+        
+        <Text style={[styles.brand, isDark && styles.textDark]}>{item.brand}</Text>
+        <Text style={[styles.productName, isDark && styles.textDark]}>{item.name}</Text>
+        
+        {item.oldPrice && <Text style={styles.oldPrice}>{money(item.oldPrice)}</Text>}
+        <Text style={[styles.price, isDark && styles.textDark]}>{money(item.price)}</Text>
+      </View>
+    );
+  };
+
+  // ---- Home (удалена — старт сразу с каталога) ----
+  const Home = () => null;
+
+  // ---- Catalog ----
+  const Catalog = () => {
+    const brands = getBrands(products);
+    const { theme } = useTheme();
+    const isDark = theme === "dark";
+
+    // Локальный стейт поиска — чтобы клавиатура не закрывалась
+    const [localSearch, setLocalSearch] = useState(searchQuery);
+    const [localMin, setLocalMin] = useState(minPrice);
+    const [localMax, setLocalMax] = useState(maxPrice);
+    const [localBrand, setLocalBrand] = useState(selectedBrand);
+    const [sortBy, setSortBy] = useState(null); // null | "asc" | "desc"
+    const [onlyNew, setOnlyNew] = useState(false);   // Новинки (3 дня)
+    const [onlySale, setOnlySale] = useState(false); // Скидки (есть oldPrice)
+    const [filtersOpen, setFiltersOpen] = useState(false);
+    const [localPage, setLocalPage] = useState(1);
+    const [localLoading, setLocalLoading] = useState(false);
+
+    const threeDaysAgo = Date.now() - 3 * 24 * 60 * 60 * 1000;
+
+    // Фильтруем и сортируем локально
+    let localFiltered = products.filter(p => {
+      if (p.hidden) return false; // скрытые админом — не показываем в каталоге
+      const q = localSearch.toLowerCase();
+      const matchName = (p.name || "").toLowerCase().includes(q) || (p.brand || "").toLowerCase().includes(q);
+      const matchBrand = localBrand ? p.brand === localBrand : true;
+      const matchPrice = (localMin === "" || p.price >= parseInt(localMin)) && (localMax === "" || p.price <= parseInt(localMax));
+      const matchNew = !onlyNew || (p.createdAt && new Date(p.createdAt).getTime() >= threeDaysAgo);
+      const matchSale = !onlySale || (p.oldPrice != null && Number(p.oldPrice) > Number(p.price));
+      return matchName && matchBrand && matchPrice && matchNew && matchSale;
+    });
+
+    // Сортировка: сначала закреплённые, потом по цене (если выбрано)
+    localFiltered = [...localFiltered].sort((a, b) => {
+      const pinA = a.pinned ? 1 : 0;
+      const pinB = b.pinned ? 1 : 0;
+      if (pinB !== pinA) return pinB - pinA;
+      if (sortBy === "asc") return a.price - b.price;
+      if (sortBy === "desc") return b.price - a.price;
+      return 0;
+    });
+
+    const LOCAL_PAGE_SIZE = 4;
+    const localPaginated = localFiltered.slice(0, localPage * LOCAL_PAGE_SIZE);
+    const localHasMore = localPaginated.length < localFiltered.length;
+
+    const activeFiltersCount =
+      (localBrand ? 1 : 0) +
+      (sortBy ? 1 : 0) +
+      (localMin !== "" || localMax !== "" ? 1 : 0) +
+      (onlyNew ? 1 : 0) +
+      (onlySale ? 1 : 0);
+
+    const handleSearchChange = (text) => {
+      setLocalSearch(text);
+      setLocalPage(1);
+    };
+    const handleLoadMore = () => {
+      if (localLoading || !localHasMore) return;
+      setLocalLoading(true);
+      setTimeout(() => {
+        setLocalPage(prev => prev + 1);
+        setLocalLoading(false);
+      }, 400);
+    };
+    const resetFilters = () => {
+      setLocalBrand(null);
+      setSelectedBrand(null);
+      setLocalMin("");
+      setLocalMax("");
+      setSortBy(null);
+      setOnlyNew(false);
+      setOnlySale(false);
+      setLocalPage(1);
+    };
+    const applyFilters = () => {
+      setSelectedBrand(localBrand);
+      setMinPrice(localMin);
+      setMaxPrice(localMax);
+      setLocalPage(1);
+      setFiltersOpen(false);
+    };
+
+    return (
+      <View style={[styles.page, isDark && styles.pageDark]}>
+        <Text style={[styles.pageTitle, isDark && styles.textDark]}>Каталог</Text>
+        <TextInput
+          style={[styles.searchInput, isDark && styles.inputDark]}
+          placeholder="Поиск..."
+          placeholderTextColor={isDark ? "#999" : "#888"}
+          value={localSearch}
+          onChangeText={handleSearchChange}
+          blurOnSubmit={false}
+          autoCorrect={false}
+          autoCapitalize="none"
+          returnKeyType="search"
+        />
+
+        {/* Кнопка Фильтры */}
+        <TouchableOpacity
+          style={[
+            styles.filterChip,
+            styles.filterChipActive,
+            { alignSelf: "flex-start", marginBottom: 12, paddingHorizontal: 18 },
+          ]}
+          onPress={() => setFiltersOpen(true)}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.filterChipTextActive}>
+            Фильтры{activeFiltersCount > 0 ? ` · ${activeFiltersCount}` : ""}
+          </Text>
+        </TouchableOpacity>
+
+        {/* Модалка фильтров */}
+        <Modal visible={filtersOpen} transparent animationType="fade" onRequestClose={() => setFiltersOpen(false)}>
+          <View style={styles.modalOverlay}>
+            <View style={[styles.modalView, isDark && styles.modalViewDark, { maxHeight: "85%" }]}>
+              <Text style={[styles.modalTitle, isDark && styles.textDark]}>Фильтры</Text>
+
+              <Text style={[styles.sizeTitle, isDark && styles.textDark, { marginBottom: 8 }]}>Сортировка</Text>
+              <View style={{ flexDirection: "row", flexWrap: "wrap", marginBottom: 16 }}>
+                {[
+                  { key: null, label: "По умолчанию" },
+                  { key: "asc", label: "Цена ↑" },
+                  { key: "desc", label: "Цена ↓" },
+                ].map((opt) => (
+                  <TouchableOpacity
+                    key={String(opt.key)}
+                    style={[
+                      styles.filterChip,
+                      sortBy === opt.key && styles.filterChipActive,
+                      { marginBottom: 6 },
+                    ]}
+                    onPress={() => setSortBy(opt.key)}
+                  >
+                    <Text style={sortBy === opt.key ? styles.filterChipTextActive : null}>
+                      {opt.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              <Text style={[styles.sizeTitle, isDark && styles.textDark, { marginBottom: 8 }]}>Категория</Text>
+              <View style={{ flexDirection: "row", flexWrap: "wrap", marginBottom: 16 }}>
+                <TouchableOpacity
+                  style={[styles.filterChip, onlyNew && styles.filterChipActive, { marginBottom: 6 }]}
+                  onPress={() => setOnlyNew((v) => !v)}
+                >
+                  <Text style={onlyNew ? styles.filterChipTextActive : null}>Новинки</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.filterChip, onlySale && styles.filterChipActive, { marginBottom: 6 }]}
+                  onPress={() => setOnlySale((v) => !v)}
+                >
+                  <Text style={onlySale ? styles.filterChipTextActive : null}>Скидки</Text>
+                </TouchableOpacity>
+              </View>
+
+              <Text style={[styles.sizeTitle, isDark && styles.textDark, { marginBottom: 8 }]}>Бренд</Text>
+              <View style={{ flexDirection: "row", flexWrap: "wrap", marginBottom: 16 }}>
+                <TouchableOpacity
+                  style={[styles.filterChip, localBrand === null && styles.filterChipActive, { marginBottom: 6 }]}
+                  onPress={() => setLocalBrand(null)}
+                >
+                  <Text style={localBrand === null ? styles.filterChipTextActive : null}>Все</Text>
+                </TouchableOpacity>
+                {brands.map((b) => (
+                  <TouchableOpacity
+                    key={b}
+                    style={[styles.filterChip, localBrand === b && styles.filterChipActive, { marginBottom: 6 }]}
+                    onPress={() => setLocalBrand(b)}
+                  >
+                    <Text style={localBrand === b ? styles.filterChipTextActive : null}>{b}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              <Text style={[styles.sizeTitle, isDark && styles.textDark, { marginBottom: 8 }]}>Цена</Text>
+              <View style={styles.priceFilter}>
+                <TextInput
+                  style={[styles.priceInput, isDark && styles.inputDark]}
+                  placeholder="от"
+                  placeholderTextColor={isDark ? "#999" : "#888"}
+                  value={localMin}
+                  onChangeText={setLocalMin}
+                  keyboardType="numeric"
+                  blurOnSubmit={false}
+                />
+                <TextInput
+                  style={[styles.priceInput, isDark && styles.inputDark]}
+                  placeholder="до"
+                  placeholderTextColor={isDark ? "#999" : "#888"}
+                  value={localMax}
+                  onChangeText={setLocalMax}
+                  keyboardType="numeric"
+                  blurOnSubmit={false}
+                />
+              </View>
+
+              <View style={styles.modalButtons}>
+                <TouchableOpacity style={styles.modalCancel} onPress={resetFilters}>
+                  <Text>Сбросить</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.modalConfirm} onPress={applyFilters}>
+                  <Text style={{ color: "#fff", fontWeight: "700" }}>Применить</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        <FlatList
+          data={localPaginated}
+          renderItem={({ item }) => <ProductCard item={item} />}
+          keyExtractor={item => item.id.toString()}
+          numColumns={2}
+          columnWrapperStyle={styles.grid}
+          contentContainerStyle={{ paddingBottom: 20 }}
+          onEndReached={handleLoadMore}
+          onEndReachedThreshold={0.5}
+          keyboardShouldPersistTaps="handled"
+          ListFooterComponent={localLoading ? <Text style={[styles.loader, isDark && styles.textDark]}>Загрузка...</Text> : null}
+          ListEmptyComponent={
+            <View style={{ paddingVertical: 40, alignItems: "center" }}>
+              <Text style={[styles.empty, isDark && styles.textDark]}>
+                {!dataReady ? "Загружаю каталог…" : "Товаров нет"}
+              </Text>
+            </View>
+          }
+        />
+      </View>
+    );
+  };
+
+  // ---- ProductPage ----
+  const ProductPage = () => {
+    if (!selectedProduct) return null;
+    const { theme } = useTheme(); 
+    const isDark = theme === "dark";
+    const [rating, setRating] = useState(0);
+    const [comment, setComment] = useState("");
+    const hasPurchased = orderHistory.some(order => order.items.some(i => i.id === selectedProduct.id));
+
+    const handleAddToCart = () => {
+      if (!selectedSize) {
+        showToast("⚠️ Выберите размер");
+        return;
+      }
+      addCart({ ...selectedProduct, size: selectedSize });
+      // При добавлении в корзину — убираем из избранного
+      setFavorites(prev => prev.filter(x => x.id !== selectedProduct.id));
+      showToast(`✅ ${selectedProduct.name} добавлен в корзину`);
+    };
+
+    const submitRating = () => {
+      if (rating === 0) { 
+        Alert.alert("Ошибка", "Поставьте оценку"); 
+        return; 
+      }
+      addRating(selectedProduct.id, rating, comment);
+      setRating(0); 
+      setComment("");
+      Alert.alert("Спасибо", "Отзыв добавлен");
+    };
+
+    const isFav = favorites.some(x => x.id === selectedProduct.id);
+
+    return (
+      <ScrollView style={[styles.page, isDark && styles.pageDark]} contentContainerStyle={styles.scrollContent}>
+        <View style={styles.productHeader}>
+          <TouchableOpacity style={styles.headerBtn} onPress={() => setPage("catalog")}>
+            <Text style={styles.headerBtnText}>‹</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.headerBtn} onPress={() => shareProduct(selectedProduct)}>
+            <Text style={styles.headerBtnText}>↗</Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.bigImageWrap}>
+          <SmartImage uri={selectedProduct.image} style={styles.bigImage} highQuality />
+          <TouchableOpacity
+            style={[styles.favoriteBtn, styles.favoriteBtnOnImage, isFav && styles.favoriteBtnActive]}
+            onPress={() => {
+              toggleFavorite(selectedProduct);
+              showToast(isFav ? "Удалено из избранного" : "❤️ Добавлено в избранное");
+            }}
+          >
+            <Text style={[styles.favoriteBtnText, isFav && styles.favoriteBtnTextActive]}>{isFav ? "♥" : "♡"}</Text>
+          </TouchableOpacity>
+        </View>
+        
+        <Text style={[styles.productBrand, isDark && styles.textDark]}>{selectedProduct.brand}</Text>
+        <Text style={[styles.productTitle, isDark && styles.textDark]}>{selectedProduct.name}</Text>
+        
+        <View style={styles.priceRow}>
+          {selectedProduct.oldPrice && (
+            <Text style={styles.oldPriceBig}>{money(selectedProduct.oldPrice)}</Text>
+          )}
+          <Text style={[styles.productPrice, isDark && styles.textDark]}>{money(selectedProduct.price)}</Text>
+        </View>
+
+        {selectedProduct.description && (
+          <Text style={[styles.descriptionText, isDark && styles.textDark]}>{selectedProduct.description}</Text>
+        )}
+        {(() => {
+          const approvedReviews = (selectedProduct.ratings || []).filter(r => r.approved !== false);
+          return approvedReviews.length > 0 ? (
+            <Text style={[styles.ratingDisplay, isDark && styles.textDark]}>
+              ★ {selectedProduct.averageRating.toFixed(1)} ({approvedReviews.length} отзывов)
+            </Text>
+          ) : null;
+        })()}
+
+        <View style={styles.sizeBox}>
+          <Text style={[styles.sizeTitle, isDark && styles.textDark]}>Выберите размер</Text>
+          <View style={styles.sizes}>
+            {(selectedProduct.sizes || ["40","41","42","43","44"]).map(size => (
+              <TouchableOpacity
+                key={size}
+                style={[styles.size, selectedSize === size && styles.sizeActive]}
+                onPress={() => setSelectedSize(size)}
+              >
+                <Text style={selectedSize === size && styles.sizeTextActive}>{size}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+
+        <TouchableOpacity style={styles.buyButton} onPress={handleAddToCart}>
+          <Text style={styles.buttonText}>Добавить в корзину</Text>
+        </TouchableOpacity>
+
+        <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Отзывы</Text>
+        {(() => {
+          const approvedReviews = (selectedProduct.ratings || []).filter(r => r.approved !== false);
+          return approvedReviews.length > 0 ? (
+            approvedReviews.slice(0, 5).map((r, idx) => (
+              <View key={idx} style={[styles.reviewItem, isDark && styles.reviewItemDark]}>
+                <Text style={[styles.reviewRating, isDark && styles.textDark]}>{"★".repeat(r.rating)}</Text>
+                <Text style={[styles.reviewComment, isDark && styles.textDark]}>{r.comment}</Text>
+                {r.adminReply ? (
+                  <Text style={[styles.reviewComment, isDark && styles.textDark, { marginTop: 4, fontStyle: "italic", color: "#555" }]}>
+                    Ответ магазина: {r.adminReply}
+                  </Text>
+                ) : null}
+                <Text style={[styles.reviewDate, isDark && styles.textDark]}>{new Date(r.date).toLocaleDateString()}</Text>
+              </View>
+            ))
+          ) : (
+            <Text style={[styles.noReviews, isDark && styles.textDark]}>Пока нет отзывов</Text>
+          );
+        })()}
+
+        {hasPurchased && (
+          <View style={[styles.reviewForm, isDark && styles.reviewFormDark]}>
+            <Text style={[styles.reviewFormTitle, isDark && styles.textDark]}>Оставить отзыв</Text>
+            <View style={styles.stars}>
+              {[1,2,3,4,5].map(s => (
+                <TouchableOpacity key={s} onPress={() => setRating(s)}>
+                  <Text style={[
+                    styles.star,
+                    rating >= s
+                      ? (isDark ? styles.starActiveDark : styles.starActive)
+                      : styles.starInactive
+                  ]}>{rating >= s ? "★" : "☆"}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <TextInput style={[styles.reviewInput, isDark && styles.inputDark]} placeholder="Ваш комментарий..." placeholderTextColor={isDark ? "#999" : "#888"} value={comment} onChangeText={setComment} blurOnSubmit={false} />
+            <TouchableOpacity style={styles.submitReview} onPress={submitRating}>
+              <Text style={styles.buttonText}>Отправить</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+        <View style={{ height: 20 }} />
+      </ScrollView>
+    );
+  };
+
+  // ---- Favorites ----
+  const Favorites = () => {
+    const { theme } = useTheme(); const isDark = theme === "dark";
+    return (
+      <ScrollView style={[styles.page, isDark && styles.pageDark]} contentContainerStyle={styles.scrollContent}>
+        <Text style={[styles.pageTitle, isDark && styles.textDark]}>Избранное</Text>
+        {favorites.length === 0 ? (
+          <Text style={[styles.empty, isDark && styles.textDark]}>Нет сохраненных товаров</Text>
+        ) : (
+          <View style={styles.grid}>
+            {favorites.map(item => <ProductCard key={item.id} item={item} />)}
+          </View>
+        )}
+        <View style={{ height: 20 }} />
+      </ScrollView>
+    );
+  };
+
+  // ---- Cart ----
+  const SWIPE_W = 160; // 80 fav + 80 delete
+
+  const SwipeableCartItem = ({ item, idx, isDark }) => {
+    const translateX = React.useRef(new Animated.Value(0)).current;
+    const offsetX = React.useRef(0);
+    const isFav = favorites.some(x => x.id === item.id);
+
+    const panResponder = React.useRef(
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_, g) =>
+          Math.abs(g.dx) > 10 && Math.abs(g.dx) > Math.abs(g.dy) * 1.2,
+        onPanResponderGrant: () => {
+          translateX.stopAnimation((v) => {
+            offsetX.current = v;
+          });
+        },
+        onPanResponderMove: (_, g) => {
+          const next = Math.min(0, Math.max(-SWIPE_W, offsetX.current + g.dx));
+          translateX.setValue(next);
+        },
+        onPanResponderRelease: (_, g) => {
+          translateX.stopAnimation((v) => {
+            const open = v < -SWIPE_W / 2 || g.vx < -0.6;
+            const to = open ? -SWIPE_W : 0;
+            Animated.spring(translateX, {
+              toValue: to,
+              useNativeDriver: true,
+              tension: 90,
+              friction: 14,
+            }).start();
+            offsetX.current = to;
+          });
+        },
+        onPanResponderTerminate: () => {
+          Animated.spring(translateX, {
+            toValue: offsetX.current < -SWIPE_W / 2 ? -SWIPE_W : 0,
+            useNativeDriver: true,
+            tension: 90,
+            friction: 14,
+          }).start();
+        },
+      })
+    ).current;
+
+    const closeSwipe = () => {
+      Animated.spring(translateX, {
+        toValue: 0,
+        useNativeDriver: true,
+        tension: 90,
+        friction: 14,
+      }).start();
+      offsetX.current = 0;
+    };
+
+    const handleFav = () => {
+      toggleFavorite(item);
+      showToast(isFav ? "Удалено из избранного" : "❤️ Добавлено в избранное");
+      closeSwipe();
+    };
+
+    const handleDelete = () => {
+      removeCart(idx);
+    };
+
+    return (
+      <View style={styles.swipeContainer}>
+        <View style={styles.swipeActions}>
+          <TouchableOpacity style={styles.swipeFavBtn} onPress={handleFav} activeOpacity={0.85}>
+            <Text style={styles.swipeFavIcon}>{isFav ? "♥" : "♡"}</Text>
+            <Text style={styles.swipeFavLabel}>В избранное</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.swipeDelBtn} onPress={handleDelete} activeOpacity={0.85}>
+            <Text style={styles.swipeDelIcon}>✕</Text>
+            <Text style={styles.swipeDelLabel}>Удалить</Text>
+          </TouchableOpacity>
+        </View>
+        <Animated.View
+          style={[
+            styles.cartItem,
+            isDark && styles.cartItemDark,
+            { transform: [{ translateX }], marginBottom: 0 },
+          ]}
+          {...panResponder.panHandlers}
+        >
+          <SmartImage uri={item.image} style={styles.cartImage} />
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.productName, isDark && styles.textDark]}>{item.name}</Text>
+            {item.size && <Text style={[styles.sizeText, isDark && styles.textDark]}>Размер: {item.size}</Text>}
+            {!item.size && <Text style={[styles.sizeText, { color: "red" }]}>⚠️ Размер не выбран</Text>}
+            <Text style={[styles.price, isDark && styles.textDark]}>{money(item.price)}</Text>
+          </View>
+        </Animated.View>
+      </View>
+    );
+  };
+
+  const Cart = () => {
+    const { theme } = useTheme();
+    const isDark = theme === "dark";
+    const { total, discount, usedBonus, finalTotal } = calculateTotals();
+
+    return (
+      <ScrollView style={[styles.page, isDark && styles.pageDark]} contentContainerStyle={styles.scrollContent}>
+        <Text style={[styles.pageTitle, isDark && styles.textDark]}>
+          Корзина{cart.length > 0 && <Text style={styles.cartBadge}> ({cart.length})</Text>}
+        </Text>
+        {cart.length === 0 ? (
+          <Text style={[styles.empty, isDark && styles.textDark]}>Корзина пустая</Text>
+        ) : (
+          <>
+            {cart.map((item, idx) => (
+              <SwipeableCartItem key={`${item.id}-${idx}-${item.size || ""}`} item={item} idx={idx} isDark={isDark} />
+            ))}
+
+            {discount > 0 && <Text style={[styles.discountText, isDark && styles.textDark]}>Скидка: -{money(discount)}</Text>}
+            {bonusBalance > 0 && (
+              <TouchableOpacity style={styles.bonusCheckbox} onPress={() => setUseBonus(!useBonus)}>
+                <Text style={[styles.bonusCheckboxText, isDark && styles.textDark]}>
+                  {useBonus ? "☑" : "☐"} Использовать бонусы ({money(Math.min(bonusBalance, total - discount))})
+                </Text>
+              </TouchableOpacity>
+            )}
+            <Text style={[styles.total, isDark && styles.textDark]}>Итого: {money(total)}</Text>
+            {discount > 0 && <Text style={[styles.discountText, isDark && styles.textDark]}>Скидка: -{money(discount)}</Text>}
+            {useBonus && usedBonus > 0 && <Text style={[styles.discountText, isDark && styles.textDark]}>Бонусы: -{money(usedBonus)}</Text>}
+            <Text style={[styles.finalTotal, isDark && styles.textDark]}>К оплате: {money(finalTotal)}</Text>
+            <TouchableOpacity style={styles.buyButton} onPress={openOrderModal}>
+              <Text style={styles.buttonText}>Оформить заказ</Text>
+            </TouchableOpacity>
+          </>
+        )}
+        <View style={{ height: 20 }} />
+      </ScrollView>
+    );
+  };
+
+  // ---- Profile ----
+  const Profile = () => {
+    const { theme, toggleTheme } = useTheme(); const isDark = theme === "dark";
+    // При открытии профиля — сразу подтягиваем рефералов (без кнопки)
+    useEffect(() => {
+      ensureReferralRegistered();
+      syncReferralStatsFromCloud();
+      const t = setTimeout(() => syncReferralStatsFromCloud(), 2500);
+      return () => clearTimeout(t);
+    }, []);
+
+    return (
+      <ScrollView style={[styles.page, isDark && styles.pageDark]} contentContainerStyle={styles.scrollContent}>
+        <Text style={[styles.pageTitle, isDark && styles.textDark]}>Профиль</Text>
+
+        {/* Тёмная тема — в самом верху */}
+        <View style={[styles.themeRow, { marginBottom: 16 }]}>
+          <Text style={[styles.themeLabel, isDark && styles.textDark]}>Тёмная тема</Text>
+          <Switch value={theme === "dark"} onValueChange={toggleTheme} />
+        </View>
+
+        {isAdmin && (
+          <TouchableOpacity style={styles.adminButton} onPress={() => setShowAdmin(true)}>
+            <Text style={styles.buttonText}>⚙️ CRM</Text>
+          </TouchableOpacity>
+        )}
+
+        {/* Единая плашка: бонусы + рефералы */}
+        <View style={styles.balanceCard}>
+          <Text style={styles.balanceRowLabel}>Ваш бонусный счёт</Text>
+          <Text style={styles.balanceValue}>{money(bonusBalance)}</Text>
+
+          <View style={styles.balanceDivider} />
+
+          <View style={styles.balanceStatRow}>
+            <Text style={styles.balanceStatLabel}>Сумма кэшбэка</Text>
+            <Text style={styles.balanceStatValue}>{currentLevel.cashback}%</Text>
+          </View>
+          <View style={styles.balanceStatRow}>
+            <Text style={styles.balanceStatLabel}>Приглашено друзей</Text>
+            <Text style={styles.balanceStatValue}>{referralCount}</Text>
+          </View>
+          {referralEarnings > 0 && (
+            <View style={styles.balanceStatRow}>
+              <Text style={styles.balanceStatLabel}>Заработано с рефералов</Text>
+              <Text style={styles.balanceStatValue}>{money(referralEarnings)}</Text>
+            </View>
+          )}
+
+          <Text style={styles.balanceHint}>
+            Друг переходит по ссылке → вам начисляется 2% на бонусный счёт
+          </Text>
+        </View>
+
+        <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Ваша реферальная ссылка</Text>
+        <View style={[styles.referralBox, isDark && styles.referralBoxDark]}>
+          <Text style={[styles.referralText, isDark && styles.textDark]} selectable>
+            {referral}
+          </Text>
+          <TouchableOpacity style={styles.copyButton} onPress={copyReferral}>
+            <Text style={styles.buttonText}>📋 Скопировать ссылку</Text>
+          </TouchableOpacity>
+        </View>
+
+        <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Все уровни</Text>
+        {LEVELS.map((item, idx) => {
+          const isActive = item.name === currentLevel.name;
+          // прогресс внутри уровня
+          let levelProgress = 0;
+          if (orders < item.min) {
+            levelProgress = 0;
+          } else if (item.max === 999 || orders > item.max) {
+            levelProgress = 100;
+          } else {
+            const span = item.max - item.min;
+            levelProgress = span <= 0 ? 100 : Math.min(100, Math.round(((orders - item.min) / span) * 100));
+          }
+          const next = LEVELS[idx + 1];
+          const remaining = next && isActive ? Math.max(0, next.min - orders) : 0;
+
+          return (
+            <View
+              key={item.name}
+              style={[
+                styles.levelCard,
+                isActive && styles.activeLevel,
+                !isActive && isDark && styles.levelCardDark,
+              ]}
+            >
+              <Text style={[styles.levelName, isActive && styles.activeText, !isActive && isDark && styles.textDark]}>
+                {item.name}
+              </Text>
+              <Text style={[styles.levelInfo, isActive && styles.activeText, !isActive && isDark && styles.textDark]}>
+                {item.min} – {item.max === 999 ? "∞" : item.max} заказов • {item.cashback}% кэшбэк
+              </Text>
+              {isActive && next && (
+                <Text style={[styles.levelSubInfo, styles.activeText]}>
+                  Осталось {remaining} {remaining === 1 ? "заказ" : remaining < 5 ? "заказа" : "заказов"} до «{next.name}»
+                </Text>
+              )}
+              {isActive && !next && (
+                <Text style={[styles.levelSubInfo, styles.activeText]}>Максимальный уровень</Text>
+              )}
+              {/* белая полоса прогресса */}
+              <View style={[styles.levelProgressTrack, isActive ? styles.levelProgressTrackActive : styles.levelProgressTrackInactive]}>
+                <View
+                  style={[
+                    styles.levelProgressFill,
+                    isActive ? styles.levelProgressFillActive : styles.levelProgressFillInactive,
+                    { width: `${levelProgress}%` },
+                  ]}
+                />
+              </View>
+              <Text style={[styles.levelProgressPct, isActive && styles.activeText, !isActive && isDark && styles.textDark]}>
+                {levelProgress}%
+              </Text>
+            </View>
+          );
+        })}
+        <Text style={[styles.sectionTitle, isDark && styles.textDark]}>История заказов</Text>
+        {orderHistory.length === 0 ? (
+          <Text style={[styles.empty, isDark && styles.textDark]}>Заказов пока нет</Text>
+        ) : (
+          orderHistory.map(order => (
+            <View key={order.id} style={[styles.orderCard, isDark && styles.orderCardDark]}>
+              <Text style={[styles.orderId, isDark && styles.textDark]}>Заказ #{order.id}</Text>
+              <Text style={[styles.orderDate, isDark && styles.textDark]}>{new Date(order.date).toLocaleDateString()}</Text>
+              <Text style={[styles.orderStatus, isDark && styles.textDark]}>Статус: {getClientStatus(order.status)}</Text>
+              {(order.delivery === "europost" ||
+                order.delivery === "euro" ||
+                String(order.delivery || "").toLowerCase().includes("евро")) &&
+                !!order.trackingNumber && (
+                <Text style={[styles.trackingText, isDark && styles.textDark]}>
+                  Трек-номер: {order.trackingNumber}
+                </Text>
+              )}
+              <Text style={[styles.orderTotal, isDark && styles.textDark]}>Сумма: {money(order.finalTotal)}</Text>
+              {(order.items || []).slice(0, 3).map((item, i) => (
+                <Text key={i} style={[styles.orderItem, isDark && styles.textDark]}>• {item.name} x1</Text>
+              ))}
+              {(order.items || []).length > 3 && (
+                <Text style={[styles.orderMore, isDark && styles.textDark]}>и ещё {order.items.length - 3}...</Text>
+              )}
+            </View>
+          ))
+        )}
+        <View style={{ height: 20 }} />
+      </ScrollView>
+    );
+  };
+
+  // При открытии CRM подтягиваем заказы
+  useEffect(() => {
+    if (!showAdmin || !isAdmin) return;
+    syncSharedOrders(false);
+  }, [showAdmin, isAdmin]);
+
+  // ---- CRM helpers (стейт форм на уровне App — Modal не размонтируется) ----
+  useEffect(() => {
+    if (productDraft) {
+      setLocalProduct((prev) => {
+        if (prev && prev.id === productDraft.id) return prev;
+        return { ...productDraft };
+      });
+      setLocalIsNew(isNewProduct);
+    } else {
+      setLocalProduct(null);
+    }
+  }, [productDraft, isNewProduct]);
+
+  const handleSendBroadcast = () => {
+    if (!localBroadcast.trim()) {
+      Alert.alert("Ошибка", "Введите текст");
+      return;
+    }
+    setBroadcastText(localBroadcast);
+    Alert.alert("Рассылка отправлена", `Сообщение: ${localBroadcast}\nПолучателей: ${users.length}`);
+    setLocalBroadcast("");
+  };
+
+  // Принудительно опубликовать каталог для всех аккаунтов/устройств
+  const publishCatalogToAll = async () => {
+    showToast("Публикация каталога…");
+    const ok = await sharedProductsSave(products);
+    if (ok) {
+      showToast("✅ Каталог опубликован для всех");
+    } else {
+      Alert.alert(
+        "Не удалось опубликовать",
+        "Сервер Netlify не ответил. Убедитесь, что задеплоены netlify/functions/catalog.mjs и сайт открыт с вашего netlify.app домена."
+      );
+    }
+  };
+
+  // ---- Review Prompt (после завершения заказа) ----
+  const submitReviewPrompt = () => {
+    if (!reviewPrompt) return;
+    if (!reviewRating) {
+      Alert.alert("Оценка", "Поставьте оценку от 1 до 5");
+      return;
+    }
+    const { product, orderId } = reviewPrompt;
+    addRating(product.id, reviewRating, reviewComment || "");
+    setOrderHistory((prev) =>
+      prev.map((o) => (o.id === orderId ? { ...o, reviewDone: true, askReview: false } : o))
+    );
+    setAdminOrders((prev) =>
+      prev.map((o) => (o.id === orderId ? { ...o, reviewDone: true, askReview: false } : o))
+    );
+    setReviewPrompt(null);
+    showToast("Спасибо за отзыв!");
+  };
+
+  const skipReviewPrompt = () => {
+    if (!reviewPrompt) return;
+    const orderId = reviewPrompt.orderId;
+    try {
+      if (typeof localStorage !== "undefined") {
+        const prev = JSON.parse(localStorage.getItem("krost_dismissed_reviews") || "[]");
+        if (!prev.includes(orderId)) {
+          localStorage.setItem("krost_dismissed_reviews", JSON.stringify([...prev, orderId]));
+        }
+      }
+    } catch (e) {}
+    setOrderHistory((prev) =>
+      prev.map((o) => (o.id === orderId ? { ...o, reviewDone: true, askReview: false } : o))
+    );
+    setAdminOrders((prev) =>
+      prev.map((o) => (o.id === orderId ? { ...o, reviewDone: true, askReview: false } : o))
+    );
+    setReviewPrompt(null);
+  };
+
+  // ---- OrderModal ----
+  const OrderModal = () => {
+    const [fullName, setFullName] = useState("");
+    const [address, setAddress] = useState("");
+    const [phone, setPhone] = useState("");
+    const [delivery, setDelivery] = useState("courier");
+    const [useFreeDelivery, setUseFreeDelivery] = useState(false);
+    const [errorMsg, setErrorMsg] = useState("");
+    const [promoInput, setPromoInput] = useState("");
+    const [promoMsg, setPromoMsg] = useState("");
+    const { theme } = useTheme(); const isDark = theme === "dark";
+    useEffect(() => {
+      if (!orderModalVisible) { 
+        setFullName(""); setAddress(""); setPhone(""); setDelivery("courier"); setUseFreeDelivery(false); setErrorMsg("");
+        setPromoInput(""); setPromoMsg("");
+      }
+    }, [orderModalVisible]);
+
+    const { total, discount, finalTotal } = calculateTotals();
+    let dp = delivery === "europost" ? 12 : 10;
+    const fullPhonePreview = phone.replace(/\D/g, "").length >= 9 ? "+375" + phone.replace(/\D/g, "") : "";
+    const eligible = fullName.trim() && fullPhonePreview ? isFreeDeliveryEligible(fullPhonePreview, fullName) : false;
+    const showFreeDeliveryOption = eligible && orderHistory.length === 0;
+    if (useFreeDelivery && showFreeDeliveryOption) dp = 0;
+    const orderTotal = finalTotal + dp;
+
+    const applyPromoInModal = () => {
+      const code = promoInput.trim();
+      if (!code) {
+        setPromoMsg("Введите промокод");
+        return;
+      }
+      const found = promoCodes.find((p) => {
+        if (p.code.toUpperCase() !== code.toUpperCase()) return false;
+        if (p.active === false) return false;
+        const maxU = p.maxUses != null ? Number(p.maxUses) : 999999;
+        const used = Number(p.usedCount) || 0;
+        return used < maxU;
+      });
+      if (found) {
+        setPromoCode(code);
+        setPromoMsg(`✓ Скидка ${found.discount}% применена`);
+      } else {
+        setPromoCode("");
+        setPromoMsg("Неверный, неактивный или исчерпанный промокод");
+      }
+    };
+
+    const handlePlace = () => {
+      const digits = phone.replace(/\D/g, "");
+      if (!fullName.trim() || !address.trim() || digits.length < 9) {
+        setErrorMsg("⚠️ Заполните все поля (ФИО, адрес, телефон)");
+        return;
+      }
+      const fullPhone = "+375" + digits;
+      if (useFreeDelivery && !isFreeDeliveryEligible(fullPhone, fullName)) {
+        setErrorMsg("⚠️ Бесплатная доставка уже была использована с этими данными");
+        return;
+      }
+      if (cart.length === 0) {
+        setErrorMsg("⚠️ Корзина пуста");
+        return;
+      }
+      setErrorMsg("");
+      placeOrderWithDetails({ fullName, address, phone: fullPhone, delivery, freeDelivery: useFreeDelivery });
+    };
+    return (
+      <Modal transparent visible={orderModalVisible} onRequestClose={closeOrderModal} animationType="none">
+        <View style={styles.modalOverlay}>
+          <ScrollView contentContainerStyle={styles.modalScrollView} keyboardShouldPersistTaps="handled">
+            <View style={[styles.modalView, isDark && styles.modalViewDark]}>
+              <Text style={[styles.modalTitle, isDark && styles.textDark]}>Оформление заказа</Text>
+              
+              {errorMsg ? (
+                <View style={styles.modalError}>
+                  <Text style={styles.modalErrorText}>{errorMsg}</Text>
+                </View>
+              ) : null}
+
+              <Text style={[styles.deliveryLabel, isDark && styles.textDark]}>Способ доставки</Text>
+              <View style={styles.deliveryOptions}>
+                <TouchableOpacity style={[styles.deliveryOption, delivery === "courier" && styles.deliveryOptionActive]} onPress={() => setDelivery("courier")}>
+                  <Text style={[styles.deliveryOptionTitle, delivery === "courier" && styles.deliveryOptionTextActive]}>Курьер</Text>
+                  <Text style={[styles.deliveryDetail, delivery === "courier" && styles.deliveryDetailActive]}>10 BYN</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.deliveryOption, delivery === "europost" && styles.deliveryOptionActive]} onPress={() => setDelivery("europost")}>
+                  <Text style={[styles.deliveryOptionTitle, delivery === "europost" && styles.deliveryOptionTextActive]}>ЕвроПочта</Text>
+                  <Text style={[styles.deliveryDetail, delivery === "europost" && styles.deliveryDetailActive]}>12 BYN</Text>
+                </TouchableOpacity>
+              </View>
+              <TextInput style={[styles.modalInput, isDark && styles.inputDark]} placeholder="ФИО" placeholderTextColor={isDark ? "#999" : "#888"} value={fullName} onChangeText={(t) => { setFullName(t); setErrorMsg(""); }} />
+              <TextInput style={[styles.modalInput, isDark && styles.inputDark]} placeholder={delivery === "europost" ? "Адрес и номер отделения" : "Адрес доставки"} placeholderTextColor={isDark ? "#999" : "#888"} value={address} onChangeText={(t) => { setAddress(t); setErrorMsg(""); }} />
+              <View style={[styles.phoneRow, isDark && styles.inputDark]}>
+                <Text style={[styles.phonePrefix, isDark && { color: "#fff" }]}>+375</Text>
+                <TextInput
+                  style={[styles.phoneInput, isDark && { color: "#fff" }]}
+                  placeholder="29 123-45-67"
+                  placeholderTextColor={isDark ? "#999" : "#888"}
+                  value={phone}
+                  onChangeText={(t) => {
+                    const digits = t.replace(/\D/g, "").slice(0, 9);
+                    setPhone(digits);
+                    setErrorMsg("");
+                  }}
+                  keyboardType="phone-pad"
+                  maxLength={9}
+                />
+              </View>
+
+              {/* Промокод — в оформлении заказа */}
+              <View style={styles.promoBox}>
+                <TextInput
+                  style={[styles.promoInput, isDark && styles.inputDark]}
+                  placeholder="Промокод"
+                  placeholderTextColor={isDark ? "#999" : "#888"}
+                  value={promoInput}
+                  onChangeText={(t) => { setPromoInput(t); setPromoMsg(""); }}
+                  autoCapitalize="characters"
+                />
+                <TouchableOpacity style={styles.promoButton} onPress={applyPromoInModal}>
+                  <Text style={styles.buttonText}>Применить</Text>
+                </TouchableOpacity>
+              </View>
+              {!!promoMsg && (
+                <Text style={[styles.discountText, isDark && styles.textDark, { marginBottom: 8 }, promoMsg.startsWith("✓") ? null : { color: "#c00" }]}>
+                  {promoMsg}
+                </Text>
+              )}
+              {discount > 0 && (
+                <Text style={[styles.discountText, isDark && styles.textDark, { marginBottom: 4 }]}>
+                  Скидка по промокоду: -{money(discount)}
+                </Text>
+              )}
+
+              {showFreeDeliveryOption && (
+                <TouchableOpacity style={styles.bonusCheckbox} onPress={() => setUseFreeDelivery(!useFreeDelivery)}>
+                  <Text style={[styles.bonusCheckboxText, isDark && styles.textDark]}>
+                    {useFreeDelivery ? "☑" : "☐"} Бесплатная доставка (первый заказ)
+                  </Text>
+                </TouchableOpacity>
+              )}
+              <View style={styles.totalRow}>
+                <Text style={[styles.totalLabel, isDark && styles.textDark]}>Итого к оплате:</Text>
+                <Text style={[styles.totalAmount, isDark && styles.textDark]}>{money(orderTotal)}</Text>
+              </View>
+              <View style={styles.modalButtons}>
+                <TouchableOpacity style={styles.modalCancel} onPress={closeOrderModal}><Text>Отмена</Text></TouchableOpacity>
+                <TouchableOpacity style={styles.modalConfirm} onPress={handlePlace}><Text style={styles.buttonText}>Подтвердить</Text></TouchableOpacity>
+              </View>
+            </View>
+          </ScrollView>
+        </View>
+      </Modal>
+    );
+  };
+
+  // ---- Меню (pill-стиль, чёрно-белый) ----
+  const Menu = () => {
+    const { theme } = useTheme();
+    const isDark = theme === "dark";
+    const isActive = (target) => page === target;
+
+    const textStyle = (active) => [
+      styles.menuText,
+      active && styles.menuTextActive,
+      isDark && { color: active ? '#fff' : '#999' },
+    ];
+    const iconStyle = (active) => [
+      styles.menuIcon,
+      active && (isDark ? { color: '#111' } : styles.menuIconActive),
+    ];
+
+    return (
+      <View style={styles.menuWrapper} pointerEvents="box-none">
+        <View style={[styles.menu, isDark && styles.menuDark]}>
+          <TouchableOpacity onPress={() => setPage("catalog")} style={styles.menuButton} activeOpacity={0.7}>
+            <View style={[styles.menuIconWrap, isActive("catalog") && (isDark ? styles.menuIconWrapActiveDark : styles.menuIconWrapActive)]}>
+              <Text style={iconStyle(isActive("catalog"))}>👟</Text>
+            </View>
+            <Text style={textStyle(isActive("catalog"))}>Каталог</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity onPress={() => setPage("favorites")} style={styles.menuButton} activeOpacity={0.7}>
+            <View style={{ position: 'relative' }}>
+              <View style={[styles.menuIconWrap, isActive("favorites") && (isDark ? styles.menuIconWrapActiveDark : styles.menuIconWrapActive)]}>
+                <Text style={iconStyle(isActive("favorites"))}>♥</Text>
+              </View>
+              {favorites.length > 0 && (
+                <View style={styles.menuBadge}>
+                  <Text style={styles.menuBadgeText}>{favorites.length}</Text>
+                </View>
+              )}
+            </View>
+            <Text style={textStyle(isActive("favorites"))}>Избранное</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity onPress={() => setPage("cart")} style={styles.menuButton} activeOpacity={0.7}>
+            <View style={{ position: 'relative' }}>
+              <View style={[styles.menuIconWrap, isActive("cart") && (isDark ? styles.menuIconWrapActiveDark : styles.menuIconWrapActive)]}>
+                <Text style={iconStyle(isActive("cart"))}>🛒</Text>
+              </View>
+              {cart.length > 0 && (
+                <View style={styles.menuBadge}>
+                  <Text style={styles.menuBadgeText}>{cart.length}</Text>
+                </View>
+              )}
+            </View>
+            <Text style={textStyle(isActive("cart"))}>Корзина</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity onPress={() => setPage("profile")} style={styles.menuButton} activeOpacity={0.7}>
+            <View style={[styles.menuIconWrap, isActive("profile") && (isDark ? styles.menuIconWrapActiveDark : styles.menuIconWrapActive)]}>
+              <Text style={iconStyle(isActive("profile"))}>👤</Text>
+            </View>
+            <Text style={textStyle(isActive("profile"))}>Я</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  };
+
+  // ==============================
+  // РЕНДЕР
+  // ==============================
+  let content;
+  if (page === "home" || page === "catalog") content = <Catalog />; // home больше нет
+  else if (page === "product") content = <ProductPage />;
+  else if (page === "favorites") content = <Favorites />;
+  else if (page === "cart") content = <Cart />;
+  else if (page === "profile") content = <Profile />;
+
+  return (
+    <ThemeContext.Provider value={{ theme, toggleTheme }}>
+      <View style={[styles.root, theme === "dark" && styles.rootDark]}>
+        <View style={[styles.contentContainer, theme === "dark" && styles.pageDark]}>
+          {content}
+        </View>
+        <Menu />
+        <OrderModal />
+        {/* Review modal — inline, чтобы не размонтировался при вводе */}
+        <Modal transparent visible={!!reviewPrompt} animationType="fade" onRequestClose={skipReviewPrompt}>
+          <View style={styles.modalOverlay}>
+            <View style={[styles.modalView, theme === "dark" && styles.modalViewDark]}>
+              <Text style={[styles.modalTitle, theme === "dark" && styles.textDark]}>Оцените заказ</Text>
+              {!!reviewPrompt && (
+                <Text style={[styles.brand, theme === "dark" && styles.textDark, { textAlign: "center", marginBottom: 8 }]}>
+                  {reviewPrompt.product.brand} {reviewPrompt.product.name}
+                </Text>
+              )}
+              {!!reviewPrompt?.product?.image && (
+                <SmartImage
+                  uri={reviewPrompt.product.image}
+                  style={{ width: 100, height: 100, borderRadius: 16, alignSelf: "center", marginBottom: 12 }}
+                />
+              )}
+              <View style={[styles.stars, { justifyContent: "center" }]}>
+                {[1, 2, 3, 4, 5].map((s) => (
+                  <TouchableOpacity key={s} onPress={() => setReviewRating(s)} activeOpacity={0.7}>
+                    <Text
+                      style={[
+                        styles.star,
+                        reviewRating >= s
+                          ? theme === "dark"
+                            ? styles.starActiveDark
+                            : styles.starActive
+                          : styles.starInactive,
+                      ]}
+                    >
+                      {reviewRating >= s ? "★" : "☆"}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <TextInput
+                style={[
+                  styles.reviewInput,
+                  theme === "dark" && styles.inputDark,
+                  { minHeight: 90, textAlignVertical: "top" },
+                ]}
+                placeholder="Комментарий (необязательно)"
+                placeholderTextColor={theme === "dark" ? "#999" : "#888"}
+                value={reviewComment}
+                onChangeText={setReviewComment}
+                multiline
+                blurOnSubmit={false}
+                textAlignVertical="top"
+              />
+              <View style={styles.modalButtons}>
+                <TouchableOpacity style={styles.modalCancel} onPress={skipReviewPrompt}>
+                  <Text>Позже</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.modalConfirm} onPress={submitReviewPrompt}>
+                  <Text style={{ color: "#fff", fontWeight: "700" }}>Отправить</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        {/* CRM */}
+        {isAdmin && (
+          <Modal visible={showAdmin} animationType="none" transparent={false} onRequestClose={closeAdminPanel}>
+            <View style={[styles.page, theme === "dark" && styles.pageDark, { paddingTop: 40 }]}>
+              <Toast message={toastMessage} visible={toastVisible} onHide={hideToast} />
+              <TouchableOpacity onPress={() => setShowAdmin(false)} style={styles.closeAdmin}>
+                <Text style={[styles.closeAdminText, theme === "dark" && styles.textDark]}>✕ Закрыть CRM</Text>
+              </TouchableOpacity>
+
+              <ScrollView
+                style={{ flex: 1 }}
+                contentContainerStyle={{ paddingBottom: 60, flexGrow: 1 }}
+                keyboardShouldPersistTaps="always"
+                nestedScrollEnabled
+                keyboardDismissMode="none"
+              >
+                <Text style={[styles.pageTitle, theme === "dark" && styles.textDark]}>CRM</Text>
+
+                <View style={styles.adminStatCard}>
+                  <Text style={styles.adminStatWhite}>Товаров в каталоге: {products.length}</Text>
+                  <Text style={styles.adminStatWhite}>Промокодов: {promoCodes.length}</Text>
+                  <Text style={[styles.adminStatWhite, { opacity: 0.75, fontSize: 13, marginTop: 6 }]}>
+                    Пуш о заказе — в Telegram. Статусы меняйте ниже. Учёт — в Google Таблицах.
+                  </Text>
+                  <TouchableOpacity
+                    style={[styles.addBtn, { marginTop: 12, marginBottom: 0, backgroundColor: "#fff" }]}
+                    onPress={publishCatalogToAll}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={[styles.buttonText, { color: "#111" }]}>🌐 Опубликовать каталог для всех</Text>
+                  </TouchableOpacity>
+                </View>
+
+                <Text style={[styles.sectionTitle, theme === "dark" && styles.textDark]}>Заказы</Text>
+                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8, flexWrap: "wrap", gap: 8 }}>
+                  <Text style={[styles.crmMuted, theme === "dark" && styles.textDark, { flex: 1 }]}>
+                    Статус видит клиент в профиле. «Деньги получены» — бонусы и отзыв.
+                  </Text>
+                  <TouchableOpacity
+                    style={[styles.productAdminBtn, { paddingHorizontal: 12, paddingVertical: 8 }]}
+                    onPress={() => syncSharedOrders(true)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.productAdminBtnText}>Обновить</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {adminOrders.length === 0 ? (
+                  <Text style={[styles.empty, theme === "dark" && styles.textDark, { marginBottom: 16 }]}>
+                    Заказов пока нет
+                  </Text>
+                ) : (
+                  <ScrollView horizontal showsHorizontalScrollIndicator nestedScrollEnabled style={{ marginBottom: 16 }}>
+                    <View style={styles.crmTable}>
+                    <ScrollView
+                      nestedScrollEnabled
+                      style={{ maxHeight: 520 }}
+                      showsVerticalScrollIndicator
+                    >
+                      {/* header */}
+                      <View style={[styles.crmTableRow, styles.crmTableHeader]}>
+                        <Text style={[styles.crmTh, { width: 72 }]}>#</Text>
+                        <Text style={[styles.crmTh, { width: 120 }]}>Дата</Text>
+                        <Text style={[styles.crmTh, { width: 140 }]}>Статус</Text>
+                        <Text style={[styles.crmTh, { width: 200 }]}>Клиент</Text>
+                        <Text style={[styles.crmTh, { width: 130 }]}>Трек</Text>
+                        <Text style={[styles.crmTh, { width: 180 }]}>Товар</Text>
+                        <Text style={[styles.crmTh, { width: 80 }]}>Сумма</Text>
+                      </View>
+                      {adminOrders.slice(0, 50).map((order, idx) => {
+                        const itemsLabel = (order.items || [])
+                          .map((i) => `${i.brand || ""} ${i.name}${i.size ? ` (${i.size})` : ""}`.trim())
+                          .join(", ");
+                        const dateLabel = order.date
+                          ? new Date(order.date).toLocaleString("ru-RU", {
+                              day: "2-digit",
+                              month: "2-digit",
+                              year: "2-digit",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })
+                          : "—";
+                        const isOpen = openStatusId === order.id;
+                        return (
+                          <View key={order.id}>
+                            <View
+                              style={[
+                                styles.crmTableRow,
+                                idx % 2 === 1 && styles.crmTableRowAlt,
+                                theme === "dark" && { borderBottomColor: "#333" },
+                              ]}
+                            >
+                              <Text style={[styles.crmTd, { width: 72, fontWeight: "700" }]} numberOfLines={1}>
+                                {order.id}
+                              </Text>
+                              <Text style={[styles.crmTd, { width: 120 }]} numberOfLines={2}>
+                                {dateLabel}
+                              </Text>
+                              <View style={{ width: 140, paddingVertical: 6, paddingHorizontal: 4 }}>
+                                <TouchableOpacity
+                                  style={[
+                                    styles.crmStatusBtn,
+                                    {
+                                      backgroundColor: getStatusBadgeStyle(order.status || "Новый").backgroundColor,
+                                      borderColor: getStatusBadgeStyle(order.status || "Новый").borderColor,
+                                    },
+                                  ]}
+                                  onPress={() => setOpenStatusId(isOpen ? null : order.id)}
+                                  activeOpacity={0.85}
+                                >
+                                  <Text
+                                    style={[
+                                      styles.crmStatusBtnText,
+                                      { color: getStatusBadgeStyle(order.status || "Новый").color },
+                                    ]}
+                                    numberOfLines={1}
+                                  >
+                                    {order.status || "Новый"} ▾
+                                  </Text>
+                                </TouchableOpacity>
+                              </View>
+                              <View style={{ width: 200, paddingVertical: 6, paddingHorizontal: 6 }}>
+                                <Text style={styles.crmTdStrong} numberOfLines={1}>
+                                  {order.fullName || "—"}
+                                </Text>
+                                <Text style={styles.crmTdMuted} numberOfLines={1}>
+                                  {order.phone || "—"}
+                                </Text>
+                                <Text style={styles.crmTdMuted} numberOfLines={1}>
+                                  {order.tgUsername ? `@${order.tgUsername}` : order.tgId ? `id:${order.tgId}` : "—"}
+                                </Text>
+                                <Text style={styles.crmTdMuted} numberOfLines={2}>
+                                  {order.address || "—"}
+                                </Text>
+                              </View>
+                              <View style={{ width: 130, paddingVertical: 4, paddingHorizontal: 4 }}>
+                                <TextInput
+                                  style={styles.crmTrackInput}
+                                  placeholder="Трек-номер"
+                                  placeholderTextColor="#999"
+                                  value={order.trackingNumber || ""}
+                                  onChangeText={(t) => {
+                                    setAdminOrders((prev) =>
+                                      prev.map((o) =>
+                                        String(o.id) === String(order.id)
+                                          ? { ...o, trackingNumber: t }
+                                          : o
+                                      )
+                                    );
+                                  }}
+                                  onBlur={() => {
+                                    const cur = (order.trackingNumber || "").trim();
+                                    updateTracking(order.id, cur);
+                                  }}
+                                  onSubmitEditing={() => {
+                                    const cur = (order.trackingNumber || "").trim();
+                                    updateTracking(order.id, cur);
+                                  }}
+                                  blurOnSubmit
+                                  returnKeyType="done"
+                                />
+                              </View>
+                              <Text style={[styles.crmTd, { width: 180 }]} numberOfLines={3}>
+                                {itemsLabel || "—"}
+                              </Text>
+                              <Text style={[styles.crmTd, { width: 80, fontWeight: "700" }]}>
+                                {order.finalTotal != null ? `${order.finalTotal}` : "—"}
+                              </Text>
+                            </View>
+                            {isOpen && (
+                              <View style={styles.crmStatusMenu}>
+                                {ORDER_STATUSES.map((st) => (
+                                  <TouchableOpacity
+                                    key={st}
+                                    style={[
+                                      styles.crmStatusMenuItem,
+                                      order.status === st && styles.crmStatusMenuItemActive,
+                                    ]}
+                                    onPress={() => {
+                                      changeStatus(order.id, st);
+                                      setOpenStatusId(null);
+                                    }}
+                                  >
+                                    <Text
+                                      style={[
+                                        styles.crmStatusMenuText,
+                                        order.status === st && styles.crmStatusMenuTextActive,
+                                      ]}
+                                    >
+                                      {st}
+                                    </Text>
+                                  </TouchableOpacity>
+                                ))}
+
+                              </View>
+                            )}
+                          </View>
+                        );
+                      })}
+                    </ScrollView>
+                    </View>
+                  </ScrollView>
+                )}
+
+                <Text style={[styles.sectionTitle, theme === "dark" && styles.textDark]}>Промокоды</Text>
+                <View style={[styles.promoFormCard, theme === "dark" && styles.productEditDark]}>
+                  <Text style={[styles.crmMuted, theme === "dark" && styles.textDark, { marginBottom: 8 }]}>
+                    Новый промокод
+                  </Text>
+                  <TextInput
+                    style={[styles.editInput, theme === "dark" && styles.inputDark]}
+                    placeholder="Код (SAVE10)"
+                    placeholderTextColor="#999"
+                    value={localPromo.code}
+                    onChangeText={(t) => setLocalPromo((f) => ({ ...f, code: t }))}
+                    autoCapitalize="characters"
+                    blurOnSubmit={false}
+                  />
+                  <TextInput
+                    style={[styles.editInput, theme === "dark" && styles.inputDark]}
+                    placeholder="Скидка %"
+                    placeholderTextColor="#999"
+                    value={localPromo.discount}
+                    onChangeText={(t) => setLocalPromo((f) => ({ ...f, discount: t.replace(/\D/g, "") }))}
+                    keyboardType="numeric"
+                    blurOnSubmit={false}
+                  />
+                  <TextInput
+                    style={[styles.editInput, theme === "dark" && styles.inputDark]}
+                    placeholder="Кол-во использований (напр. 50)"
+                    placeholderTextColor="#999"
+                    value={localPromo.maxUses}
+                    onChangeText={(t) => setLocalPromo((f) => ({ ...f, maxUses: t.replace(/\D/g, "") }))}
+                    keyboardType="numeric"
+                    blurOnSubmit={false}
+                  />
+                  <TextInput
+                    style={[styles.editInput, theme === "dark" && styles.inputDark]}
+                    placeholder="Описание (необязательно)"
+                    placeholderTextColor="#999"
+                    value={localPromo.description}
+                    onChangeText={(t) => setLocalPromo((f) => ({ ...f, description: t }))}
+                    blurOnSubmit={false}
+                  />
+                  <TouchableOpacity style={styles.addBtn} onPress={() => {
+                    setPromoForm(localPromo);
+                    setTimeout(() => {
+                      addPromoFromForm();
+                      setLocalPromo({ code: "", discount: "", maxUses: "", description: "" });
+                    }, 0);
+                  }}>
+                    <Text style={styles.buttonText}>+ Создать промокод</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {promoCodes.map((promo) => {
+                  const used = Number(promo.usedCount) || 0;
+                  const maxU = promo.maxUses != null ? Number(promo.maxUses) : 999999;
+                  const left = Math.max(0, maxU - used);
+                  return (
+                    <View key={promo.code} style={[styles.productEdit, theme === "dark" && styles.productEditDark]}>
+                      <Text style={[styles.productName, theme === "dark" && styles.textDark]}>
+                        {promo.code} — {promo.discount}%
+                      </Text>
+                      {!!promo.description && (
+                        <Text style={[styles.brand, theme === "dark" && styles.textDark]}>{promo.description}</Text>
+                      )}
+                      <Text style={[styles.crmMuted, theme === "dark" && styles.textDark]}>
+                        Использовано: {used} / {maxU >= 999999 ? "∞" : maxU} · Осталось: {maxU >= 999999 ? "∞" : left}
+                      </Text>
+                      <View style={styles.editActions}>
+                        <TouchableOpacity onPress={() => deletePromoCode(promo.code)}>
+                          <Text style={[styles.editAction, { color: "red" }]}>🗑 Удалить</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  );
+                })}
+
+                <Text style={[styles.sectionTitle, theme === "dark" && styles.textDark]}>Управление товарами</Text>
+                <TouchableOpacity style={styles.addBtn} onPress={startAddProduct}>
+                  <Text style={styles.buttonText}>+ Добавить товар</Text>
+                </TouchableOpacity>
+
+                <TextInput
+                  style={[styles.editInput, theme === "dark" && styles.inputDark, { marginBottom: 10 }]}
+                  placeholder="🔍 Поиск по названию / бренду..."
+                  placeholderTextColor="#999"
+                  value={productSearch}
+                  onChangeText={setProductSearch}
+                  blurOnSubmit={false}
+                />
+
+                {localProduct && (
+                  <View style={[styles.productEdit, theme === "dark" && styles.productEditDark, { borderWidth: 2, borderColor: "#111" }]}>
+                    <Text style={[styles.productName, theme === "dark" && styles.textDark]}>
+                      {localIsNew ? "Новый товар" : "Редактирование"}
+                    </Text>
+                    <TextInput
+                      style={[styles.editInput, theme === "dark" && styles.inputDark]}
+                      value={localProduct.brand || ""}
+                      onChangeText={(t) => setLocalProduct((d) => ({ ...d, brand: t }))}
+                      placeholder="Бренд"
+                      placeholderTextColor="#999"
+                      blurOnSubmit={false}
+                    />
+                    <TextInput
+                      style={[styles.editInput, theme === "dark" && styles.inputDark]}
+                      value={localProduct.name || ""}
+                      onChangeText={(t) => setLocalProduct((d) => ({ ...d, name: t }))}
+                      placeholder="Название"
+                      placeholderTextColor="#999"
+                      blurOnSubmit={false}
+                    />
+                    <TextInput
+                      style={[styles.editInput, theme === "dark" && styles.inputDark]}
+                      value={localProduct.price || ""}
+                      onChangeText={(t) => setLocalProduct((d) => ({ ...d, price: t }))}
+                      placeholder="Цена"
+                      placeholderTextColor="#999"
+                      keyboardType="numeric"
+                      blurOnSubmit={false}
+                    />
+                    <TextInput
+                      style={[styles.editInput, theme === "dark" && styles.inputDark]}
+                      value={localProduct.oldPrice || ""}
+                      onChangeText={(t) => setLocalProduct((d) => ({ ...d, oldPrice: t }))}
+                      placeholder="Старая цена (необязательно)"
+                      placeholderTextColor="#999"
+                      keyboardType="numeric"
+                      blurOnSubmit={false}
+                    />
+                    <TextInput
+                      style={[styles.editInput, theme === "dark" && styles.inputDark]}
+                      value={localProduct.description || ""}
+                      onChangeText={(t) => setLocalProduct((d) => ({ ...d, description: t }))}
+                      placeholder="Описание"
+                      placeholderTextColor="#999"
+                      multiline
+                      blurOnSubmit={false}
+                      textAlignVertical="top"
+                    />
+                    <TextInput
+                      style={[styles.editInput, theme === "dark" && styles.inputDark]}
+                      value={localProduct.sizes || ""}
+                      onChangeText={(t) => setLocalProduct((d) => ({ ...d, sizes: t }))}
+                      placeholder="Размеры через запятую"
+                      placeholderTextColor="#999"
+                      blurOnSubmit={false}
+                    />
+                    <TextInput
+                      style={[styles.editInput, theme === "dark" && styles.inputDark]}
+                      value={localProduct.image || ""}
+                      onChangeText={(t) => setLocalProduct((d) => ({ ...d, image: t }))}
+                      placeholder="URL картинки или загрузите фото"
+                      placeholderTextColor="#999"
+                      blurOnSubmit={false}
+                      autoCapitalize="none"
+                    />
+                    <TouchableOpacity
+                      style={[styles.addBtn, { marginTop: 4 }]}
+                      onPress={() =>
+                        pickProductImage((dataUrl) => {
+                          setLocalProduct((d) => (d ? { ...d, image: dataUrl } : d));
+                        })
+                      }
+                    >
+                      <Text style={styles.buttonText}>📷 Загрузить своё фото</Text>
+                    </TouchableOpacity>
+                    {!!localProduct.image && (
+                      <SmartImage uri={localProduct.image} style={{ width: "100%", height: 140, borderRadius: 12, marginBottom: 8 }} />
+                    )}
+                    <View style={{ flexDirection: "row", gap: 8 }}>
+                      <TouchableOpacity
+                        style={[styles.saveBtn, { flex: 1 }]}
+                        onPress={() => {
+                          saveProductDraft(localProduct, localIsNew);
+                          setLocalProduct(null);
+                        }}
+                      >
+                        <Text style={styles.buttonText}>Сохранить</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.saveBtn, { flex: 1, backgroundColor: "#888" }]}
+                        onPress={() => {
+                          setLocalProduct(null);
+                          cancelProductDraft();
+                        }}
+                      >
+                        <Text style={styles.buttonText}>Отмена</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
+
+                <ScrollView
+                  style={{ maxHeight: 480, marginBottom: 12 }}
+                  nestedScrollEnabled
+                  showsVerticalScrollIndicator
+                  keyboardShouldPersistTaps="always"
+                >
+                  {products
+                    .filter((p) => {
+                      if (!productSearch.trim()) return true;
+                      const q = productSearch.trim().toLowerCase();
+                      return (
+                        (p.name || "").toLowerCase().includes(q) ||
+                        (p.brand || "").toLowerCase().includes(q)
+                      );
+                    })
+                    .slice()
+                    .sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0))
+                    .map((p) => (
+                      <View key={p.id} style={[styles.productEdit, theme === "dark" && styles.productEditDark]}>
+                        <View style={{ flexDirection: "row", alignItems: "center" }}>
+                          {!!p.image && (
+                            <SmartImage uri={p.image} style={{ width: 56, height: 56, borderRadius: 10, marginRight: 10 }} />
+                          )}
+                          <View style={{ flex: 1 }}>
+                            <Text style={[styles.productName, theme === "dark" && styles.textDark]}>
+                              {p.brand} {p.name}
+                              {p.pinned ? " · закреплено" : ""}
+                              {p.hidden ? " · скрыт" : ""}
+                            </Text>
+                            <Text style={[styles.price, theme === "dark" && styles.textDark]}>{money(p.price)}</Text>
+                          </View>
+                        </View>
+                        <View style={styles.productAdminActions}>
+                          <TouchableOpacity
+                            style={[styles.productAdminBtn, p.pinned && styles.productAdminBtnActive]}
+                            onPress={() => togglePinProduct(p.id)}
+                            activeOpacity={0.8}
+                          >
+                            <Text style={styles.productAdminBtnText}>
+                              {p.pinned ? "Открепить" : "Закрепить"}
+                            </Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={[styles.productAdminBtn, p.hidden && styles.productAdminBtnActive]}
+                            onPress={() => toggleHideProduct(p.id)}
+                            activeOpacity={0.8}
+                          >
+                            <Text style={styles.productAdminBtnText}>
+                              {p.hidden ? "Показать" : "Скрыть"}
+                            </Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={styles.productAdminBtn}
+                            onPress={() => startEditProduct(p)}
+                            activeOpacity={0.8}
+                          >
+                            <Text style={styles.productAdminBtnText}>Редактировать</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={[styles.productAdminBtn, styles.productAdminBtnDanger]}
+                            onPress={() => deleteProduct(p.id)}
+                            activeOpacity={0.8}
+                          >
+                            <Text style={styles.productAdminBtnText}>Удалить</Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    ))}
+                </ScrollView>
+
+                <Text style={[styles.sectionTitle, theme === "dark" && styles.textDark]}>Модерация отзывов</Text>
+                {(() => {
+                  const pending = [];
+                  products.forEach((p) => {
+                    (p.ratings || []).forEach((r, idx) => {
+                      if (r.approved === false) {
+                        pending.push({ product: p, review: r, index: idx });
+                      }
+                    });
+                  });
+                  if (pending.length === 0) {
+                    return (
+                      <Text style={[styles.empty, theme === "dark" && styles.textDark]}>Нет отзывов на проверке</Text>
+                    );
+                  }
+                  return pending.map(({ product, review, index }) => (
+                    <View key={`${product.id}-${index}`} style={[styles.productEdit, theme === "dark" && styles.productEditDark]}>
+                      <Text style={[styles.productName, theme === "dark" && styles.textDark]}>
+                        {product.brand} {product.name}
+                      </Text>
+                      <Text style={[styles.reviewRating, theme === "dark" && styles.textDark]}>
+                        {"★".repeat(review.rating)}{"☆".repeat(5 - review.rating)}
+                      </Text>
+                      <Text style={[styles.reviewComment, theme === "dark" && styles.textDark]}>
+                        {review.comment || "(без текста)"}
+                      </Text>
+                      <Text style={[styles.reviewDate, theme === "dark" && styles.textDark]}>
+                        {review.userName || "Пользователь"} · {new Date(review.date).toLocaleDateString("ru-RU")}
+                      </Text>
+                      <View style={{ flexDirection: "row", marginTop: 8, gap: 8 }}>
+                        <TouchableOpacity
+                          style={[styles.saveBtn, { flex: 1, backgroundColor: "#22c55e" }]}
+                          onPress={() => moderateReview(product.id, index, true)}
+                        >
+                          <Text style={styles.buttonText}>✓ Одобрить</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[styles.saveBtn, { flex: 1, backgroundColor: "#ef4444" }]}
+                          onPress={() => moderateReview(product.id, index, false)}
+                        >
+                          <Text style={styles.buttonText}>✕ Отклонить</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  ));
+                })()}
+
+                <Text style={[styles.sectionTitle, theme === "dark" && styles.textDark]}>Рассылка</Text>
+                <TextInput
+                  style={[styles.broadcastInput, theme === "dark" && styles.inputDark]}
+                  placeholder="Текст сообщения"
+                  placeholderTextColor={theme === "dark" ? "#999" : "#888"}
+                  value={localBroadcast}
+                  onChangeText={setLocalBroadcast}
+                  multiline
+                  blurOnSubmit={false}
+                  textAlignVertical="top"
+                />
+                <TouchableOpacity style={styles.broadcastBtn} onPress={handleSendBroadcast}>
+                  <Text style={styles.buttonText}>📨 Отправить рассылку ({users.length} получателей)</Text>
+                </TouchableOpacity>
+              </ScrollView>
+            </View>
+          </Modal>
+        )}
+
+        <Toast message={toastMessage} visible={toastVisible} onHide={hideToast} />
+      </View>
+    </ThemeContext.Provider>
+  );
+}
+
+// ==============================
+// СТИЛИ (ПОЛНЫЕ)
+// ==============================
+const styles = StyleSheet.create({
+      root: {
+    flex: 1,
+    backgroundColor: '#F7F7F5',
+    minHeight: '100%',
+  },
+  rootDark: {
+    backgroundColor: '#1a1a1a',
+  },
+  contentContainer: {
+    flex: 1,
+    paddingBottom: 100,
+    backgroundColor: '#F7F7F5',
+  },
+  page: {
+    flex: 1,
+    backgroundColor: "#F7F7F5",
+    padding: 14,
+  },
+  pageDark: { backgroundColor: "#1a1a1a" },
+  textDark: { color: "#fff" },
+  inputDark: { backgroundColor: "#333", color: "#fff", borderColor: "#555" },
+  cardDark: { backgroundColor: "#2a2a2a" },
+  scrollContent: { paddingBottom: 10 },
+
+  logoWrap: { marginTop: 8, marginBottom: 4, alignItems: 'flex-start' },
+  logoImage: { width: 180, height: 70 },
+  logo: { fontSize: 30, fontWeight: "900", marginTop: 18 },
+  description: { color: "#777", marginTop: 4, fontSize: 14 },
+  pageTitle: { fontSize: 24, fontWeight: "900", marginTop: 18, marginBottom: 12 },
+  sectionTitle: { fontSize: 20, fontWeight: "900", marginTop: 18, marginBottom: 12 },
+
+  banner: { backgroundColor: "#111", padding: 20, borderRadius: 28, marginTop: 18 },
+  bannerTitle: { fontSize: 26, fontWeight: "900", color: "#fff" },
+  bannerButton: { backgroundColor: "#fff", padding: 10, borderRadius: 20, marginTop: 15, alignSelf: "flex-start" },
+
+  grid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between" },
+  card: { width: "48%", backgroundColor: "#fff", borderRadius: 20, padding: 8, marginBottom: 12, position: "relative" },
+  image: { height: 120, width: "100%", borderRadius: 16, backgroundColor: "#FFFFFF" },
+  bigImageWrap: {
+    width: "100%",
+    position: "relative",
+    marginTop: 8,
+  },
+  bigImage: { width: "100%", height: 250, borderRadius: 24, backgroundColor: "#E8E8E6" },
+  favorite: { position: "absolute", right: 12, top: 12 },
+  favoriteText: { fontSize: 20 },
+  // Белый круг с чёрной обводкой + чёрное сердце
+  favoriteBtn: {
+    position: "absolute",
+    right: 8,
+    top: 8,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: "#fff",
+    borderWidth: 1.5,
+    borderColor: "#111",
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 10,
+    elevation: 6,
+  },
+  // Чуть крупнее на странице товара
+  favoriteBtnOnImage: {
+    right: 14,
+    top: 14,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+  },
+  favoriteBtnActive: {
+    backgroundColor: "#fff",
+    borderColor: "#111",
+  },
+  favoriteBtnText: {
+    fontSize: 13,
+    color: "#111",
+    lineHeight: 15,
+  },
+  favoriteBtnTextActive: {
+    color: "#111",
+  },
+  // Белый круг с чёрной обводкой + чёрная корзина (как избранное)
+  cartBtn: {
+    position: "absolute",
+    bottom: 10,
+    right: 10,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: "#fff",
+    borderWidth: 1.5,
+    borderColor: "#111",
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 10,
+    elevation: 6,
+  },
+  cartBtnText: {
+    fontSize: 16,
+    color: "#111",
+    lineHeight: 18,
+  },
+  brand: { fontSize: 11, color: "#777", marginTop: 6 },
+  productName: { fontSize: 14, fontWeight: "800", marginTop: 4 },
+  price: { fontSize: 18, fontWeight: "900", marginTop: 3 },
+  oldPrice: { textDecorationLine: "line-through", color: "#999", fontSize: 13 },
+  oldPriceBig: { textDecorationLine: "line-through", color: "#999", fontSize: 15, marginRight: 10 },
+  bigTitle: { fontSize: 24, fontWeight: "900" },
+  bigPrice: { fontSize: 28, fontWeight: "900" },
+
+  // Product page new styles
+  productBrand: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#888",
+    letterSpacing: 1.5,
+    textTransform: "uppercase",
+    marginTop: 16,
+    marginBottom: 4,
+  },
+  productTitle: {
+    fontSize: 26,
+    fontWeight: "900",
+    color: "#111",
+    lineHeight: 32,
+    marginBottom: 8,
+  },
+  priceRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  productPrice: {
+    fontSize: 26,
+    fontWeight: "900",
+    color: "#111",
+  },
+  headerBtn: {
+    backgroundColor: "#111",
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  headerBtnText: {
+    color: "#fff",
+    fontSize: 22,
+    fontWeight: "600",
+    marginTop: -1,
+  },
+  productHeaderLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  headerIconBtn: {
+    backgroundColor: "#111",
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    marginLeft: 8,
+  },
+  headerIconBtnActive: {
+    backgroundColor: "#111",
+  },
+  headerIconBtnText: {
+    color: "#fff",
+    fontSize: 18,
+    fontWeight: "700",
+  },
+
+  buyButton: { backgroundColor: "#111", padding: 14, borderRadius: 22, marginTop: 16 },
+  buttonText: { color: "#fff", textAlign: "center", fontWeight: "800", fontSize: 13 },
+
+  cartItem: { backgroundColor: "#fff", padding: 12, borderRadius: 20, flexDirection: "row", marginBottom: 12 },
+  cartItemDark: { backgroundColor: "#2a2a2a" },
+  // Свайп в корзине: влево → избранное (белый) + удалить (чёрный)
+  swipeContainer: {
+    marginBottom: 12,
+    borderRadius: 20,
+    overflow: "hidden",
+    position: "relative",
+    backgroundColor: "#E8E8E6",
+  },
+  swipeActions: {
+    position: "absolute",
+    right: 0,
+    top: 0,
+    bottom: 0,
+    width: 160,
+    flexDirection: "row",
+  },
+  swipeFavBtn: {
+    width: 80,
+    backgroundColor: "#fff",
+    justifyContent: "center",
+    alignItems: "center",
+    borderRightWidth: 1,
+    borderRightColor: "#eee",
+  },
+  swipeFavIcon: {
+    fontSize: 22,
+    color: "#111",
+    marginBottom: 4,
+  },
+  swipeFavLabel: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#111",
+    textAlign: "center",
+  },
+  swipeDelBtn: {
+    width: 80,
+    backgroundColor: "#111",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  swipeDelIcon: {
+    fontSize: 22,
+    fontWeight: "700",
+    color: "#fff",
+    marginBottom: 4,
+  },
+  swipeDelLabel: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#fff",
+    textAlign: "center",
+  },
+  cartImage: { width: 70, height: 70, borderRadius: 16, marginRight: 12, backgroundColor: "#E8E8E6" },
+  remove: { color: "red", marginTop: 6, fontSize: 13 },
+  total: { fontSize: 24, fontWeight: "900" },
+  finalTotal: { fontSize: 20, fontWeight: "900", marginTop: 4 },
+  discountText: { fontSize: 16, color: "green", marginTop: 4 },
+
+  balanceCard: {
+    backgroundColor: "#111",
+    padding: 22,
+    borderRadius: 24,
+    marginBottom: 8,
+  },
+  balanceRowLabel: {
+    color: "rgba(255,255,255,0.7)",
+    fontSize: 13,
+    fontWeight: "600",
+    letterSpacing: 0.3,
+    marginBottom: 4,
+  },
+  balanceValue: {
+    color: "#fff",
+    fontSize: 34,
+    fontWeight: "900",
+    marginBottom: 4,
+  },
+  balanceDivider: {
+    height: 1,
+    backgroundColor: "rgba(255,255,255,0.15)",
+    marginVertical: 14,
+  },
+  balanceStatRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  balanceStatLabel: {
+    color: "rgba(255,255,255,0.75)",
+    fontSize: 14,
+    fontWeight: "500",
+  },
+  balanceStatValue: {
+    color: "#fff",
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  balanceHint: {
+    color: "rgba(255,255,255,0.45)",
+    fontSize: 11,
+    lineHeight: 16,
+    marginTop: 10,
+  },
+  balanceLabel: { color: "#fff" },
+  balanceInfo: { color: "#fff" },
+  userName: { fontSize: 18 },
+
+  referralBox: { backgroundColor: "#fff", padding: 16, borderRadius: 24 },
+  referralBoxDark: { backgroundColor: "#2a2a2a" },
+  referralText: { marginBottom: 12, fontSize: 13 },
+  referralStat: { fontSize: 14, fontWeight: "600", marginBottom: 4, color: "#111" },
+  referralHint: { fontSize: 12, color: "#888", marginTop: 8, lineHeight: 18 },
+  copyButton: { backgroundColor: "#111", padding: 12, borderRadius: 18 },
+
+  levelCard: {
+    backgroundColor: "#fff",
+    padding: 18,
+    borderRadius: 24,
+    marginBottom: 12,
+  },
+  levelCardDark: { backgroundColor: "#2a2a2a" },
+  activeLevel: { backgroundColor: "#111" },
+  levelName: { fontSize: 18, fontWeight: "900", color: "#111" },
+  levelInfo: { marginTop: 4, fontSize: 14, color: "#555" },
+  levelSubInfo: { marginTop: 6, fontSize: 13, color: "rgba(255,255,255,0.75)" },
+  activeText: { color: "#fff" },
+  levelProgressTrack: {
+    height: 8,
+    borderRadius: 8,
+    marginTop: 12,
+    overflow: "hidden",
+  },
+  levelProgressTrackActive: {
+    backgroundColor: "rgba(255,255,255,0.25)",
+  },
+  levelProgressTrackInactive: {
+    backgroundColor: "#E8E8E8",
+  },
+  levelProgressFill: {
+    height: 8,
+    borderRadius: 8,
+  },
+  levelProgressFillActive: {
+    backgroundColor: "#fff", // белая полоса на чёрной карточке
+  },
+  levelProgressFillInactive: {
+    backgroundColor: "#111", // чёрная полоса на белой карточке
+  },
+  levelProgressPct: {
+    marginTop: 6,
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#888",
+  },
+
+  orderCard: { backgroundColor: "#fff", padding: 14, borderRadius: 18, marginBottom: 12 },
+  orderCardDark: { backgroundColor: "#2a2a2a" },
+  orderId: { fontSize: 15, fontWeight: "800" },
+  orderDate: { color: "#777", marginTop: 2, fontSize: 12 },
+  orderStatus: { fontWeight: "600", marginTop: 4, fontSize: 14 },
+  orderTotal: { fontWeight: "700", marginTop: 4, fontSize: 16 },
+  orderItem: { fontSize: 13, marginLeft: 8 },
+  orderMore: { fontSize: 12, color: "#777", marginLeft: 8 },
+  trackingText: { fontSize: 13, color: "#0066cc", marginTop: 2 },
+
+  modalOverlay: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "rgba(0,0,0,0.5)" },
+  modalScrollView: { flexGrow: 1, justifyContent: "center", paddingVertical: 12, paddingHorizontal: 10, width: "100%", alignItems: "center" },
+  modalView: { 
+    width: "100%", 
+    maxWidth: 420, 
+    backgroundColor: "#fff", 
+    borderRadius: 28, 
+    padding: 20, 
+    alignItems: "stretch", 
+    alignSelf: "center",
+    overflow: "hidden",
+  },
+  modalViewDark: { backgroundColor: "#2a2a2a" },
+  modalTitle: { fontSize: 20, fontWeight: "900", marginBottom: 16, textAlign: "center" },
+  modalInput: { borderWidth: 1, borderColor: "#ddd", borderRadius: 14, padding: 12, marginBottom: 12, fontSize: 15, width: "100%" },
+  phoneRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#ddd",
+    borderRadius: 14,
+    marginBottom: 12,
+    paddingLeft: 12,
+    backgroundColor: "#fff",
+    overflow: "hidden",
+    width: "100%",
+  },
+  phonePrefix: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#111",
+    marginRight: 6,
+    minWidth: 52,
+  },
+  phoneInput: {
+    flex: 1,
+    paddingVertical: 12,
+    paddingRight: 12,
+    fontSize: 15,
+    color: "#111",
+  },
+  modalButtons: { flexDirection: "row", justifyContent: "space-between", marginTop: 12, width: "100%" },
+  modalCancel: { padding: 12, borderRadius: 18, backgroundColor: "#eee", flex: 0.42, alignItems: "center" },
+  modalConfirm: { padding: 12, borderRadius: 18, backgroundColor: "#111", flex: 0.52, alignItems: "center" },
+  modalError: {
+    backgroundColor: "#111",
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    marginBottom: 14,
+    width: "100%",
+  },
+  modalErrorText: {
+    color: "#fff",
+    fontSize: 13,
+    fontWeight: "600",
+    textAlign: "center",
+  },
+
+  deliveryLabel: { fontSize: 15, fontWeight: "600", marginBottom: 8 },
+  deliveryOptions: { flexDirection: "row", justifyContent: "space-between", marginBottom: 16 },
+  deliveryOption: { flex: 1, paddingVertical: 14, paddingHorizontal: 10, borderRadius: 14, backgroundColor: "#eee", marginHorizontal: 4, alignItems: "center", justifyContent: "center" },
+  deliveryOptionActive: { backgroundColor: "#111" },
+  deliveryOptionTitle: { fontSize: 14, fontWeight: "700", textAlign: "center", color: "#111" },
+  deliveryOptionTextActive: { color: "#fff" },
+  deliveryDetail: { fontSize: 13, fontWeight: "600", color: "#666", marginTop: 6, textAlign: "center" },
+  deliveryDetailActive: { color: "#fff" },
+
+  promoBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginVertical: 8,
+    width: "100%",
+  },
+  promoInput: {
+    flex: 1,
+    minWidth: 0,
+    borderWidth: 1,
+    borderColor: "#ddd",
+    borderRadius: 18,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    marginRight: 8,
+    fontSize: 14,
+  },
+  promoButton: {
+    backgroundColor: "#111",
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 18,
+    justifyContent: "center",
+    alignItems: "center",
+    flexShrink: 0,
+  },
+
+  bonusCheckbox: { flexDirection: "row", alignItems: "center", marginVertical: 8 },
+  bonusCheckboxText: { fontSize: 14, fontWeight: "600" },
+
+  searchInput: { backgroundColor: "#fff", padding: 10, borderRadius: 22, marginBottom: 12, fontSize: 14 },
+  filterScroll: { flexDirection: "row", marginBottom: 12, height: 44, flexShrink: 0, flexGrow: 0 },
+  filterContent: { alignItems: "center" },
+  filterChip: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 16, backgroundColor: "#eee", marginRight: 8, alignSelf: "flex-start", flexShrink: 0, flexGrow: 0 },
+  filterChipActive: { backgroundColor: "#111" },
+  filterChipTextActive: { color: "#fff" },
+  priceFilter: { flexDirection: "row", marginBottom: 12 },
+  priceInput: { flex: 1, backgroundColor: "#fff", padding: 8, borderRadius: 18, marginRight: 8, fontSize: 14 },
+
+  sizeBox: { marginTop: 16 },
+  sizeTitle: { fontSize: 15, fontWeight: "600", marginBottom: 8 },
+  sizes: { flexDirection: "row", flexWrap: "wrap" },
+  size: { width: 44, height: 44, borderRadius: 22, backgroundColor: "#eee", justifyContent: "center", alignItems: "center", marginRight: 8, marginBottom: 8 },
+  sizeActive: { backgroundColor: "#111" },
+  sizeTextActive: { color: "#fff" },
+  sizeText: { fontSize: 13, color: "#555", marginTop: 2 },
+
+  adminButton: { backgroundColor: "#111", padding: 10, borderRadius: 18, marginVertical: 8, alignSelf: "flex-start" },
+  closeAdmin: { marginBottom: 16, alignSelf: "flex-end" },
+  closeAdminText: { fontSize: 15, fontWeight: "600" },
+  adminStatCard: {
+    backgroundColor: "#111",
+    padding: 20,
+    borderRadius: 24,
+    marginBottom: 20,
+  },
+  adminStatCardDark: {
+    backgroundColor: "#2a2a2a",
+  },
+  adminStat: { fontSize: 16, marginVertical: 4 },
+  adminStatWhite: { fontSize: 16, marginVertical: 4, color: "#fff", fontWeight: "600" },
+  crmTableScroll: { marginBottom: 16 },
+  crmTable: {
+    borderRadius: 16,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "#e5e5e5",
+    backgroundColor: "#fff",
+  },
+  crmRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    borderBottomWidth: 1,
+    borderBottomColor: "#eee",
+    paddingVertical: 10,
+    paddingHorizontal: 6,
+    backgroundColor: "#fff",
+  },
+  crmRowDark: { backgroundColor: "#2a2a2a", borderBottomColor: "#444" },
+  crmHeaderRow: { backgroundColor: "#111" },
+  crmCell: { fontSize: 12, paddingHorizontal: 4, color: "#111" },
+  crmHead: { color: "#fff", fontWeight: "800", fontSize: 11 },
+  crmMuted: { fontSize: 12, color: "#888" },
+  crmTrackInput: {
+    borderWidth: 1,
+    borderColor: "#ddd",
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    fontSize: 12,
+    backgroundColor: "#fafafa",
+    color: "#111",
+  },
+  crmStatusChip: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 10,
+    backgroundColor: "#eee",
+    marginRight: 4,
+    marginBottom: 4,
+  },
+  crmStatusChipText: { fontSize: 10, color: "#333", fontWeight: "600" },
+  promoFormCard: {
+    backgroundColor: "#fff",
+    padding: 14,
+    borderRadius: 16,
+    marginBottom: 12,
+  },
+  statusButtons: { flexDirection: "row", flexWrap: "wrap", marginTop: 8 },
+  statusBtn: { padding: 5, borderRadius: 12, backgroundColor: "#eee", marginRight: 6, marginBottom: 4 },
+  statusBtnActive: { backgroundColor: "#111" },
+  statusBtnText: { fontSize: 11 },
+  statusBtnTextActive: { color: "#fff" },
+  addBtn: { backgroundColor: "#111", padding: 12, borderRadius: 20, alignItems: "center", marginVertical: 10 },
+  productEdit: { backgroundColor: "#fff", padding: 12, borderRadius: 16, marginBottom: 10 },
+  productEditDark: { backgroundColor: "#2a2a2a" },
+  editInput: { borderWidth: 1, borderColor: "#ddd", borderRadius: 8, padding: 6, marginBottom: 6, fontSize: 13 },
+  saveBtn: { backgroundColor: "#111", padding: 8, borderRadius: 16, alignItems: "center" },
+  editActions: { flexDirection: "row", marginTop: 4 },
+  editAction: { fontSize: 18, marginRight: 12 },
+  productAdminActions: {
+    flexDirection: "row",
+    marginTop: 10,
+    gap: 6,
+  },
+  crmTable: {
+    borderWidth: 1,
+    borderColor: "#E5E5E5",
+    borderRadius: 12,
+    overflow: "hidden",
+    backgroundColor: "#fff",
+    minWidth: 960,
+  },
+  crmTableRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    borderBottomWidth: 1,
+    borderBottomColor: "#EEE",
+    paddingVertical: 4,
+    paddingHorizontal: 4,
+  },
+  crmTableRowAlt: {
+    backgroundColor: "#FAFAFA",
+  },
+  crmTableHeader: {
+    backgroundColor: "#111",
+    borderBottomWidth: 0,
+    paddingVertical: 10,
+    alignItems: "center",
+  },
+  crmTh: {
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: "700",
+    paddingHorizontal: 6,
+  },
+  crmTd: {
+    fontSize: 12,
+    color: "#222",
+    paddingHorizontal: 6,
+    paddingVertical: 8,
+  },
+  crmTdStrong: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#111",
+  },
+  crmTdMuted: {
+    fontSize: 11,
+    color: "#666",
+    marginTop: 1,
+  },
+  crmStatusBtn: {
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: "transparent",
+  },
+  crmStatusBtnText: {
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  crmStatusMenu: {
+    backgroundColor: "#F5F5F5",
+    padding: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: "#E5E5E5",
+  },
+  crmStatusMenuItem: {
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    marginBottom: 4,
+    backgroundColor: "#fff",
+  },
+  crmStatusMenuItemActive: {
+    backgroundColor: "#111",
+  },
+  crmStatusMenuText: {
+    fontSize: 13,
+    color: "#222",
+  },
+  crmStatusMenuTextActive: {
+    color: "#fff",
+    fontWeight: "700",
+  },
+  productAdminBtn: {
+    flex: 1,
+    backgroundColor: "#111",
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  productAdminBtnActive: {
+    backgroundColor: "#333",
+  },
+  productAdminBtnDanger: {
+    backgroundColor: "#111",
+  },
+  productAdminBtnText: {
+    color: "#fff",
+    fontSize: 11,
+    fontWeight: "700",
+    textAlign: "center",
+  },
+  trackingInput: { borderWidth: 1, borderColor: "#ddd", borderRadius: 8, padding: 4, flex: 1, marginRight: 6, fontSize: 13 },
+  broadcastInput: { borderWidth: 1, borderColor: "#ddd", borderRadius: 14, padding: 10, marginBottom: 12, minHeight: 60, fontSize: 14 },
+  broadcastBtn: { backgroundColor: "#111", padding: 12, borderRadius: 20, alignItems: "center", marginBottom: 20 },
+
+  ratingDisplay: { fontSize: 14, marginVertical: 4 },
+  reviewItem: { backgroundColor: "#f0f0f0", padding: 8, borderRadius: 12, marginBottom: 8 },
+  reviewItemDark: { backgroundColor: "#333" },
+  reviewRating: { fontSize: 16, color: "#111", letterSpacing: 2 },
+  reviewComment: { fontSize: 13, marginTop: 2 },
+  reviewDate: { fontSize: 11, color: "#777", marginTop: 2 },
+  noReviews: { fontStyle: "italic", marginVertical: 8, fontSize: 14 },
+  reviewForm: { marginTop: 16, padding: 12, backgroundColor: "#f9f9f9", borderRadius: 16 },
+  reviewFormDark: { backgroundColor: "#2a2a2a" },
+  reviewFormTitle: { fontSize: 16, fontWeight: "600", marginBottom: 8 },
+  stars: { flexDirection: "row", marginBottom: 8 },
+  star: { fontSize: 28, marginRight: 4 },
+  starActive: { color: "#111" },
+  starActiveDark: { color: "#fff" },
+  starInactive: { color: "#bbb" },
+  reviewInput: { borderWidth: 1, borderColor: "#ddd", borderRadius: 12, padding: 8, marginBottom: 8 },
+  submitReview: { backgroundColor: "#111", padding: 10, borderRadius: 16, alignItems: "center" },
+
+  themeRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginVertical: 12 },
+  themeLabel: { fontSize: 16 },
+
+  totalRow: { flexDirection: "row", justifyContent: "space-between", marginVertical: 12, paddingVertical: 8, borderTopWidth: 1, borderColor: "#ddd" },
+  totalLabel: { fontSize: 16, fontWeight: "600" },
+  totalAmount: { fontSize: 18, fontWeight: "900" },
+
+  cartBadge: { fontSize: 16, fontWeight: "600", color: "#000" },
+  menuBadge: {
+    position: 'absolute',
+    top: -2,
+    right: -6,
+    backgroundColor: '#111',
+    borderRadius: 10,
+    minWidth: 18,
+    height: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 5,
+    borderWidth: 1.5,
+    borderColor: '#fff',
+    zIndex: 2,
+  },
+  menuBadgeText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+
+  // Pill-меню (как на референсе)
+  menuWrapper: {
+    position: 'fixed',
+    bottom: 12,
+    left: 16,
+    right: 16,
+    zIndex: 10000,
+    elevation: 30,
+    alignItems: 'center',
+  },
+  menu: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.95)',
+    borderRadius: 28,
+    paddingVertical: 8,
+    paddingHorizontal: 6,
+    width: '100%',
+    maxWidth: 420,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.12,
+    shadowRadius: 16,
+    elevation: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.06)',
+  },
+  menuDark: {
+    backgroundColor: 'rgba(30,30,30,0.96)',
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  menuButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    flex: 1,
+    paddingVertical: 2,
+  },
+  menuIconWrap: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'transparent',
+    marginBottom: 2,
+  },
+  menuIconWrapActive: {
+    backgroundColor: '#111',
+  },
+  menuIconWrapActiveDark: {
+    backgroundColor: '#fff',
+  },
+  menuIcon: {
+    fontSize: 20,
+    color: '#555',
+  },
+  menuIconActive: {
+    color: '#fff',
+  },
+  menuText: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: '#888',
+    marginTop: 1,
+  },
+  menuTextActive: {
+    fontWeight: '700',
+    color: '#111',
+  },
+
+  back: { fontSize: 16, marginBottom: 12, color: "#555" },
+  shareBtn: { fontSize: 22, marginBottom: 12 },
+  productHeader: { 
+    flexDirection: "row", 
+    justifyContent: "space-between", 
+    alignItems: "center",
+    marginBottom: 12,
+    marginTop: 4,
+  },
+  descriptionText: { fontSize: 14, color: "#666", marginVertical: 6, lineHeight: 20 },
+  loader: { textAlign: "center", padding: 8, color: "#777" },
+  empty: { textAlign: "center", padding: 20, color: "#999" },
+
+  toastContainer: {
+    position: 'fixed',
+    top: 18,
+    left: 58,
+    right: 58,
+    alignItems: 'center',
+    zIndex: 99999,
+    elevation: 99999,
+    pointerEvents: 'box-none',
+  },
+  toast: {
+    backgroundColor: 'rgba(0,0,0,0.9)',
+    paddingVertical: 9,
+    paddingHorizontal: 16,
+    borderRadius: 20,
+    maxWidth: '100%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+    elevation: 20,
+  },
+  toastText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '600',
+    textAlign: 'center',
+  }
+});
