@@ -3669,7 +3669,9 @@ export default function App() {
               {(order.delivery === "europost" ||
                 order.delivery === "euro" ||
                 String(order.delivery || "").toLowerCase().includes("евро")) &&
-                !!order.trackingNumber && (
+                !!order.trackingNumber &&
+                order.status !== "Забрать деньги" &&
+                order.status !== "Деньги получены" && (
                 <Text style={[styles.trackingText, isDark && styles.textDark]}>
                   Трек-номер: {order.trackingNumber}
                 </Text>
@@ -5087,69 +5089,7 @@ const styles = StyleSheet.create({
   adminStat: { fontSize: 16, marginVertical: 4 },
   adminStatWhite: { fontSize: 16, marginVertical: 4, color: "#fff", fontWeight: "600" },
   crmTableScroll: { marginBottom: 16 },
-  crmTable: {
-    borderRadius: 16,
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "#e5e5e5",
-    backgroundColor: "#fff",
-  },
-  crmRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    borderBottomWidth: 1,
-    borderBottomColor: "#eee",
-    paddingVertical: 10,
-    paddingHorizontal: 6,
-    backgroundColor: "#fff",
-  },
-  crmRowDark: { backgroundColor: "#2a2a2a", borderBottomColor: "#444" },
-  crmHeaderRow: { backgroundColor: "#111" },
-  crmCell: { fontSize: 12, paddingHorizontal: 4, color: "#111" },
-  crmHead: { color: "#fff", fontWeight: "800", fontSize: 11 },
-  crmMuted: { fontSize: 12, color: "#888" },
-  crmTrackInput: {
-    borderWidth: 1,
-    borderColor: "#ddd",
-    borderRadius: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-    fontSize: 12,
-    backgroundColor: "#fafafa",
-    color: "#111",
-  },
-  crmStatusChip: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 10,
-    backgroundColor: "#eee",
-    marginRight: 4,
-    marginBottom: 4,
-  },
-  crmStatusChipText: { fontSize: 10, color: "#333", fontWeight: "600" },
-  promoFormCard: {
-    backgroundColor: "#fff",
-    padding: 14,
-    borderRadius: 16,
-    marginBottom: 12,
-  },
-  statusButtons: { flexDirection: "row", flexWrap: "wrap", marginTop: 8 },
-  statusBtn: { padding: 5, borderRadius: 12, backgroundColor: "#eee", marginRight: 6, marginBottom: 4 },
-  statusBtnActive: { backgroundColor: "#111" },
-  statusBtnText: { fontSize: 11 },
-  statusBtnTextActive: { color: "#fff" },
-  addBtn: { backgroundColor: "#111", padding: 12, borderRadius: 20, alignItems: "center", marginVertical: 10 },
-  productEdit: { backgroundColor: "#fff", padding: 12, borderRadius: 16, marginBottom: 10 },
-  productEditDark: { backgroundColor: "#2a2a2a" },
-  editInput: { borderWidth: 1, borderColor: "#ddd", borderRadius: 8, padding: 6, marginBottom: 6, fontSize: 13 },
-  saveBtn: { backgroundColor: "#111", padding: 8, borderRadius: 16, alignItems: "center" },
-  editActions: { flexDirection: "row", marginTop: 4 },
-  editAction: { fontSize: 18, marginRight: 12 },
-  productAdminActions: {
-    flexDirection: "row",
-    marginTop: 10,
-    gap: 6,
-  },
+
   crmTable: {
     borderWidth: 1,
     borderColor: "#E5E5E5",
@@ -5232,6 +5172,17 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontWeight: "700",
   },
+  crmTrackInput: {
+    borderWidth: 1,
+    borderColor: "#DDD",
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    fontSize: 12,
+    backgroundColor: "#fff",
+    color: "#111",
+  },
+
   productAdminBtn: {
     flex: 1,
     backgroundColor: "#111",
