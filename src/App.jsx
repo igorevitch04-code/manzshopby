@@ -1987,6 +1987,7 @@ export default function App() {
     // Локальные стейты, чтобы клавиатура не закрывалась при каждом символе
     const [localBroadcast, setLocalBroadcast] = useState(broadcastText);
     const [trackingDrafts, setTrackingDrafts] = useState({});
+    const [openStatusId, setOpenStatusId] = useState(null); // id заказа, у которого открыт список статусов
 
     if (!showAdmin || !isAdmin) return null;
 
@@ -2064,13 +2065,13 @@ export default function App() {
               <ScrollView horizontal showsHorizontalScrollIndicator nestedScrollEnabled style={styles.crmTableScroll}>
                 <View style={styles.crmTable}>
                   <View style={[styles.crmRow, styles.crmHeaderRow]}>
-                    <Text style={[styles.crmCell, styles.crmHead, { width: 70 }]}>#</Text>
-                    <Text style={[styles.crmCell, styles.crmHead, { width: 90 }]}>Дата</Text>
-                    <Text style={[styles.crmCell, styles.crmHead, { width: 150 }]}>Статус</Text>
-                    <Text style={[styles.crmCell, styles.crmHead, { width: 130 }]}>ФИО</Text>
-                    <Text style={[styles.crmCell, styles.crmHead, { width: 140 }]}>Трек-номер</Text>
-                    <Text style={[styles.crmCell, styles.crmHead, { width: 180 }]}>Товар</Text>
-                    <Text style={[styles.crmCell, styles.crmHead, { width: 90 }]}>Сумма</Text>
+                    <Text style={[styles.crmCell, styles.crmHead, { width: 70, textAlign: "center" }]}>#</Text>
+                    <Text style={[styles.crmCell, styles.crmHead, { width: 90, textAlign: "center" }]}>Дата</Text>
+                    <Text style={[styles.crmCell, styles.crmHead, { width: 180, textAlign: "center" }]}>Статус</Text>
+                    <Text style={[styles.crmCell, styles.crmHead, { width: 130, textAlign: "center" }]}>ФИО</Text>
+                    <Text style={[styles.crmCell, styles.crmHead, { width: 140, textAlign: "center" }]}>Трек-номер</Text>
+                    <Text style={[styles.crmCell, styles.crmHead, { width: 180, textAlign: "center" }]}>Товар</Text>
+                    <Text style={[styles.crmCell, styles.crmHead, { width: 90, textAlign: "center" }]}>Сумма</Text>
                   </View>
                   {adminOrders.map((order) => {
                     const itemsLabel = (order.items || [])
@@ -2085,29 +2086,36 @@ export default function App() {
                         <Text style={[styles.crmCell, isDark && styles.textDark, { width: 90 }]}>
                           {order.date ? new Date(order.date).toLocaleDateString("ru-RU") : "—"}
                         </Text>
-                        <View style={[styles.crmCell, { width: 150 }]}>
-                          <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
-                            {ORDER_STATUSES.map((s) => (
-                              <TouchableOpacity
-                                key={s}
-                                style={[
-                                  styles.crmStatusChip,
-                                  order.status === s && { backgroundColor: statusColor(s) },
-                                ]}
-                                onPress={() => changeStatus(order.id, s)}
-                                activeOpacity={0.7}
-                              >
-                                <Text
-                                  style={[
-                                    styles.crmStatusChipText,
-                                    order.status === s && { color: "#fff" },
-                                  ]}
+                        <View style={[styles.crmCell, { width: 180 }]}>
+                          <TouchableOpacity
+                            style={[
+                              styles.crmStatusChip,
+                              { backgroundColor: statusColor(order.status), marginBottom: 4 },
+                            ]}
+                            onPress={() => setOpenStatusId(openStatusId === order.id ? null : order.id)}
+                            activeOpacity={0.7}
+                          >
+                            <Text style={[styles.crmStatusChipText, { color: "#fff" }]}>
+                              {order.status} ▾
+                            </Text>
+                          </TouchableOpacity>
+                          {openStatusId === order.id && (
+                            <View style={{ flexDirection: "row", flexWrap: "wrap", marginTop: 2 }}>
+                              {ORDER_STATUSES.filter(s => s !== order.status).map((s) => (
+                                <TouchableOpacity
+                                  key={s}
+                                  style={styles.crmStatusChip}
+                                  onPress={() => {
+                                    changeStatus(order.id, s);
+                                    setOpenStatusId(null);
+                                  }}
+                                  activeOpacity={0.7}
                                 >
-                                  {s}
-                                </Text>
-                              </TouchableOpacity>
-                            ))}
-                          </View>
+                                  <Text style={styles.crmStatusChipText}>{s}</Text>
+                                </TouchableOpacity>
+                              ))}
+                            </View>
+                          )}
                         </View>
                         <Text style={[styles.crmCell, isDark && styles.textDark, { width: 130 }]} numberOfLines={2}>
                           {order.fullName || "—"}
@@ -2680,7 +2688,7 @@ const styles = StyleSheet.create({
   favoriteBtnTextActive: {
     color: "#111",
   },
-  // Белый значок корзины в чёрном круге (правый нижний угол карточки)
+  // Белый круг с чёрной обводкой + чёрная корзина (как избранное)
   cartBtn: {
     position: "absolute",
     bottom: 8,
@@ -2688,7 +2696,9 @@ const styles = StyleSheet.create({
     width: 34,
     height: 34,
     borderRadius: 17,
-    backgroundColor: "#111",
+    backgroundColor: "#fff",
+    borderWidth: 1.5,
+    borderColor: "#111",
     justifyContent: "center",
     alignItems: "center",
     zIndex: 10,
@@ -2696,7 +2706,7 @@ const styles = StyleSheet.create({
   },
   cartBtnText: {
     fontSize: 16,
-    color: "#fff",
+    color: "#111",
   },
   brand: { fontSize: 11, color: "#777", marginTop: 6 },
   productName: { fontSize: 14, fontWeight: "800", marginTop: 4 },
