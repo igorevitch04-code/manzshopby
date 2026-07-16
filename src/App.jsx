@@ -1321,6 +1321,13 @@ export default function App() {
     setProductDraft((d) => (d && d.id === id ? null : d));
   };
 
+  // Закрепить / открепить товар (закреплённые всегда сверху в каталоге)
+  const togglePinProduct = (id) => {
+    setProducts((prev) =>
+      prev.map((p) => (p.id === id ? { ...p, pinned: !p.pinned } : p))
+    );
+  };
+
   const startAddProduct = () => {
     const id = Date.now();
     setIsNewProduct(true);
@@ -1415,6 +1422,8 @@ export default function App() {
           sales: 0,
           ratings: [],
           averageRating: 0,
+          createdAt: new Date().toISOString(),
+          pinned: false,
         },
         ...prev,
       ]);
@@ -1590,9 +1599,13 @@ export default function App() {
     const [localMax, setLocalMax] = useState(maxPrice);
     const [localBrand, setLocalBrand] = useState(selectedBrand);
     const [sortBy, setSortBy] = useState(null); // null | "asc" | "desc"
+    const [onlyNew, setOnlyNew] = useState(false);   // Новинки (3 дня)
+    const [onlySale, setOnlySale] = useState(false); // Скидки (есть oldPrice)
     const [filtersOpen, setFiltersOpen] = useState(false);
     const [localPage, setLocalPage] = useState(1);
     const [localLoading, setLocalLoading] = useState(false);
+
+    const threeDaysAgo = Date.now() - 3 * 24 * 60 * 60 * 1000;
 
     // Фильтруем и сортируем локально
     let localFiltered = products.filter(p => {
@@ -1600,13 +1613,20 @@ export default function App() {
       const matchName = p.name.toLowerCase().includes(q) || p.brand.toLowerCase().includes(q);
       const matchBrand = localBrand ? p.brand === localBrand : true;
       const matchPrice = (localMin === "" || p.price >= parseInt(localMin)) && (localMax === "" || p.price <= parseInt(localMax));
-      return matchName && matchBrand && matchPrice;
+      const matchNew = !onlyNew || (p.createdAt && new Date(p.createdAt).getTime() >= threeDaysAgo);
+      const matchSale = !onlySale || (p.oldPrice != null && Number(p.oldPrice) > Number(p.price));
+      return matchName && matchBrand && matchPrice && matchNew && matchSale;
     });
-    if (sortBy === "asc") {
-      localFiltered = [...localFiltered].sort((a, b) => a.price - b.price);
-    } else if (sortBy === "desc") {
-      localFiltered = [...localFiltered].sort((a, b) => b.price - a.price);
-    }
+
+    // Сортировка: сначала закреплённые, потом по цене (если выбрано)
+    localFiltered = [...localFiltered].sort((a, b) => {
+      const pinA = a.pinned ? 1 : 0;
+      const pinB = b.pinned ? 1 : 0;
+      if (pinB !== pinA) return pinB - pinA;
+      if (sortBy === "asc") return a.price - b.price;
+      if (sortBy === "desc") return b.price - a.price;
+      return 0;
+    });
 
     const LOCAL_PAGE_SIZE = 4;
     const localPaginated = localFiltered.slice(0, localPage * LOCAL_PAGE_SIZE);
@@ -1615,7 +1635,9 @@ export default function App() {
     const activeFiltersCount =
       (localBrand ? 1 : 0) +
       (sortBy ? 1 : 0) +
-      (localMin !== "" || localMax !== "" ? 1 : 0);
+      (localMin !== "" || localMax !== "" ? 1 : 0) +
+      (onlyNew ? 1 : 0) +
+      (onlySale ? 1 : 0);
 
     const handleSearchChange = (text) => {
       setLocalSearch(text);
@@ -1635,6 +1657,8 @@ export default function App() {
       setLocalMin("");
       setLocalMax("");
       setSortBy(null);
+      setOnlyNew(false);
+      setOnlySale(false);
       setLocalPage(1);
     };
     const applyFilters = () => {
@@ -1702,6 +1726,22 @@ export default function App() {
                     </Text>
                   </TouchableOpacity>
                 ))}
+              </View>
+
+              <Text style={[styles.sizeTitle, isDark && styles.textDark, { marginBottom: 8 }]}>Категория</Text>
+              <View style={{ flexDirection: "row", flexWrap: "wrap", marginBottom: 16 }}>
+                <TouchableOpacity
+                  style={[styles.filterChip, onlyNew && styles.filterChipActive, { marginBottom: 6 }]}
+                  onPress={() => setOnlyNew((v) => !v)}
+                >
+                  <Text style={onlyNew ? styles.filterChipTextActive : null}>Новинки</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.filterChip, onlySale && styles.filterChipActive, { marginBottom: 6 }]}
+                  onPress={() => setOnlySale((v) => !v)}
+                >
+                  <Text style={onlySale ? styles.filterChipTextActive : null}>Скидки</Text>
+                </TouchableOpacity>
               </View>
 
               <Text style={[styles.sizeTitle, isDark && styles.textDark, { marginBottom: 8 }]}>Бренд</Text>
@@ -2674,12 +2714,17 @@ export default function App() {
                       )}
                       <View style={{ flex: 1 }}>
                         <Text style={[styles.productName, isDark && styles.textDark]}>
-                          {p.brand} {p.name}
+                          {p.pinned ? "📌 " : ""}{p.brand} {p.name}
                         </Text>
                         <Text style={[styles.price, isDark && styles.textDark]}>{money(p.price)}</Text>
                       </View>
                     </View>
                     <View style={styles.editActions}>
+                      <TouchableOpacity onPress={() => togglePinProduct(p.id)}>
+                        <Text style={[styles.editAction, { color: p.pinned ? "#f59e0b" : undefined }]}>
+                          {p.pinned ? "📌 Открепить" : "📍 Закрепить"}
+                        </Text>
+                      </TouchableOpacity>
                       <TouchableOpacity onPress={() => startEditProduct(p)}>
                         <Text style={styles.editAction}>✎ Редактировать</Text>
                       </TouchableOpacity>
