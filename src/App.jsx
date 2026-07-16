@@ -161,6 +161,41 @@ const preloadImages = (list) => {
 const getBrands = (products) => [...new Set(products.map(p => p.brand))];
 
 const ADMIN_IDS = [778715828, 987654321];
+// Чтобы заказы друзей приходили вам в Telegram — вставьте токен бота от @BotFather
+// (бот должен быть запущен, вы хотя бы раз написали ему /start)
+const BOT_TOKEN = "8912775566:AAHEExxwO5Ub39DU0tDT97Hlppw1IfLwjvU"; // например: "123456:ABC-DEF..."
+const ADMIN_NOTIFY_CHAT_ID = ADMIN_IDS[0]; // куда слать уведомления о новых заказах
+
+const notifyAdminNewOrder = async (order) => {
+  if (!BOT_TOKEN) return false;
+  try {
+    const items = (order.items || [])
+      .map((i) => `• ${i.brand || ""} ${i.name}${i.size ? ` (${i.size})` : ""} — ${i.price}`)
+      .join("\n");
+    const text =
+      `🛒 Новый заказ #${order.id}\n` +
+      `👤 ${order.fullName || "—"}\n` +
+      `📞 ${order.phone || "—"}\n` +
+      `📍 ${order.address || "—"}\n` +
+      `🚚 ${order.delivery === "europost" ? "Европочта" : "Курьер"}\n` +
+      `💰 ${order.finalTotal} BYN\n` +
+      (order.tgUsername ? `✈️ @${order.tgUsername}\n` : order.tgId ? `✈️ id: ${order.tgId}\n` : "") +
+      `\n${items}`;
+    const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: ADMIN_NOTIFY_CHAT_ID,
+        text,
+        disable_web_page_preview: true,
+      }),
+    });
+    return r.ok;
+  } catch (e) {
+    console.warn("notifyAdminNewOrder", e);
+    return false;
+  }
+};
 
 const DEFAULT_PRODUCTS = [
   { id: 1, brand: "NIKE", name: "Dunk Low Panda", price: 18990, oldPrice: null, image: "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=400&q=70&auto=format&fit=crop", sales: 120, ratings: [], averageRating: 0, description: "Классические Nike Dunk Low Panda.", sizes: ["40","41","42","43","44"] },
@@ -717,6 +752,7 @@ export default function App() {
   }, []);
   const [adminOrders, setAdminOrders] = useState([]);
   const [showAdmin, setShowAdmin] = useState(false);
+  const [ordersFullscreen, setOrdersFullscreen] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null);
   const [productDraft, setProductDraft] = useState(null);
   const [isNewProduct, setIsNewProduct] = useState(false);
@@ -934,6 +970,29 @@ export default function App() {
       }
     }
   }, [products, restoredProductId]);
+
+  // Начисление кэшбэка клиенту после статуса «Деньги получены»
+  useEffect(() => {
+    if (!orderHistory.length) return;
+    let totalCredit = 0;
+    const updated = orderHistory.map((o) => {
+      if (
+        o.status === "Деньги получены" &&
+        o.pendingCashback &&
+        !o.cashbackCredited &&
+        (String(o.tgId) === String(user?.id) || !o.tgId)
+      ) {
+        totalCredit += Number(o.pendingCashback) || 0;
+        return { ...o, cashbackCredited: true };
+      }
+      return o;
+    });
+    if (totalCredit > 0) {
+      setBonusBalance((b) => b + totalCredit);
+      setOrderHistory(updated);
+      showToast(`💰 Начислено бонусов: ${totalCredit}`);
+    }
+  }, [orderHistory, user?.id]);
 
   // Запрос отзыва: если есть завершённый заказ с askReview — показываем модалку
   // Если нажали «Позже» — больше не показываем (сохраняем в localStorage)
@@ -1288,6 +1347,8 @@ export default function App() {
       }
     }
 
+    // Кэшбэк начислим только после получения заказа (статус «Деньги получены»)
+    const pendingCashback = Math.floor(total * (currentLevel.cashback / 100));
     const order = {
       id: nextNumber, items: cart.map(i => ({ ...i })), total, delivery, address, phone, fullName,
       deliveryPrice, discount, usedBonus, finalTotal: orderTotal, date: new Date().toISOString(),
@@ -1297,15 +1358,18 @@ export default function App() {
       tgId: user?.id || null,
       tgUsername: user?.username || null,
       tgName: user?.name || null,
+      pendingCashback,
+      cashbackCredited: false,
     };
     setOrderHistory(prev => [order, ...prev]);
     setAdminOrders(prev => [order, ...prev]);
-    // Дублируем в общее хранилище — чтобы админ видел заказы всех клиентов
+    // Дублируем в общее хранилище + уведомление админу в Telegram
     (async () => {
       const result = await sharedOrdersPush(order);
       if (!result) {
         console.warn("[Orders] Не удалось сохранить заказ в общее хранилище");
       }
+      await notifyAdminNewOrder(order);
     })();
     // Увеличиваем счётчик использований промокода
     if (promoCode) {
@@ -1316,12 +1380,14 @@ export default function App() {
           : p
       ));
     }
-    const cashback = Math.floor(total * (currentLevel.cashback / 100));
-    setBonusBalance(prev => prev + cashback - usedBonus);
+    // Списываем только использованные бонусы; кэшбэк — после доставки
+    if (usedBonus > 0) {
+      setBonusBalance(prev => Math.max(0, prev - usedBonus));
+    }
     setOrders(orders + 1);
     setCart([]);
     closeOrderModal();
-    showToast(`✅ Заказ #${nextNumber} оформлен. Если у вас есть вопросы — можете задать их менеджеру в описании бота`);
+    showToast(`✅ Заказ #${nextNumber} оформлен. Бонусы за заказ начислятся после получения`);
   };
 
   const addRating = (productId, rating, comment) => {
@@ -1734,15 +1800,41 @@ export default function App() {
 
   const changeStatus = (orderId, newStatus) => {
     // При завершении заказа просим клиента оставить отзыв
-    const completed = newStatus === "Забрать деньги" || newStatus === "Деньги получены";
-    const patch = { status: newStatus, ...(completed ? { askReview: true } : {}) };
+    const askReview = newStatus === "Забрать деньги" || newStatus === "Деньги получены";
+    // Бонусы клиенту — только когда деньги получены
+    const creditCashback = newStatus === "Деньги получены";
+
     setAdminOrders((prev) =>
-      prev.map((o) => (o.id === orderId ? { ...o, ...patch } : o))
+      prev.map((o) => {
+        if (o.id !== orderId) return o;
+        const patch = { ...o, status: newStatus };
+        if (askReview) patch.askReview = true;
+        if (creditCashback && o.pendingCashback && !o.cashbackCredited) {
+          patch.cashbackCredited = true;
+        }
+        return patch;
+      })
     );
     setOrderHistory((prev) =>
-      prev.map((o) => (o.id === orderId ? { ...o, ...patch } : o))
+      prev.map((o) => {
+        if (o.id !== orderId) return o;
+        const patch = { ...o, status: newStatus };
+        if (askReview) patch.askReview = true;
+        if (creditCashback && o.pendingCashback && !o.cashbackCredited) {
+          // Начисляем бонусы владельцу заказа (если это текущий пользователь)
+          if (String(o.tgId) === String(user?.id) || !o.tgId) {
+            setBonusBalance((b) => b + (Number(o.pendingCashback) || 0));
+          }
+          patch.cashbackCredited = true;
+        }
+        return patch;
+      })
     );
-    sharedOrdersUpdate(orderId, patch).catch(() => {});
+    sharedOrdersUpdate(orderId, {
+      status: newStatus,
+      ...(askReview ? { askReview: true } : {}),
+      ...(creditCashback ? { cashbackCredited: true } : {}),
+    }).catch(() => {});
   };
 
   const updateTracking = (orderId, trackingNumber) => {
@@ -2641,17 +2733,26 @@ export default function App() {
             </View>
 
             {/* ORDERS TABLE */}
-            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 4, flexWrap: "wrap", gap: 8 }}>
               <Text style={[styles.sectionTitle, isDark && styles.textDark, { marginBottom: 0 }]}>
                 Управление заказами
               </Text>
-              <TouchableOpacity
-                style={[styles.productAdminBtn, { flex: 0, paddingHorizontal: 12, paddingVertical: 8 }]}
-                onPress={() => syncSharedOrders(true)}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.productAdminBtnText}>Обновить</Text>
-              </TouchableOpacity>
+              <View style={{ flexDirection: "row", gap: 8 }}>
+                <TouchableOpacity
+                  style={[styles.productAdminBtn, { flex: 0, paddingHorizontal: 12, paddingVertical: 8 }]}
+                  onPress={() => syncSharedOrders(true)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.productAdminBtnText}>Обновить</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.productAdminBtn, { flex: 0, paddingHorizontal: 12, paddingVertical: 8 }]}
+                  onPress={() => setOrdersFullscreen(true)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.productAdminBtnText}>На весь экран</Text>
+                </TouchableOpacity>
+              </View>
             </View>
             {adminOrders.length === 0 ? (
               <Text style={[styles.empty, isDark && styles.textDark]}>Заказов пока нет</Text>
@@ -2798,6 +2899,96 @@ export default function App() {
                 </ScrollView>
               </ScrollView>
             )}
+
+            {/* Полноэкранная таблица заказов (удобно с ПК) */}
+            <Modal visible={ordersFullscreen} animationType="fade" transparent={false} onRequestClose={() => setOrdersFullscreen(false)}>
+              <View style={{ flex: 1, backgroundColor: isDark ? "#111" : "#f5f5f5", paddingTop: 16 }}>
+                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 16, marginBottom: 12 }}>
+                  <Text style={[styles.pageTitle, isDark && styles.textDark, { marginBottom: 0 }]}>Заказы · полный экран</Text>
+                  <View style={{ flexDirection: "row", gap: 8 }}>
+                    <TouchableOpacity
+                      style={[styles.productAdminBtn, { flex: 0, paddingHorizontal: 14, paddingVertical: 10 }]}
+                      onPress={() => syncSharedOrders(true)}
+                    >
+                      <Text style={styles.productAdminBtnText}>Обновить</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.productAdminBtn, { flex: 0, paddingHorizontal: 14, paddingVertical: 10, backgroundColor: "#ef4444" }]}
+                      onPress={() => setOrdersFullscreen(false)}
+                    >
+                      <Text style={styles.productAdminBtnText}>Закрыть</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+                <ScrollView horizontal style={{ flex: 1 }} contentContainerStyle={{ flexGrow: 1 }}>
+                  <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 12 }}>
+                    <View style={styles.crmTable}>
+                      <View style={[styles.crmRow, styles.crmHeaderRow]}>
+                        <Text style={[styles.crmCell, styles.crmHead, { width: 70, textAlign: "center" }]}>#</Text>
+                        <Text style={[styles.crmCell, styles.crmHead, { width: 120, textAlign: "center" }]}>Дата / Время</Text>
+                        <Text style={[styles.crmCell, styles.crmHead, { width: 180, textAlign: "center" }]}>Статус</Text>
+                        <Text style={[styles.crmCell, styles.crmHead, { width: 200, textAlign: "center" }]}>Данные</Text>
+                        <Text style={[styles.crmCell, styles.crmHead, { width: 140, textAlign: "center" }]}>Telegram</Text>
+                        <Text style={[styles.crmCell, styles.crmHead, { width: 140, textAlign: "center" }]}>Трек</Text>
+                        <Text style={[styles.crmCell, styles.crmHead, { width: 200, textAlign: "center" }]}>Товар</Text>
+                        <Text style={[styles.crmCell, styles.crmHead, { width: 90, textAlign: "center" }]}>Сумма</Text>
+                      </View>
+                      {adminOrders.map((order) => {
+                        const itemsLabel = (order.items || [])
+                          .map((i) => `${i.name}${i.size ? ` (${i.size})` : ""}`)
+                          .join(", ");
+                        const dateStr = order.date
+                          ? new Date(order.date).toLocaleString("ru-RU", {
+                              day: "2-digit", month: "2-digit", year: "numeric",
+                              hour: "2-digit", minute: "2-digit",
+                            })
+                          : "—";
+                        return (
+                          <View key={`fs-${order.id}`} style={[styles.crmRow, isDark && styles.crmRowDark]}>
+                            <Text style={[styles.crmCell, isDark && styles.textDark, { width: 70, fontWeight: "800" }]}>#{order.id}</Text>
+                            <Text style={[styles.crmCell, isDark && styles.textDark, { width: 120, fontSize: 11 }]}>{dateStr}</Text>
+                            <View style={[styles.crmCell, { width: 180 }]}>
+                              <TouchableOpacity
+                                style={[styles.crmStatusChip, { backgroundColor: statusColor(order.status) }]}
+                                onPress={() => setOpenStatusId(openStatusId === order.id ? null : order.id)}
+                              >
+                                <Text style={[styles.crmStatusChipText, { color: "#fff" }]}>{order.status} ▾</Text>
+                              </TouchableOpacity>
+                              {openStatusId === order.id && (
+                                <View style={{ flexDirection: "row", flexWrap: "wrap", marginTop: 4 }}>
+                                  {ORDER_STATUSES.filter((s) => s !== order.status).map((s) => (
+                                    <TouchableOpacity
+                                      key={s}
+                                      style={styles.crmStatusChip}
+                                      onPress={() => { changeStatus(order.id, s); setOpenStatusId(null); }}
+                                    >
+                                      <Text style={styles.crmStatusChipText}>{s}</Text>
+                                    </TouchableOpacity>
+                                  ))}
+                                </View>
+                              )}
+                            </View>
+                            <View style={[styles.crmCell, { width: 200 }]}>
+                              <Text style={[isDark && styles.textDark, { fontSize: 12, fontWeight: "700" }]}>{order.fullName || "—"}</Text>
+                              <Text style={{ fontSize: 11, color: "#666" }}>{order.address || "—"}</Text>
+                              <Text style={[isDark && styles.textDark, { fontSize: 11 }]}>{order.phone || "—"}</Text>
+                            </View>
+                            <Text style={[styles.crmCell, { width: 140, color: "#0088cc", fontSize: 12 }]}>
+                              {order.tgUsername ? `@${order.tgUsername}` : order.tgId || "—"}
+                            </Text>
+                            <Text style={[styles.crmCell, isDark && styles.textDark, { width: 140, fontSize: 12 }]}>
+                              {order.trackingNumber || (order.delivery === "europost" ? "—" : "Курьер")}
+                            </Text>
+                            <Text style={[styles.crmCell, isDark && styles.textDark, { width: 200 }]} numberOfLines={3}>{itemsLabel || "—"}</Text>
+                            <Text style={[styles.crmCell, isDark && styles.textDark, { width: 90, fontWeight: "700" }]}>{money(order.finalTotal || 0)}</Text>
+                          </View>
+                        );
+                      })}
+                    </View>
+                  </ScrollView>
+                </ScrollView>
+              </View>
+            </Modal>
 
             {/* PROMO CODES */}
             <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Промокоды</Text>
