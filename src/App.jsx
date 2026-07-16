@@ -1662,7 +1662,7 @@ export default function App() {
                   ...local,
                   ...o,
                   status: local.status && local.status !== "Новый" ? local.status : (o.status || local.status),
-                  trackingNumber: local.trackingNumber || o.trackingNumber || null,
+                  trackingNumber: o.trackingNumber || local.trackingNumber || null,
                   items: (local.items && local.items.length ? local.items : o.items) || [],
                 });
               }
@@ -2555,7 +2555,7 @@ export default function App() {
               ...local,
               ...o,
               status: local.status && local.status !== "Новый" ? local.status : (o.status || local.status),
-              trackingNumber: local.trackingNumber || o.trackingNumber || null,
+              trackingNumber: o.trackingNumber || local.trackingNumber || null,
               phone: o.phone || local.phone,
               fullName: o.fullName || local.fullName,
               address: o.address || local.address,
@@ -2862,15 +2862,39 @@ export default function App() {
 
   const updateTracking = (orderId, trackingNumber) => {
     const track = String(trackingNumber || "").trim();
-    setAdminOrders((prev) =>
-      prev.map((o) => (o.id === orderId ? { ...o, trackingNumber: track || null } : o))
-    );
-    setOrderHistory((prev) =>
-      prev.map((o) => (o.id === orderId ? { ...o, trackingNumber: track || null } : o))
-    );
-    sharedOrdersUpdate(orderId, { trackingNumber: track || null }).then((ok) => {
-      if (ok) showToast(track ? "Трек сохранён" : "Трек очищен");
+    let snapshot = null;
+    setAdminOrders((prev) => {
+      const next = prev.map((o) => {
+        if (String(o.id) !== String(orderId)) return o;
+        const updated = { ...o, trackingNumber: track || null };
+        snapshot = updated;
+        return updated;
+      });
+      return next;
     });
+    setOrderHistory((prev) =>
+      prev.map((o) =>
+        String(o.id) === String(orderId) ? { ...o, trackingNumber: track || null } : o
+      )
+    );
+    (async () => {
+      let ok = await sharedOrdersUpdate(orderId, { trackingNumber: track || null });
+      if (!ok && snapshot) {
+        ok = !!(await sharedOrdersPush(snapshot));
+      }
+      if (ok) showToast(track ? "📦 Трек сохранён" : "Трек очищен");
+      else showToast("⚠️ Трек не сохранился на сервере");
+    })();
+  };
+
+  const closeAdminPanel = () => {
+    // при закрытии CRM принудительно сохраняем заказы (треки/статусы)
+    const snapshot = adminOrders;
+    if (Array.isArray(snapshot) && snapshot.length > 0) {
+      netlifyOrdersSave(snapshot).catch(() => {});
+    }
+    setShowAdmin(false);
+    setOpenStatusId(null);
   };
 
   const sendBroadcast = () => {
@@ -4048,7 +4072,7 @@ export default function App() {
 
         {/* CRM */}
         {isAdmin && (
-          <Modal visible={showAdmin} animationType="none" transparent={false} onRequestClose={() => setShowAdmin(false)}>
+          <Modal visible={showAdmin} animationType="none" transparent={false} onRequestClose={closeAdminPanel}>
             <View style={[styles.page, theme === "dark" && styles.pageDark, { paddingTop: 40 }]}>
               <Toast message={toastMessage} visible={toastVisible} onHide={hideToast} />
               <TouchableOpacity onPress={() => setShowAdmin(false)} style={styles.closeAdmin}>
@@ -4186,12 +4210,26 @@ export default function App() {
                                   style={styles.crmTrackInput}
                                   placeholder="Трек-номер"
                                   placeholderTextColor="#999"
-                                  defaultValue={order.trackingNumber || ""}
-                                  onEndEditing={(e) => {
-                                    const v = (e.nativeEvent.text || "").trim();
-                                    updateTracking(order.id, v);
+                                  value={order.trackingNumber || ""}
+                                  onChangeText={(t) => {
+                                    setAdminOrders((prev) =>
+                                      prev.map((o) =>
+                                        String(o.id) === String(order.id)
+                                          ? { ...o, trackingNumber: t }
+                                          : o
+                                      )
+                                    );
+                                  }}
+                                  onBlur={() => {
+                                    const cur = (order.trackingNumber || "").trim();
+                                    updateTracking(order.id, cur);
+                                  }}
+                                  onSubmitEditing={() => {
+                                    const cur = (order.trackingNumber || "").trim();
+                                    updateTracking(order.id, cur);
                                   }}
                                   blurOnSubmit
+                                  returnKeyType="done"
                                 />
                               </View>
                               <Text style={[styles.crmTd, { width: 180 }]} numberOfLines={3}>
