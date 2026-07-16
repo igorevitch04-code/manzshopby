@@ -174,6 +174,7 @@ const compactOrderForBot = (o) => ({
   phone: o.phone || "",
   address: (o.address || "").slice(0, 120),
   finalTotal: o.finalTotal,
+  usedBonus: Number(o.usedBonus) || 0,
   delivery: o.delivery || "courier",
   trackingNumber: o.trackingNumber || null,
   tgId: o.tgId || null,
@@ -304,7 +305,10 @@ const notifyAdminNewOrder = async (order) => {
       `TG: ${tgPart}\n` +
       `Доставка: ${deliveryLabel}\n` +
       `Адрес: ${(order.address || "—").slice(0, 160)}\n` +
-      `Сумма: ${order.finalTotal} BYN\n` +
+      `Сумма: ${order.finalTotal} BYN` +
+      (Number(order.usedBonus) > 0 ? ` (использовано ${order.usedBonus} бонусов)` : "") +
+      `
+` +
       `Товар: ${itemsShort || "—"}`;
 
     const ok = await tgSendMessage(humanText);
@@ -443,6 +447,26 @@ const getClientStatus = (adminStatus) => {
   if (adminStatus === "Забрать деньги" || adminStatus === "Деньги получены") return "Завершен";
   if (adminStatus === "Новый") return "Ожидает подтверждения";
   return adminStatus || "Ожидает подтверждения";
+};
+
+// Цвета плашек статуса в CRM
+const getStatusBadgeStyle = (status) => {
+  switch (status) {
+    case "Новый":
+      return { backgroundColor: "#111111", color: "#FFFFFF", borderColor: "#111111" };
+    case "Отправить":
+      return { backgroundColor: "#DC2626", color: "#FFFFFF", borderColor: "#DC2626" };
+    case "Ждем поставку":
+      return { backgroundColor: "#F9A8D4", color: "#831843", borderColor: "#F9A8D4" };
+    case "Доставляется":
+      return { backgroundColor: "#FACC15", color: "#713F12", borderColor: "#FACC15" };
+    case "Забрать деньги":
+      return { backgroundColor: "#22C55E", color: "#FFFFFF", borderColor: "#22C55E" };
+    case "Деньги получены":
+      return { backgroundColor: "#FFFFFF", color: "#111111", borderColor: "#111111" };
+    default:
+      return { backgroundColor: "#111111", color: "#FFFFFF", borderColor: "#111111" };
+  }
 };
 
 // CloudStorage
@@ -1345,8 +1369,13 @@ const Toast = ({ message, visible, onHide }) => {
 
   if (!visible) return null;
 
+  const webFixed =
+    typeof document !== "undefined"
+      ? { position: "fixed", top: 50, left: 0, right: 0, zIndex: 2147483647 }
+      : null;
+
   return (
-    <View style={styles.toastContainer}>
+    <View style={[styles.toastContainer, webFixed]} pointerEvents="none">
       <View style={styles.toast}>
         <Text style={styles.toastText}>{message}</Text>
       </View>
@@ -2098,11 +2127,6 @@ export default function App() {
       // чтобы не сбивать оформление заказа и админку.
       if (remoteCount != null) {
         setReferralCount((prev) => {
-          const p = Number(prev) || 0;
-          if (remoteCount > p && page === "profile" && !orderModalVisible && !showAdmin) {
-            const diff = remoteCount - p;
-            setTimeout(() => showToast(`🎉 По вашей ссылке зарегистрировались: +${diff}`), 400);
-          }
           return remoteCount;
         });
       }
@@ -3973,6 +3997,7 @@ export default function App() {
         {isAdmin && (
           <Modal visible={showAdmin} animationType="none" transparent={false} onRequestClose={() => setShowAdmin(false)}>
             <View style={[styles.page, theme === "dark" && styles.pageDark, { paddingTop: 40 }]}>
+              <Toast message={toastMessage} visible={toastVisible} onHide={hideToast} />
               <TouchableOpacity onPress={() => setShowAdmin(false)} style={styles.closeAdmin}>
                 <Text style={[styles.closeAdminText, theme === "dark" && styles.textDark]}>✕ Закрыть CRM</Text>
               </TouchableOpacity>
@@ -4068,11 +4093,23 @@ export default function App() {
                               </Text>
                               <View style={{ width: 140, paddingVertical: 6, paddingHorizontal: 4 }}>
                                 <TouchableOpacity
-                                  style={styles.crmStatusBtn}
+                                  style={[
+                                    styles.crmStatusBtn,
+                                    {
+                                      backgroundColor: getStatusBadgeStyle(order.status || "Новый").backgroundColor,
+                                      borderColor: getStatusBadgeStyle(order.status || "Новый").borderColor,
+                                    },
+                                  ]}
                                   onPress={() => setOpenStatusId(isOpen ? null : order.id)}
                                   activeOpacity={0.85}
                                 >
-                                  <Text style={styles.crmStatusBtnText} numberOfLines={1}>
+                                  <Text
+                                    style={[
+                                      styles.crmStatusBtnText,
+                                      { color: getStatusBadgeStyle(order.status || "Новый").color },
+                                    ]}
+                                    numberOfLines={1}
+                                  >
                                     {order.status || "Новый"} ▾
                                   </Text>
                                 </TouchableOpacity>
@@ -5070,15 +5107,15 @@ const styles = StyleSheet.create({
     marginTop: 1,
   },
   crmStatusBtn: {
-    backgroundColor: "#111",
     borderRadius: 8,
     paddingHorizontal: 8,
     paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: "transparent",
   },
   crmStatusBtnText: {
-    color: "#fff",
     fontSize: 11,
-    fontWeight: "600",
+    fontWeight: "700",
   },
   crmStatusMenu: {
     backgroundColor: "#F5F5F5",
