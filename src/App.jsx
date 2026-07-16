@@ -1775,28 +1775,51 @@ export default function App() {
       try {
         const remote = await sharedOrdersLoad();
         if (stopped || !Array.isArray(remote) || !remote.length) return;
+        let bonusToAdd = 0;
         setOrderHistory((prev) => {
           if (!prev.length) return prev;
           let changed = false;
           const next = prev.map((local) => {
             const r = remote.find((o) => String(o.id) === String(local.id));
             if (!r) return local;
-            const statusChanged = r.status && r.status !== local.status;
+            const newStatus = r.status || local.status;
+            const statusChanged = newStatus !== local.status;
             const reviewChanged = !!r.askReview !== !!local.askReview;
-            const trackChanged = (r.trackingNumber || null) !== (local.trackingNumber || null);
-            if (!statusChanged && !reviewChanged && !trackChanged) return local;
+            const trackChanged =
+              (r.trackingNumber || null) !== (local.trackingNumber || null);
+            // кэшбэк: статус стал «Деньги получены» и ещё не начисляли
+            let credited = local.cashbackCredited;
+            if (
+              newStatus === "Деньги получены" &&
+              !local.cashbackCredited &&
+              Number(local.pendingCashback) > 0
+            ) {
+              bonusToAdd += Number(local.pendingCashback) || 0;
+              credited = true;
+              changed = true;
+            }
+            if (!statusChanged && !reviewChanged && !trackChanged && credited === local.cashbackCredited) {
+              return local;
+            }
             changed = true;
             return {
               ...local,
-              status: r.status || local.status,
+              status: newStatus,
               askReview: r.askReview != null ? !!r.askReview : local.askReview,
-              trackingNumber: r.trackingNumber || local.trackingNumber || null,
-              cashbackCredited:
-                r.cashbackCredited != null ? !!r.cashbackCredited : local.cashbackCredited,
+              trackingNumber:
+                local.delivery === "europost"
+                  ? r.trackingNumber || local.trackingNumber || null
+                  : local.trackingNumber || null,
+              delivery: r.delivery || local.delivery,
+              cashbackCredited: credited,
             };
           });
           return changed ? next : prev;
         });
+        if (bonusToAdd > 0) {
+          setBonusBalance((b) => b + bonusToAdd);
+          showToast(`+${bonusToAdd} BYN на бонусный счёт`);
+        }
       } catch (e) {}
     };
     syncMyOrders();
@@ -2763,10 +2786,10 @@ export default function App() {
         return patch;
       })
     );
+    // cashbackCredited на сервер НЕ ставим — клиент начислит бонусы сам при синхронизации статуса
     sharedOrdersUpdate(orderId, {
       status: newStatus,
       ...(askReview ? { askReview: true } : {}),
-      ...(creditCashback ? { cashbackCredited: true } : {}),
     }).catch(() => {});
   };
 
@@ -2868,20 +2891,6 @@ export default function App() {
             </Text>
           </TouchableOpacity>
 
-          {/* Кнопка корзины на фото (правый нижний угол) */}
-          <TouchableOpacity
-            style={styles.cartBtn}
-            onPress={(e) => {
-              e?.stopPropagation?.();
-              setSelectedProduct(item);
-              setSelectedSize(null);
-              setPage("product");
-              showToast("Выберите размер на странице товара");
-            }}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.cartBtnText}>🛒</Text>
-          </TouchableOpacity>
         </View>
         
         <Text style={[styles.brand, isDark && styles.textDark]}>{item.brand}</Text>
@@ -3118,7 +3127,13 @@ export default function App() {
           onEndReachedThreshold={0.5}
           keyboardShouldPersistTaps="handled"
           ListFooterComponent={localLoading ? <Text style={[styles.loader, isDark && styles.textDark]}>Загрузка...</Text> : null}
-          ListEmptyComponent={<Text style={[styles.empty, isDark && styles.textDark]}>Товаров нет</Text>}
+          ListEmptyComponent={
+            <View style={{ paddingVertical: 40, alignItems: "center" }}>
+              <Text style={[styles.empty, isDark && styles.textDark]}>
+                {!dataReady ? "Загружаю каталог…" : "Товаров нет"}
+              </Text>
+            </View>
+          }
         />
       </View>
     );
@@ -3553,8 +3568,10 @@ export default function App() {
               <Text style={[styles.orderId, isDark && styles.textDark]}>Заказ #{order.id}</Text>
               <Text style={[styles.orderDate, isDark && styles.textDark]}>{new Date(order.date).toLocaleDateString()}</Text>
               <Text style={[styles.orderStatus, isDark && styles.textDark]}>Статус: {getClientStatus(order.status)}</Text>
-              {order.delivery === "europost" && order.trackingNumber && (order.status === "Доставляется") && (
-                <Text style={[styles.trackingText, isDark && styles.textDark]}>Трек-номер: {order.trackingNumber}</Text>
+              {order.delivery === "europost" && !!order.trackingNumber && (
+                <Text style={[styles.trackingText, isDark && styles.textDark]}>
+                  Трек-номер: {order.trackingNumber}
+                </Text>
               )}
               <Text style={[styles.orderTotal, isDark && styles.textDark]}>Сумма: {money(order.finalTotal)}</Text>
               {(order.items || []).slice(0, 3).map((item, i) => (
@@ -4515,11 +4532,11 @@ const styles = StyleSheet.create({
   // Белый круг с чёрной обводкой + чёрное сердце
   favoriteBtn: {
     position: "absolute",
-    right: 10,
-    top: 10,
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+    right: 8,
+    top: 8,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     backgroundColor: "#fff",
     borderWidth: 1.5,
     borderColor: "#111",
@@ -4541,8 +4558,9 @@ const styles = StyleSheet.create({
     borderColor: "#111",
   },
   favoriteBtnText: {
-    fontSize: 16,
+    fontSize: 13,
     color: "#111",
+    lineHeight: 15,
   },
   favoriteBtnTextActive: {
     color: "#111",
