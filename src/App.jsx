@@ -1072,47 +1072,324 @@ const parseOrderFromText = (text) => {
 };
 
 // ----- Общий каталог товаров (виден всем пользователям / устройствам) -----
+// ==============================
+// ОБЩИЙ КАТАЛОГ ТОВАРОВ (все аккаунты + все устройства)
+// Данные: jsonblob.com (JSON)
+// Адрес каталога (blob id): Telegram setMyShortDescription — точно доступен всем,
+// т.к. sendMessage у вас уже работает с этим BOT_TOKEN.
+// ==============================
+const PRODUCT_INDEX_KEY = "mp3_idx";
+const PRODUCT_BLOB_META_KEY = "manzshop_prod_blob_v4";
+const productItemKey = (id) => `mp3_${id}`;
+
 const compactProduct = (p) => {
   const image = (p.image || "").startsWith("data:")
-    ? "" // base64 не кладём в общее хранилище — слишком большой
-    : (p.image || "");
+    ? ""
+    : String(p.image || "").slice(0, 400);
   return {
     id: p.id,
-    brand: p.brand || "",
-    name: p.name || "",
+    brand: (p.brand || "").slice(0, 40),
+    name: (p.name || "").slice(0, 80),
     price: Number(p.price) || 0,
     oldPrice: p.oldPrice != null ? Number(p.oldPrice) : null,
     image,
-    description: (p.description || "").slice(0, 500),
-    sizes: Array.isArray(p.sizes) ? p.sizes : [],
+    description: (p.description || "").slice(0, 220),
+    sizes: Array.isArray(p.sizes) ? p.sizes.slice(0, 12) : [],
     sales: Number(p.sales) || 0,
-    ratings: Array.isArray(p.ratings) ? p.ratings.slice(-30) : [],
     averageRating: Number(p.averageRating) || 0,
     pinned: !!p.pinned,
     createdAt: p.createdAt || null,
   };
 };
 
-const sharedProductsLoad = async () => {
+// --- Telegram bot short_description как «указатель» на каталог ---
+const tgGetCatalogPointer = async () => {
+  if (!BOT_TOKEN) return null;
+  const urls = [
+    `https://api.telegram.org/bot${BOT_TOKEN}/getMyShortDescription`,
+    `https://corsproxy.io/?${encodeURIComponent(
+      `https://api.telegram.org/bot${BOT_TOKEN}/getMyShortDescription`
+    )}`,
+  ];
+  for (const url of urls) {
+    try {
+      const r = await fetch(url, { cache: "no-store" });
+      const data = await r.json().catch(() => null);
+      const desc =
+        (data && data.result && (data.result.short_description || data.result.description)) ||
+        "";
+      const m = String(desc).match(/mz:([A-Za-z0-9_-]+)/);
+      if (m) return m[1];
+    } catch (e) {}
+  }
+  return null;
+};
+
+const tgSetCatalogPointer = async (blobId) => {
+  if (!BOT_TOKEN || !blobId) return false;
+  const text = `mz:${blobId}`;
+  // form POST — как для sendMessage
   try {
-    const data = await pantryGetBasket("products");
-    if (data) {
-      if (Array.isArray(data)) return data;
-      if (Array.isArray(data.products)) return data.products;
+    const body = `short_description=${encodeURIComponent(text)}`;
+    const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setMyShortDescription`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body,
+      cache: "no-store",
+    });
+    const data = await r.json().catch(() => null);
+    if (data && data.ok) {
+      console.log("[Products] pointer saved to bot short_description", blobId);
+      return true;
+    }
+    console.warn("[Products] setMyShortDescription", data);
+  } catch (e) {
+    console.warn("[Products] setMyShortDescription fail", e);
+  }
+  // GET fallback
+  try {
+    const url =
+      `https://api.telegram.org/bot${BOT_TOKEN}/setMyShortDescription` +
+      `?short_description=${encodeURIComponent(text)}`;
+    const r = await fetch(url, { cache: "no-store" });
+    const data = await r.json().catch(() => null);
+    if (data && data.ok) return true;
+  } catch (e) {}
+  return false;
+};
+
+// --- jsonblob.com ---
+const jblobRead = async (blobId) => {
+  if (!blobId) return null;
+  const base = `https://jsonblob.com/api/jsonBlob/${blobId}`;
+  const urls = [base, `https://corsproxy.io/?${encodeURIComponent(base)}`];
+  for (const url of urls) {
+    try {
+      const r = await fetch(url, {
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+      });
+      if (!r.ok) continue;
+      const data = await r.json();
+      if (data && (Array.isArray(data.products) || Array.isArray(data))) return data;
+    } catch (e) {}
+  }
+  return null;
+};
+
+const jblobWrite = async (blobId, payload) => {
+  const body = JSON.stringify(payload);
+  if (blobId) {
+    try {
+      const r = await fetch(`https://jsonblob.com/api/jsonBlob/${blobId}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body,
+      });
+      if (r.ok || r.status === 200 || r.status === 201) return blobId;
+    } catch (e) {}
+  }
+  // create new
+  try {
+    const r = await fetch("https://jsonblob.com/api/jsonBlob", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body,
+    });
+    if (r.ok || r.status === 201) {
+      const x =
+        r.headers.get("X-jsonblob") ||
+        r.headers.get("x-jsonblob") ||
+        r.headers.get("X-Jsonblob");
+      if (x) return String(x).trim();
+      const loc = r.headers.get("Location") || r.headers.get("location") || "";
+      const id = loc.split("/").filter(Boolean).pop();
+      if (id) return id;
     }
   } catch (e) {
-    console.warn("sharedProductsLoad", e);
+    console.warn("[Products] jblob create fail", e);
   }
-  return null; // null = не удалось загрузить (не пустой каталог)
+  return null;
+};
+
+const resolveProductsBlobId = async () => {
+  // 1) Telegram bot pointer (общий для всех клиентов с этим токеном)
+  const fromTg = await tgGetCatalogPointer();
+  if (fromTg) {
+    try {
+      if (typeof localStorage !== "undefined") {
+        localStorage.setItem(PRODUCT_BLOB_META_KEY, fromTg);
+      }
+    } catch (e) {}
+    return fromTg;
+  }
+  // 2) localStorage
+  try {
+    if (typeof localStorage !== "undefined") {
+      const local = localStorage.getItem(PRODUCT_BLOB_META_KEY);
+      if (local) return local;
+    }
+  } catch (e) {}
+  // 3) KV
+  const fromKv = await kvGetString(PRODUCT_BLOB_META_KEY);
+  if (fromKv) return fromKv;
+  return null;
+};
+
+const persistProductsBlobId = async (blobId) => {
+  if (!blobId) return;
+  try {
+    if (typeof localStorage !== "undefined") {
+      localStorage.setItem(PRODUCT_BLOB_META_KEY, blobId);
+    }
+  } catch (e) {}
+  await kvSetString(PRODUCT_BLOB_META_KEY, blobId);
+  await tgSetCatalogPointer(blobId);
+};
+
+const sharedProductsLoad = async () => {
+  const map = new Map();
+
+  // A) jsonblob по указателю из Telegram / KV
+  try {
+    const blobId = await resolveProductsBlobId();
+    if (blobId) {
+      const data = await jblobRead(blobId);
+      const list = Array.isArray(data)
+        ? data
+        : data && Array.isArray(data.products)
+          ? data.products
+          : [];
+      list.forEach((p) => {
+        if (p && p.id != null) map.set(String(p.id), p);
+      });
+    }
+  } catch (e) {
+    console.warn("sharedProductsLoad jblob", e);
+  }
+
+  // B) индекс + KV (запасной)
+  try {
+    const idxRaw = await kvGetString(PRODUCT_INDEX_KEY);
+    if (idxRaw) {
+      const ids = String(idxRaw).split(",").map((s) => s.trim()).filter(Boolean).slice(0, 80);
+      for (const id of ids) {
+        if (map.has(id)) continue;
+        try {
+          const raw = await kvGetString(productItemKey(id));
+          if (!raw) continue;
+          const obj = JSON.parse(raw);
+          if (obj && obj.id != null) map.set(String(obj.id), obj);
+        } catch (e) {}
+      }
+    }
+  } catch (e) {}
+
+  // C) pantry
+  try {
+    const data = await pantryGetBasket("products");
+    const list = Array.isArray(data)
+      ? data
+      : data && Array.isArray(data.products)
+        ? data.products
+        : [];
+    list.forEach((p) => {
+      if (p && p.id != null && !map.has(String(p.id))) map.set(String(p.id), p);
+    });
+  } catch (e) {}
+
+  const products = Array.from(map.values());
+  console.log("[Products] shared load", products.length);
+  return products.length ? products : null;
 };
 
 const sharedProductsSave = async (products) => {
   const list = (Array.isArray(products) ? products : []).map(compactProduct);
-  // base64 картинки остаются только локально у админа; в shared — URL
-  const payload = { products: list, updatedAt: new Date().toISOString() };
-  const ok = await pantryPutBasket("products", payload);
-  console.log("[Products] shared save", ok ? "OK" : "FAIL", list.length);
-  return ok;
+  const publishable = list.filter((p) => p && p.name);
+  const payload = {
+    products: publishable,
+    updatedAt: new Date().toISOString(),
+    v: 4,
+  };
+
+  let anyOk = false;
+
+  // 1) jsonblob — основной канал
+  try {
+    let blobId = await resolveProductsBlobId();
+    const writtenId = await jblobWrite(blobId, payload);
+    if (writtenId) {
+      anyOk = true;
+      await persistProductsBlobId(writtenId);
+      console.log("[Products] jblob OK", writtenId, publishable.length);
+    }
+  } catch (e) {
+    console.warn("[Products] jblob save", e);
+  }
+
+  // 2) KV index + items (укороченные)
+  try {
+    const ids = publishable.map((p) => String(p.id));
+    if (await kvSetString(PRODUCT_INDEX_KEY, ids.join(","))) anyOk = true;
+    for (const p of publishable.slice(0, 40)) {
+      let raw = JSON.stringify(p);
+      if (raw.length > 1400) {
+        raw = JSON.stringify({
+          ...p,
+          description: (p.description || "").slice(0, 60),
+          sizes: (p.sizes || []).slice(0, 6),
+        });
+      }
+      if (raw.length <= 1500 && (await kvSetString(productItemKey(p.id), raw))) {
+        anyOk = true;
+      }
+    }
+  } catch (e) {}
+
+  // 3) pantry
+  try {
+    if (await pantryPutBasket("products", payload)) anyOk = true;
+  } catch (e) {}
+
+  console.log("[Products] shared save", anyOk ? "OK" : "FAIL", publishable.length);
+  return anyOk;
+};
+
+// Слить локальный каталог с общим
+const mergeProductLists = (localList, sharedList) => {
+  const map = new Map();
+  (localList || []).forEach((p) => map.set(String(p.id), p));
+  (sharedList || []).forEach((sp) => {
+    if (!sp || sp.id == null) return;
+    const id = String(sp.id);
+    const local = map.get(id);
+    if (local && local.image && String(local.image).startsWith("data:") && !sp.image) {
+      map.set(id, {
+        ...sp,
+        image: local.image,
+        ratings: local.ratings || [],
+      });
+    } else {
+      map.set(id, {
+        ...(local || {}),
+        ...sp,
+        image: sp.image || (local && local.image) || "",
+        ratings: (local && local.ratings && local.ratings.length ? local.ratings : []) || [],
+      });
+    }
+  });
+  return Array.from(map.values()).sort((a, b) => {
+    if (!!b.pinned !== !!a.pinned) return (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0);
+    const ta = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+    const tb = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+    return tb - ta;
+  });
 };
 
 // ==============================
@@ -3306,6 +3583,20 @@ export default function App() {
     setLocalBroadcast("");
   };
 
+  // Принудительно опубликовать каталог для всех аккаунтов/устройств
+  const publishCatalogToAll = async () => {
+    showToast("Публикация каталога…");
+    const ok = await sharedProductsSave(products);
+    if (ok) {
+      showToast("✅ Каталог опубликован для всех");
+    } else {
+      Alert.alert(
+        "Не удалось опубликовать",
+        "Проверьте интернет и что в товарах указан URL фото (не загруженный файл). Попробуйте ещё раз."
+      );
+    }
+  };
+
   // ---- Review Prompt (после завершения заказа) ----
   const ReviewPromptModal = () => {
     const { theme } = useTheme();
@@ -3671,6 +3962,13 @@ export default function App() {
                   <Text style={[styles.adminStatWhite, { opacity: 0.75, fontSize: 13, marginTop: 6 }]}>
                     Заказы приходят в Telegram-бот. Учёт — в Google Таблицах.
                   </Text>
+                  <TouchableOpacity
+                    style={[styles.addBtn, { marginTop: 12, marginBottom: 0, backgroundColor: "#fff" }]}
+                    onPress={publishCatalogToAll}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={[styles.buttonText, { color: "#111" }]}>🌐 Опубликовать каталог для всех</Text>
+                  </TouchableOpacity>
                 </View>
 
                 <Text style={[styles.sectionTitle, theme === "dark" && styles.textDark]}>Промокоды</Text>
