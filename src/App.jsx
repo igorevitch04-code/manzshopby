@@ -1676,10 +1676,13 @@ export default function App() {
   const [broadcastAudience, setBroadcastAudience] = useState(0);
   const [broadcastSending, setBroadcastSending] = useState(false);
   const [productSearch, setProductSearch] = useState("");
+  const [gsheetUrl, setGsheetUrl] = useState("");
+  const [importing, setImporting] = useState(false);
   const [localPromo, setLocalPromo] = useState({ code: "", discount: "", maxUses: "", description: "" });
   const [localProduct, setLocalProduct] = useState(null);
   const [localIsNew, setLocalIsNew] = useState(false);
   const [openStatusId, setOpenStatusId] = useState(null);
+  const [ordersFullscreen, setOrdersFullscreen] = useState(false);
   const [reviewRating, setReviewRating] = useState(0);
   const [reviewComment, setReviewComment] = useState("");
   // Сразу предзагружаем картинки, чтобы не было пустых карточек
@@ -1838,6 +1841,12 @@ export default function App() {
         setReferralCount(cloudReferralCount || 0);
         setReferralEarnings(cloudReferralEarnings || 0);
         setReferralNotified(!!cloudReferralNotified);
+
+        // Ссылка на Google Таблицу для импорта
+        try {
+          const savedSheet = await loadFromCloud("krost_gsheet_url");
+          if (savedSheet && typeof savedSheet === "string") setGsheetUrl(savedSheet);
+        } catch (e) {}
 
         // ВАЖНО: разрешаем сохранение только после загрузки — иначе пустой стейт затирает CloudStorage
         setDataReady(true);
@@ -3969,6 +3978,176 @@ export default function App() {
     }
   };
 
+  // Сохранить постоянную ссылку на Google Таблицу (CSV)
+  const saveGsheetUrl = async () => {
+    const url = (gsheetUrl || "").trim();
+    if (!url) {
+      Alert.alert("Ссылка", "Вставь ссылку на CSV из Google Таблицы");
+      return;
+    }
+    await saveToCloud("krost_gsheet_url", url);
+    showToast("✅ Ссылка сохранена");
+  };
+
+  // Импорт ТОЛЬКО новых товаров из Google Таблицы (CSV)
+  // Существующие (по brand + name) пропускаются
+  const importNewProductsFromSheet = async () => {
+    const url = (gsheetUrl || "").trim();
+    if (!url) {
+      Alert.alert("Нет ссылки", "Сначала вставь и сохрани ссылку на Google Таблицу (CSV)");
+      return;
+    }
+
+    setImporting(true);
+    showToast("Загрузка таблицы…");
+
+    try {
+      const fetchUrl = url.includes("?") ? `${url}&t=${Date.now()}` : `${url}?t=${Date.now()}`;
+      const res = await fetch(fetchUrl);
+      if (!res.ok) throw new Error("Не удалось скачать таблицу (проверь, что она опубликована как CSV)");
+
+      const text = await res.text();
+
+      // Простой CSV-парсер (поддерживает кавычки)
+      const rows = [];
+      const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+      const lines = normalized.split("\n");
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        const cols = [];
+        let current = "";
+        let inQuotes = false;
+        for (let i = 0; i < line.length; i++) {
+          const ch = line[i];
+          if (ch === '"') {
+            inQuotes = !inQuotes;
+          } else if (ch === "," && !inQuotes) {
+            cols.push(current.trim());
+            current = "";
+          } else {
+            current += ch;
+          }
+        }
+        cols.push(current.trim());
+        rows.push(cols);
+      }
+
+      if (rows.length < 2) {
+        Alert.alert("Пусто", "В таблице нет данных (нужна строка заголовков + хотя бы 1 товар)");
+        return;
+      }
+
+      const headers = rows[0].map((h) => String(h || "").toLowerCase().trim());
+      const idx = {
+        brand: headers.indexOf("brand"),
+        name: headers.indexOf("name"),
+        price: headers.indexOf("price"),
+        oldPrice: headers.indexOf("oldprice"),
+        description: headers.indexOf("description"),
+        sizes: headers.indexOf("sizes"),
+        image: headers.indexOf("image"),
+      };
+
+      if (idx.brand === -1 || idx.name === -1 || idx.price === -1) {
+        Alert.alert(
+          "Ошибка заголовков",
+          "В первой строке таблицы должны быть колонки: brand, name, price\n(опционально: oldPrice, description, sizes, image)"
+        );
+        return;
+      }
+
+      // Существующие товары (ключ = brand|name в нижнем регистре)
+      const existingKeys = new Set(
+        products.map(
+          (p) =>
+            `${(p.brand || "").toLowerCase().trim()}|${(p.name || "").toLowerCase().trim()}`
+        )
+      );
+
+      const newProducts = [];
+      let skipped = 0;
+
+      for (let i = 1; i < rows.length; i++) {
+        const row = rows[i];
+        const brand = (row[idx.brand] || "").trim();
+        const name = (row[idx.name] || "").trim();
+        if (!brand || !name) continue;
+
+        const key = `${brand.toLowerCase()}|${name.toLowerCase()}`;
+        if (existingKeys.has(key)) {
+          skipped++;
+          continue;
+        }
+
+        const price = parseInt(String(row[idx.price] || "").replace(/\D/g, ""), 10) || 0;
+        if (!price) continue;
+
+        const oldRaw =
+          idx.oldPrice >= 0 ? String(row[idx.oldPrice] || "").replace(/\D/g, "") : "";
+        const oldPrice = oldRaw ? parseInt(oldRaw, 10) : null;
+
+        const description =
+          idx.description >= 0 ? (row[idx.description] || "").trim() : "";
+        const sizesRaw = idx.sizes >= 0 ? row[idx.sizes] || "" : "";
+        const sizes = String(sizesRaw)
+          .split(/[,;]/)
+          .map((s) => s.trim())
+          .filter(Boolean);
+
+        const image = idx.image >= 0 ? (row[idx.image] || "").trim() : "";
+
+        newProducts.push({
+          id: Date.now() + i + Math.floor(Math.random() * 900),
+          brand,
+          name,
+          price,
+          oldPrice,
+          image: image || "https://via.placeholder.com/400?text=Photo",
+          description,
+          sizes: sizes.length ? sizes : ["40", "41", "42"],
+          sales: 0,
+          ratings: [],
+          averageRating: 0,
+          createdAt: new Date().toISOString(),
+          pinned: false,
+          hidden: false,
+        });
+
+        existingKeys.add(key); // защита от дублей внутри одного импорта
+      }
+
+      if (newProducts.length === 0) {
+        showToast(
+          skipped > 0
+            ? `Новых нет (пропущено уже существующих: ${skipped})`
+            : "Новых товаров не найдено"
+        );
+        return;
+      }
+
+      const next = [...newProducts, ...products];
+      setProducts(next);
+
+      const ok = await sharedProductsSave(next);
+      if (ok) {
+        showToast(
+          `✅ Добавлено ${newProducts.length} новых` +
+            (skipped ? ` (пропущено ${skipped})` : "")
+        );
+      } else {
+        showToast(
+          `⚠️ Добавлено локально ${newProducts.length}, но общая публикация не удалась — нажми «Опубликовать каталог»`
+        );
+      }
+    } catch (e) {
+      console.error("Import error", e);
+      Alert.alert("Ошибка импорта", e.message || "Не удалось загрузить таблицу");
+    } finally {
+      setImporting(false);
+    }
+  };
+
   // ---- Review Prompt (после завершения заказа) ----
   const submitReviewPrompt = () => {
     if (!reviewPrompt) return;
@@ -4332,21 +4511,63 @@ export default function App() {
                     Пуш о заказе — в Telegram. Статусы меняйте ниже. Учёт — в Google Таблицах.
                   </Text>
                   <TouchableOpacity
-                    style={[styles.addBtn, { marginTop: 12, marginBottom: 0, backgroundColor: "#fff" }]}
+                    style={[
+                      styles.addBtn,
+                      {
+                        marginTop: 14,
+                        marginBottom: 0,
+                        backgroundColor: "#fff",
+                        paddingVertical: 14,
+                        paddingHorizontal: 18,
+                      },
+                    ]}
                     onPress={publishCatalogToAll}
                     activeOpacity={0.85}
                   >
-                    <Text style={[styles.buttonText, { color: "#111" }]}>🌐 Опубликовать каталог для всех</Text>
+                    <Text
+                      style={[
+                        styles.buttonText,
+                        { color: "#111", fontSize: 15, fontWeight: "800" },
+                      ]}
+                    >
+                      🌐 Опубликовать каталог для всех
+                    </Text>
                   </TouchableOpacity>
                 </View>
 
                 <Text style={[styles.sectionTitle, theme === "dark" && styles.textDark]}>Заказы</Text>
-                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8, flexWrap: "wrap", gap: 8 }}>
-                  <Text style={[styles.crmMuted, theme === "dark" && styles.textDark, { flex: 1 }]}>
-                    Статус видит клиент в профиле. «Деньги получены» — бонусы и отзыв.
-                  </Text>
+                <View
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    justifyContent: "flex-end",
+                    marginBottom: 10,
+                    flexWrap: "wrap",
+                    gap: 8,
+                  }}
+                >
                   <TouchableOpacity
-                    style={[styles.productAdminBtn, { paddingHorizontal: 12, paddingVertical: 8 }]}
+                    style={[
+                      styles.productAdminBtn,
+                      {
+                        paddingHorizontal: 14,
+                        paddingVertical: 10,
+                        minWidth: 110,
+                        alignItems: "center",
+                      },
+                    ]}
+                    onPress={() => setOrdersFullscreen(true)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={[styles.productAdminBtnText, { fontSize: 12, lineHeight: 16 }]}>
+                      ⛶ Полный экран
+                    </Text>
+                    <Text style={[styles.productAdminBtnText, { fontSize: 11, opacity: 0.85, lineHeight: 14 }]}>
+                      таблицы заказов
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.productAdminBtn, { paddingHorizontal: 14, paddingVertical: 10 }]}
                     onPress={() => syncSharedOrders(true)}
                     activeOpacity={0.8}
                   >
@@ -4590,6 +4811,77 @@ export default function App() {
                 <TouchableOpacity style={styles.addBtn} onPress={startAddProduct}>
                   <Text style={styles.buttonText}>+ Добавить товар</Text>
                 </TouchableOpacity>
+
+                {/* ===== Импорт из Google Таблицы (только новые) ===== */}
+                <View
+                  style={{
+                    marginTop: 14,
+                    marginBottom: 14,
+                    padding: 14,
+                    borderRadius: 16,
+                    backgroundColor: theme === "dark" ? "#1f1f1f" : "#f0f0f0",
+                    borderWidth: 1,
+                    borderColor: theme === "dark" ? "#333" : "#e0e0e0",
+                  }}
+                >
+                  <Text
+                    style={[
+                      styles.sectionTitle,
+                      theme === "dark" && styles.textDark,
+                      { fontSize: 15, marginTop: 0, marginBottom: 8 },
+                    ]}
+                  >
+                    Импорт из Google Таблицы
+                  </Text>
+
+                  <TextInput
+                    style={[styles.editInput, theme === "dark" && styles.inputDark]}
+                    value={gsheetUrl}
+                    onChangeText={setGsheetUrl}
+                    placeholder="Ссылка на CSV (Файл → Опубликовать в интернете)"
+                    placeholderTextColor="#999"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    blurOnSubmit={false}
+                  />
+
+                  <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
+                    <TouchableOpacity
+                      style={[styles.saveBtn, { flex: 1, backgroundColor: "#555" }]}
+                      onPress={saveGsheetUrl}
+                      activeOpacity={0.85}
+                    >
+                      <Text style={styles.buttonText}>Сохранить ссылку</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[
+                        styles.saveBtn,
+                        { flex: 1, opacity: importing ? 0.55 : 1 },
+                      ]}
+                      onPress={importNewProductsFromSheet}
+                      disabled={importing}
+                      activeOpacity={0.85}
+                    >
+                      <Text style={styles.buttonText}>
+                        {importing ? "Импорт…" : "Импортировать новые"}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  <Text
+                    style={{
+                      fontSize: 12,
+                      color: "#888",
+                      marginTop: 10,
+                      lineHeight: 17,
+                    }}
+                  >
+                    Добавляются только товары, которых ещё нет в каталоге
+                    (сравнение по бренду + названию). Существующие не
+                    перезаписываются.
+                  </Text>
+                </View>
 
                 <TextInput
                   style={[styles.editInput, theme === "dark" && styles.inputDark, { marginBottom: 10 }]}
@@ -4875,6 +5167,255 @@ export default function App() {
           </Modal>
         )}
 
+        {/* Полноэкранная таблица заказов (удобно на ПК) */}
+        {isAdmin && (
+          <Modal
+            visible={ordersFullscreen}
+            animationType="fade"
+            transparent={false}
+            onRequestClose={() => setOrdersFullscreen(false)}
+          >
+            <View
+              style={[
+                styles.page,
+                theme === "dark" && styles.pageDark,
+                { paddingTop: 16, paddingBottom: 16 },
+              ]}
+            >
+              <View
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  marginBottom: 12,
+                  paddingHorizontal: 4,
+                }}
+              >
+                <Text
+                  style={[
+                    styles.pageTitle,
+                    theme === "dark" && styles.textDark,
+                    { marginTop: 0, marginBottom: 0, fontSize: 22 },
+                  ]}
+                >
+                  Заказы · полный экран
+                </Text>
+                <View style={{ flexDirection: "row", gap: 8 }}>
+                  <TouchableOpacity
+                    style={[styles.productAdminBtn, { paddingHorizontal: 14, paddingVertical: 10 }]}
+                    onPress={() => syncSharedOrders(true)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.productAdminBtnText}>Обновить</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.productAdminBtn,
+                      { paddingHorizontal: 14, paddingVertical: 10, backgroundColor: "#333" },
+                    ]}
+                    onPress={() => setOrdersFullscreen(false)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.productAdminBtnText}>✕ Закрыть</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {adminOrders.length === 0 ? (
+                <Text style={[styles.empty, theme === "dark" && styles.textDark]}>
+                  Заказов пока нет
+                </Text>
+              ) : (
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator
+                  nestedScrollEnabled
+                  style={{ flex: 1 }}
+                >
+                  <View style={[styles.crmTable, { minWidth: 1100 }]}>
+                    <ScrollView
+                      nestedScrollEnabled
+                      style={{ flex: 1 }}
+                      showsVerticalScrollIndicator
+                    >
+                      <View style={[styles.crmTableRow, styles.crmTableHeader]}>
+                        <Text style={[styles.crmTh, { width: 80 }]}>#</Text>
+                        <Text style={[styles.crmTh, { width: 130 }]}>Дата</Text>
+                        <Text style={[styles.crmTh, { width: 150 }]}>Статус</Text>
+                        <Text style={[styles.crmTh, { width: 220 }]}>Клиент</Text>
+                        <Text style={[styles.crmTh, { width: 140 }]}>Трек</Text>
+                        <Text style={[styles.crmTh, { width: 220 }]}>Товар</Text>
+                        <Text style={[styles.crmTh, { width: 90 }]}>Сумма</Text>
+                      </View>
+                      {adminOrders.map((order, idx) => {
+                        const itemsLabel = (order.items || [])
+                          .map((i) =>
+                            `${i.brand || ""} ${i.name}${i.size ? ` (${i.size})` : ""}`.trim()
+                          )
+                          .join(", ");
+                        const dateLabel = order.date
+                          ? new Date(order.date).toLocaleString("ru-RU", {
+                              day: "2-digit",
+                              month: "2-digit",
+                              year: "2-digit",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })
+                          : "—";
+                        const isOpen = openStatusId === order.id;
+                        return (
+                          <View key={`fs-${order.id}`}>
+                            <View
+                              style={[
+                                styles.crmTableRow,
+                                idx % 2 === 1 && styles.crmTableRowAlt,
+                                theme === "dark" && { borderBottomColor: "#333" },
+                              ]}
+                            >
+                              <Text
+                                style={[styles.crmTd, { width: 80, fontWeight: "700" }]}
+                                numberOfLines={1}
+                              >
+                                {order.id}
+                              </Text>
+                              <Text style={[styles.crmTd, { width: 130 }]} numberOfLines={2}>
+                                {dateLabel}
+                              </Text>
+                              <View style={{ width: 150, paddingVertical: 6, paddingHorizontal: 4 }}>
+                                <TouchableOpacity
+                                  style={[
+                                    styles.crmStatusBtn,
+                                    {
+                                      backgroundColor: getStatusBadgeStyle(
+                                        order.status || "Новый"
+                                      ).backgroundColor,
+                                      borderColor: getStatusBadgeStyle(
+                                        order.status || "Новый"
+                                      ).borderColor,
+                                    },
+                                  ]}
+                                  onPress={() =>
+                                    setOpenStatusId(isOpen ? null : order.id)
+                                  }
+                                  activeOpacity={0.85}
+                                >
+                                  <Text
+                                    style={[
+                                      styles.crmStatusBtnText,
+                                      {
+                                        color: getStatusBadgeStyle(
+                                          order.status || "Новый"
+                                        ).color,
+                                      },
+                                    ]}
+                                    numberOfLines={1}
+                                  >
+                                    {order.status || "Новый"} ▾
+                                  </Text>
+                                </TouchableOpacity>
+                              </View>
+                              <View
+                                style={{ width: 220, paddingVertical: 6, paddingHorizontal: 6 }}
+                              >
+                                <Text style={styles.crmTdStrong} numberOfLines={1}>
+                                  {order.fullName || "—"}
+                                </Text>
+                                <Text style={styles.crmTdMuted} numberOfLines={1}>
+                                  {order.phone || "—"}
+                                </Text>
+                                <Text style={styles.crmTdMuted} numberOfLines={1}>
+                                  {order.tgUsername
+                                    ? `@${order.tgUsername}`
+                                    : order.tgId
+                                      ? `id:${order.tgId}`
+                                      : "—"}
+                                </Text>
+                                <Text style={styles.crmTdMuted} numberOfLines={2}>
+                                  {order.address || "—"}
+                                </Text>
+                              </View>
+                              <View
+                                style={{ width: 140, paddingVertical: 4, paddingHorizontal: 4 }}
+                              >
+                                <TextInput
+                                  style={styles.crmTrackInput}
+                                  placeholder="Трек-номер"
+                                  placeholderTextColor="#999"
+                                  value={order.trackingNumber || ""}
+                                  onChangeText={(t) => {
+                                    setAdminOrders((prev) =>
+                                      prev.map((o) =>
+                                        String(o.id) === String(order.id)
+                                          ? { ...o, trackingNumber: t }
+                                          : o
+                                      )
+                                    );
+                                  }}
+                                  onBlur={() => {
+                                    const cur = (order.trackingNumber || "").trim();
+                                    updateTracking(order.id, cur);
+                                  }}
+                                  onSubmitEditing={() => {
+                                    const cur = (order.trackingNumber || "").trim();
+                                    updateTracking(order.id, cur);
+                                  }}
+                                  blurOnSubmit
+                                  returnKeyType="done"
+                                />
+                              </View>
+                              <Text
+                                style={[styles.crmTd, { width: 220 }]}
+                                numberOfLines={3}
+                              >
+                                {itemsLabel || "—"}
+                              </Text>
+                              <Text
+                                style={[
+                                  styles.crmTd,
+                                  { width: 90, fontWeight: "700" },
+                                ]}
+                              >
+                                {order.finalTotal != null ? `${order.finalTotal}` : "—"}
+                              </Text>
+                            </View>
+                            {isOpen && (
+                              <View style={styles.crmStatusMenu}>
+                                {ORDER_STATUSES.map((st) => (
+                                  <TouchableOpacity
+                                    key={st}
+                                    style={[
+                                      styles.crmStatusMenuItem,
+                                      order.status === st && styles.crmStatusMenuItemActive,
+                                    ]}
+                                    onPress={() => {
+                                      changeStatus(order.id, st);
+                                      setOpenStatusId(null);
+                                    }}
+                                  >
+                                    <Text
+                                      style={[
+                                        styles.crmStatusMenuText,
+                                        order.status === st &&
+                                          styles.crmStatusMenuTextActive,
+                                      ]}
+                                    >
+                                      {st}
+                                    </Text>
+                                  </TouchableOpacity>
+                                ))}
+                              </View>
+                            )}
+                          </View>
+                        );
+                      })}
+                    </ScrollView>
+                  </View>
+                </ScrollView>
+              )}
+            </View>
+          </Modal>
+        )}
+
         <Toast message={toastMessage} visible={toastVisible} onHide={hideToast} />
       </View>
     </ThemeContext.Provider>
@@ -5061,6 +5602,66 @@ const styles = StyleSheet.create({
 
   buyButton: { backgroundColor: "#111", padding: 14, borderRadius: 22, marginTop: 16 },
   buttonText: { color: "#fff", textAlign: "center", fontWeight: "800", fontSize: 13 },
+  addBtn: {
+    backgroundColor: "#111",
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 16,
+    alignItems: "center",
+    marginBottom: 10,
+  },
+  saveBtn: {
+    backgroundColor: "#111",
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  editInput: {
+    borderWidth: 1,
+    borderColor: "#ddd",
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 10,
+    fontSize: 14,
+    backgroundColor: "#fff",
+    color: "#111",
+  },
+  productEdit: {
+    backgroundColor: "#fff",
+    padding: 14,
+    borderRadius: 18,
+    marginBottom: 12,
+  },
+  productEditDark: {
+    backgroundColor: "#2a2a2a",
+  },
+  editActions: {
+    flexDirection: "row",
+    marginTop: 8,
+    gap: 12,
+  },
+  editAction: {
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  productAdminActions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+    marginTop: 10,
+  },
+  crmMuted: {
+    fontSize: 13,
+    color: "#777",
+  },
+  promoFormCard: {
+    backgroundColor: "#fff",
+    padding: 14,
+    borderRadius: 18,
+    marginBottom: 12,
+  },
 
   cartItem: { backgroundColor: "#fff", padding: 12, borderRadius: 20, flexDirection: "row", marginBottom: 12 },
   cartItemDark: { backgroundColor: "#2a2a2a" },
