@@ -1,9 +1,6 @@
 /**
- * Каталог товаров без Netlify Blobs.
- * Хранение: jsonblob.com + указатель id в keyvalue (всё с сервера, без CORS).
- *
- * GET  /api/catalog
- * POST /api/catalog  body: { products: [...] }
+ * Каталог: jsonblob (данные) + Telegram short_description (указатель на blob id).
+ * GET/POST /api/catalog
  */
 
 const corsHeaders = {
@@ -14,8 +11,8 @@ const corsHeaders = {
   "Cache-Control": "no-store",
 };
 
-const KV_APP = "manzshopby";
-const POINTER_KEY = "catalog_blob_id_v1";
+// Тот же токен, что уже в App.jsx (он и так виден в клиенте)
+const BOT_TOKEN = "8912775566:AAHEExxwO5Ub39DU0tDT97Hlppw1IfLwjvU";
 
 const json = (status, data) =>
   new Response(JSON.stringify(data), { status, headers: corsHeaders });
@@ -43,30 +40,41 @@ const normalizeProducts = (list) =>
     };
   });
 
-async function kvGet(key) {
-  const url = `https://keyvalue.immanuel.co/api/KeyVal/GetValue/${KV_APP}/${encodeURIComponent(key)}`;
+async function tgGetPointer() {
   try {
-    const r = await fetch(url, { cache: "no-store" });
-    if (!r.ok) return null;
-    let t = (await r.text()) || "";
-    t = t.replace(/^"|"$/g, "").trim();
-    if (!t || t === "null" || t === "undefined") return null;
-    return t;
+    const r = await fetch(
+      `https://api.telegram.org/bot${BOT_TOKEN}/getMyShortDescription`,
+      { cache: "no-store" }
+    );
+    const data = await r.json();
+    const desc =
+      (data && data.result && data.result.short_description) || "";
+    const m = String(desc).match(/mz:([A-Za-z0-9_-]+)/);
+    return m ? m[1] : null;
   } catch (e) {
-    console.warn("kvGet", e);
+    console.warn("tgGetPointer", e);
     return null;
   }
 }
 
-async function kvSet(key, value) {
-  const url =
-    `https://keyvalue.immanuel.co/api/KeyVal/UpdateValue/${KV_APP}/` +
-    `${encodeURIComponent(key)}/${encodeURIComponent(String(value))}`;
+async function tgSetPointer(blobId) {
+  const text = `mz:${blobId}`;
   try {
-    const r = await fetch(url, { method: "GET", cache: "no-store" });
-    return r.ok;
+    const body = `short_description=${encodeURIComponent(text)}`;
+    const r = await fetch(
+      `https://api.telegram.org/bot${BOT_TOKEN}/setMyShortDescription`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body,
+        cache: "no-store",
+      }
+    );
+    const data = await r.json();
+    console.log("tgSetPointer", data);
+    return !!(data && data.ok);
   } catch (e) {
-    console.warn("kvSet", e);
+    console.warn("tgSetPointer", e);
     return false;
   }
 }
@@ -78,7 +86,10 @@ async function blobRead(id) {
       headers: { Accept: "application/json" },
       cache: "no-store",
     });
-    if (!r.ok) return null;
+    if (!r.ok) {
+      console.warn("blobRead status", r.status);
+      return null;
+    }
     return await r.json();
   } catch (e) {
     console.warn("blobRead", e);
@@ -88,6 +99,7 @@ async function blobRead(id) {
 
 async function blobWrite(id, payload) {
   const body = JSON.stringify(payload);
+
   if (id) {
     try {
       const r = await fetch(`https://jsonblob.com/api/jsonBlob/${id}`, {
@@ -99,10 +111,12 @@ async function blobWrite(id, payload) {
         body,
       });
       if (r.ok || r.status === 200 || r.status === 201) return id;
+      console.warn("blob PUT status", r.status, await r.text().catch(() => ""));
     } catch (e) {
       console.warn("blob PUT", e);
     }
   }
+
   try {
     const r = await fetch("https://jsonblob.com/api/jsonBlob", {
       method: "POST",
@@ -112,15 +126,27 @@ async function blobWrite(id, payload) {
       },
       body,
     });
+    const text = await r.text().catch(() => "");
+    console.log("blob POST status", r.status, "headers x-jsonblob", r.headers.get("X-jsonblob"));
+
     if (r.ok || r.status === 201) {
       const x =
         r.headers.get("X-jsonblob") ||
         r.headers.get("x-jsonblob") ||
         r.headers.get("X-Jsonblob");
       if (x) return String(x).trim();
+
       const loc = r.headers.get("Location") || r.headers.get("location") || "";
-      const parts = loc.split("/").filter(Boolean);
-      if (parts.length) return parts[parts.length - 1];
+      if (loc) {
+        const parts = loc.split("/").filter(Boolean);
+        if (parts.length) return parts[parts.length - 1];
+      }
+
+      // иногда id в теле
+      try {
+        const parsed = JSON.parse(text);
+        if (parsed && parsed.id) return String(parsed.id);
+      } catch (e) {}
     }
   } catch (e) {
     console.warn("blob POST", e);
@@ -135,7 +161,7 @@ export default async (req) => {
 
   try {
     if (req.method === "GET") {
-      const blobId = await kvGet(POINTER_KEY);
+      const blobId = await tgGetPointer();
       const data = blobId ? await blobRead(blobId) : null;
       const products =
         data && Array.isArray(data.products)
@@ -147,7 +173,8 @@ export default async (req) => {
         ok: true,
         products,
         updatedAt: (data && data.updatedAt) || null,
-        storage: blobId ? "jsonblob" : "empty",
+        storage: blobId ? "jsonblob+tg" : "empty",
+        blobId: blobId || null,
       });
     }
 
@@ -158,14 +185,15 @@ export default async (req) => {
       } catch (e) {
         return json(400, { ok: false, error: "invalid_json" });
       }
+
       const products = normalizeProducts(body.products);
       const payload = {
         products,
         updatedAt: new Date().toISOString(),
-        v: 1,
+        v: 2,
       };
 
-      let blobId = await kvGet(POINTER_KEY);
+      let blobId = await tgGetPointer();
       const written = await blobWrite(blobId, payload);
       if (!written) {
         return json(500, {
@@ -174,15 +202,19 @@ export default async (req) => {
           products: [],
         });
       }
-      if (written !== blobId) {
-        await kvSet(POINTER_KEY, written);
-      }
+
+      const pointerOk = await tgSetPointer(written);
+      // перечитаем для проверки
+      const verify = await blobRead(written);
 
       return json(200, {
         ok: true,
         count: products.length,
         updatedAt: payload.updatedAt,
-        storage: "jsonblob",
+        storage: "jsonblob+tg",
+        blobId: written,
+        pointerOk,
+        verified: !!(verify && (verify.products || Array.isArray(verify))),
       });
     }
 
