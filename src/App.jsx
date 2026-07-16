@@ -1532,48 +1532,49 @@ export default function App() {
 
     return (
       <View style={[styles.card, isDark && styles.cardDark]}>
-        <TouchableOpacity 
-          activeOpacity={0.9}
-          onPress={() => { 
-            setSelectedProduct(item); 
-            setSelectedSize(null); 
-            setPage("product"); 
-          }}
-        >
-          <SmartImage uri={item.image} style={styles.image} />
-        </TouchableOpacity>
-        
-        {/* Кнопка избранного прямо на карточке */}
-        <TouchableOpacity
-          style={[styles.favoriteBtn, isFav && styles.favoriteBtnActive]}
-          onPress={(e) => {
-            e?.stopPropagation?.();
-            toggleFavorite(item);
-            // При добавлении в избранное — убираем из корзины
-            setCart(prev => prev.filter(c => c.id !== item.id));
-            showToast(isFav ? "Удалено из избранного" : "❤️ Добавлено в избранное");
-          }}
-          activeOpacity={0.7}
-        >
-          <Text style={[styles.favoriteBtnText, isFav && styles.favoriteBtnTextActive]}>
-            {isFav ? "♥" : "♡"}
-          </Text>
-        </TouchableOpacity>
+        <View style={{ position: "relative" }}>
+          <TouchableOpacity 
+            activeOpacity={0.9}
+            onPress={() => { 
+              setSelectedProduct(item); 
+              setSelectedSize(null); 
+              setPage("product"); 
+            }}
+          >
+            <SmartImage uri={item.image} style={styles.image} />
+          </TouchableOpacity>
+          
+          {/* Кнопка избранного на фото */}
+          <TouchableOpacity
+            style={[styles.favoriteBtn, isFav && styles.favoriteBtnActive]}
+            onPress={(e) => {
+              e?.stopPropagation?.();
+              toggleFavorite(item);
+              setCart(prev => prev.filter(c => c.id !== item.id));
+              showToast(isFav ? "Удалено из избранного" : "❤️ Добавлено в избранное");
+            }}
+            activeOpacity={0.7}
+          >
+            <Text style={[styles.favoriteBtnText, isFav && styles.favoriteBtnTextActive]}>
+              {isFav ? "♥" : "♡"}
+            </Text>
+          </TouchableOpacity>
 
-        {/* Кнопка корзины в правом нижнем углу */}
-        <TouchableOpacity
-          style={styles.cartBtn}
-          onPress={(e) => {
-            e?.stopPropagation?.();
-            setSelectedProduct(item);
-            setSelectedSize(null);
-            setPage("product");
-            showToast("Выберите размер на странице товара");
-          }}
-          activeOpacity={0.7}
-        >
-          <Text style={styles.cartBtnText}>🛒</Text>
-        </TouchableOpacity>
+          {/* Кнопка корзины на фото (правый нижний угол) */}
+          <TouchableOpacity
+            style={styles.cartBtn}
+            onPress={(e) => {
+              e?.stopPropagation?.();
+              setSelectedProduct(item);
+              setSelectedSize(null);
+              setPage("product");
+              showToast("Выберите размер на странице товара");
+            }}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.cartBtnText}>🛒</Text>
+          </TouchableOpacity>
+        </View>
         
         <Text style={[styles.brand, isDark && styles.textDark]}>{item.brand}</Text>
         <Text style={[styles.productName, isDark && styles.textDark]}>{item.name}</Text>
@@ -2706,6 +2707,8 @@ export default function App() {
                     (p.brand || "").toLowerCase().includes(q)
                   );
                 })
+                .slice()
+                .sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0))
                 .map((p) => (
                   <View key={p.id} style={[styles.productEdit, isDark && styles.productEditDark]}>
                     <View style={{ flexDirection: "row", alignItems: "center" }}>
@@ -3254,11 +3257,11 @@ const styles = StyleSheet.create({
   // Белый круг с чёрной обводкой + чёрная корзина (как избранное)
   cartBtn: {
     position: "absolute",
-    bottom: 8,
-    right: 8,
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+    bottom: 6,
+    right: 6,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     backgroundColor: "#fff",
     borderWidth: 1.5,
     borderColor: "#111",
@@ -3268,7 +3271,7 @@ const styles = StyleSheet.create({
     elevation: 6,
   },
   cartBtnText: {
-    fontSize: 16,
+    fontSize: 13,
     color: "#111",
   },
   brand: { fontSize: 11, color: "#777", marginTop: 6 },
