@@ -679,13 +679,37 @@ export default function App() {
     } catch (e) {}
   }, [page, selectedProduct]);
 
-  // Восстанавливаем товар после загрузки products (только при refresh)
+  // Восстанавливаем товар после загрузки products (при refresh)
+  // и всегда подтягиваем актуальные данные товара (цена, фото и т.д.)
   useEffect(() => {
-    if (restoredProductId && products.length > 0 && !selectedProduct) {
+    if (products.length === 0) return;
+
+    // 1) Восстановление после обновления страницы
+    if (restoredProductId && !selectedProduct) {
       const p = products.find(x => x.id === restoredProductId);
       if (p) {
         setSelectedProduct(p);
         setPage("product");
+      }
+      return;
+    }
+
+    // 2) Если уже открыта карточка — обновляем её свежими данными из каталога
+    if (selectedProduct) {
+      const fresh = products.find(x => x.id === selectedProduct.id);
+      if (fresh) {
+        // Обновляем только если данные реально изменились
+        if (
+          fresh.price !== selectedProduct.price ||
+          fresh.image !== selectedProduct.image ||
+          fresh.name !== selectedProduct.name ||
+          fresh.oldPrice !== selectedProduct.oldPrice ||
+          fresh.description !== selectedProduct.description ||
+          JSON.stringify(fresh.sizes) !== JSON.stringify(selectedProduct.sizes) ||
+          JSON.stringify(fresh.ratings) !== JSON.stringify(selectedProduct.ratings)
+        ) {
+          setSelectedProduct(fresh);
+        }
       }
     }
   }, [products, restoredProductId]);
@@ -1652,7 +1676,7 @@ export default function App() {
           </TouchableOpacity>
 
           <TouchableOpacity style={styles.headerBtn} onPress={() => shareProduct(selectedProduct)}>
-            <Text style={styles.headerBtnText}>↗</Text>
+            <Text style={styles.headerBtnText}>📤</Text>
           </TouchableOpacity>
         </View>
 
@@ -1935,7 +1959,7 @@ export default function App() {
 
         {isAdmin && (
           <TouchableOpacity style={styles.adminButton} onPress={() => setShowAdmin(true)}>
-            <Text style={styles.buttonText}>⚙️ Админ-панель</Text>
+            <Text style={styles.buttonText}>⚙️ CRM</Text>
           </TouchableOpacity>
         )}
 
@@ -2065,6 +2089,7 @@ export default function App() {
     const [localBroadcast, setLocalBroadcast] = useState("");
     const [trackingDrafts, setTrackingDrafts] = useState({});
     const [openStatusId, setOpenStatusId] = useState(null);
+    const [productSearch, setProductSearch] = useState("");
 
     // Локальная форма промокода
     const [localPromo, setLocalPromo] = useState({ code: "", discount: "", maxUses: "", description: "" });
@@ -2142,7 +2167,7 @@ export default function App() {
             nestedScrollEnabled
             keyboardDismissMode="none"
           >
-            <Text style={[styles.pageTitle, isDark && styles.textDark]}>CRM · Админ-панель</Text>
+            <Text style={[styles.pageTitle, isDark && styles.textDark]}>CRM</Text>
 
             {/* Stats */}
             <View style={styles.adminStatCard}>
@@ -2383,6 +2408,16 @@ export default function App() {
               <Text style={styles.buttonText}>+ Добавить товар</Text>
             </TouchableOpacity>
 
+            {/* Поиск по модели */}
+            <TextInput
+              style={[styles.editInput, isDark && styles.inputDark, { marginBottom: 10 }]}
+              placeholder="🔍 Поиск по названию / бренду..."
+              placeholderTextColor="#999"
+              value={productSearch}
+              onChangeText={setProductSearch}
+              blurOnSubmit={false}
+            />
+
             {/* Product editor (local draft — клавиатура не сбрасывается) */}
             {localProduct && (
               <View style={[styles.productEdit, isDark && styles.productEditDark, { borderWidth: 2, borderColor: "#111" }]}>
@@ -2477,29 +2512,45 @@ export default function App() {
               </View>
             )}
 
-            {products.map((p) => (
-              <View key={p.id} style={[styles.productEdit, isDark && styles.productEditDark]}>
-                <View style={{ flexDirection: "row", alignItems: "center" }}>
-                  {!!p.image && (
-                    <SmartImage uri={p.image} style={{ width: 56, height: 56, borderRadius: 10, marginRight: 10 }} />
-                  )}
-                  <View style={{ flex: 1 }}>
-                    <Text style={[styles.productName, isDark && styles.textDark]}>
-                      {p.brand} {p.name}
-                    </Text>
-                    <Text style={[styles.price, isDark && styles.textDark]}>{money(p.price)}</Text>
+            <ScrollView
+              style={{ maxHeight: 480, marginBottom: 12 }}
+              nestedScrollEnabled
+              showsVerticalScrollIndicator
+              keyboardShouldPersistTaps="always"
+            >
+              {products
+                .filter((p) => {
+                  if (!productSearch.trim()) return true;
+                  const q = productSearch.trim().toLowerCase();
+                  return (
+                    (p.name || "").toLowerCase().includes(q) ||
+                    (p.brand || "").toLowerCase().includes(q)
+                  );
+                })
+                .map((p) => (
+                  <View key={p.id} style={[styles.productEdit, isDark && styles.productEditDark]}>
+                    <View style={{ flexDirection: "row", alignItems: "center" }}>
+                      {!!p.image && (
+                        <SmartImage uri={p.image} style={{ width: 56, height: 56, borderRadius: 10, marginRight: 10 }} />
+                      )}
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.productName, isDark && styles.textDark]}>
+                          {p.brand} {p.name}
+                        </Text>
+                        <Text style={[styles.price, isDark && styles.textDark]}>{money(p.price)}</Text>
+                      </View>
+                    </View>
+                    <View style={styles.editActions}>
+                      <TouchableOpacity onPress={() => startEditProduct(p)}>
+                        <Text style={styles.editAction}>✎ Редактировать</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={() => deleteProduct(p.id)}>
+                        <Text style={[styles.editAction, { color: "red" }]}>🗑 Удалить</Text>
+                      </TouchableOpacity>
+                    </View>
                   </View>
-                </View>
-                <View style={styles.editActions}>
-                  <TouchableOpacity onPress={() => startEditProduct(p)}>
-                    <Text style={styles.editAction}>✎ Редактировать</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity onPress={() => deleteProduct(p.id)}>
-                    <Text style={[styles.editAction, { color: "red" }]}>🗑 Удалить</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            ))}
+                ))}
+            </ScrollView>
 
             {/* Модерация отзывов */}
             <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Модерация отзывов</Text>
