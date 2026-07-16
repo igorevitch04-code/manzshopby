@@ -31,7 +31,7 @@ const getTelegramUser = () => {
     } catch (e) {}
     return null;
   };
- 
+
   try {
     const w = typeof window !== "undefined" ? window : null;
     const tgWeb = w && w.Telegram && w.Telegram.WebApp;
@@ -163,8 +163,8 @@ const getBrands = (products) => [...new Set(products.map(p => p.brand))];
 const ADMIN_IDS = [778715828, 987654321];
 // Чтобы заказы друзей приходили вам в Telegram — вставьте токен бота от @BotFather
 // (бот должен быть запущен, вы хотя бы раз написали ему /start)
-const BOT_TOKEN = "8912775566:AAHEExxwO5Ub39DU0tDT97Hlppw1IfLwjvU"; // например: "123456:ABC-DEF..." — ОБЯЗАТЕЛЬНО вставьте токен
-const ADMIN_NOTIFY_CHAT_ID = ADMIN_IDS[0]; // куда слать уведомления о новых заказах
+const BOT_TOKEN = "8912775566:AAHEExxwO5Ub39DU0tDT97Hlppw1IfLwjvU";
+const ADMIN_NOTIFY_CHAT_ID = ADMIN_IDS[0]; // 778715828 — напишите боту /start с этого аккаунта
 
 const compactOrderForBot = (o) => ({
   id: o.id,
@@ -190,8 +190,28 @@ const compactOrderForBot = (o) => ({
   })),
 });
 
+const tgSendMessage = async (text) => {
+  const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      chat_id: ADMIN_NOTIFY_CHAT_ID,
+      text: String(text).slice(0, 4000),
+      disable_web_page_preview: true,
+    }),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!data.ok) {
+    console.warn("[TG] sendMessage error:", data);
+  }
+  return !!data.ok;
+};
+
 const notifyAdminNewOrder = async (order) => {
-  if (!BOT_TOKEN) return false;
+  if (!BOT_TOKEN) {
+    console.warn("[TG] BOT_TOKEN пустой");
+    return false;
+  }
   try {
     const deliveryLabel = order.delivery === "europost" ? "Европочта" : "Курьер";
     const itemsShort = (order.items || [])
@@ -203,26 +223,23 @@ const notifyAdminNewOrder = async (order) => {
         ? `id:${order.tgId}`
         : "—";
 
-    // Человекочитаемый формат + машинная строка #ORD#...#END# для таблицы CRM
-    const payload = compactOrderForBot(order);
-    const text =
+    // 1) Человекочитаемое уведомление
+    const humanText =
       `Новый заказ\n\n` +
       `ФИО: ${order.fullName || "—"}\n` +
       `Способ доставки и адрес: ${deliveryLabel}, ${order.address || "—"}\n` +
       `ФИО, номер телефона и тг: ${order.fullName || "—"}, ${order.phone || "—"}, ${tgPart}\n` +
-      `Сумма к оплате и товар: ${order.finalTotal} BYN — ${itemsShort || "—"}\n` +
-      `\n#ORD#${JSON.stringify(payload)}#END#`;
+      `Сумма к оплате и товар: ${order.finalTotal} BYN — ${itemsShort || "—"}`;
 
-    const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: ADMIN_NOTIFY_CHAT_ID,
-        text,
-        disable_web_page_preview: true,
-      }),
-    });
-    return r.ok;
+    const ok1 = await tgSendMessage(humanText);
+
+    // 2) Служебное сообщение для таблицы CRM (парсится кнопкой «Обновить»)
+    const payload = compactOrderForBot(order);
+    const machineText = `#ORD#${JSON.stringify(payload)}#END#`;
+    const ok2 = await tgSendMessage(machineText);
+
+    console.log("[TG] notify order", order.id, "human:", ok1, "machine:", ok2);
+    return ok1 || ok2;
   } catch (e) {
     console.warn("notifyAdminNewOrder", e);
     return false;
