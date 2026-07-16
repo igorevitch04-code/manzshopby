@@ -235,42 +235,116 @@ const getCloudStorage = () => {
   return null;
 };
 
-// Универсальное сохранение: CloudStorage (Telegram) + fallback localStorage
+// Лимит Telegram CloudStorage: 4096 байт на ключ. Крупные данные режем на части.
+const CLOUD_CHUNK_SIZE = 3500;
+
+const cloudSetItem = (cloud, key, value) =>
+  new Promise((resolve, reject) => {
+    try {
+      cloud.setItem(key, value, (err) => (err ? reject(err) : resolve()));
+    } catch (e) {
+      reject(e);
+    }
+  });
+
+const cloudGetItem = (cloud, key) =>
+  new Promise((resolve, reject) => {
+    try {
+      cloud.getItem(key, (err, val) => (err ? reject(err) : resolve(val)));
+    } catch (e) {
+      reject(e);
+    }
+  });
+
+const cloudRemoveItem = (cloud, key) =>
+  new Promise((resolve) => {
+    try {
+      cloud.removeItem(key, () => resolve());
+    } catch (e) {
+      resolve();
+    }
+  });
+
+// Универсальное сохранение: CloudStorage (с разбиением) + localStorage
 const saveToCloud = async (key, data) => {
   const json = JSON.stringify(data);
-  const cloud = getCloudStorage();
-  if (cloud) {
-    try {
-      await new Promise((resolve, reject) => {
-        cloud.setItem(key, json, (err) => {
-          if (err) reject(err);
-          else resolve();
-        });
-      });
-    } catch (e) { console.warn("CloudStorage save error:", e); }
-  }
-  // Fallback для браузера / Snack / тестирования
+
+  // Всегда пишем localStorage (быстрый fallback на устройстве)
   try {
     if (typeof localStorage !== "undefined") {
       localStorage.setItem("krost_" + key, json);
     }
   } catch (e) {}
+
+  const cloud = getCloudStorage();
+  if (!cloud) return;
+
+  try {
+    // Удаляем старые чанки (до 40)
+    const prevMeta = await cloudGetItem(cloud, key);
+    if (prevMeta && String(prevMeta).startsWith("__CHUNKS__:")) {
+      const n = parseInt(String(prevMeta).split(":")[1], 10) || 0;
+      for (let i = 0; i < n; i++) {
+        await cloudRemoveItem(cloud, `${key}_c${i}`);
+      }
+    }
+
+    if (json.length <= CLOUD_CHUNK_SIZE) {
+      await cloudSetItem(cloud, key, json);
+      return;
+    }
+
+    // Режем на чанки
+    const chunks = [];
+    for (let i = 0; i < json.length; i += CLOUD_CHUNK_SIZE) {
+      chunks.push(json.slice(i, i + CLOUD_CHUNK_SIZE));
+    }
+    await cloudSetItem(cloud, key, `__CHUNKS__:${chunks.length}`);
+    for (let i = 0; i < chunks.length; i++) {
+      await cloudSetItem(cloud, `${key}_c${i}`, chunks[i]);
+    }
+    console.log("[Cloud] saved", key, "chunks:", chunks.length, "len:", json.length);
+  } catch (e) {
+    console.warn("CloudStorage save error:", key, e);
+  }
 };
 
 const loadFromCloud = async (key) => {
   const cloud = getCloudStorage();
+
+  // 1) Telegram CloudStorage (приоритет — синхронизация между устройствами)
   if (cloud) {
     try {
-      const value = await new Promise((resolve, reject) => {
-        cloud.getItem(key, (err, val) => {
-          if (err) reject(err);
-          else resolve(val);
-        });
-      });
-      if (value) return JSON.parse(value);
-    } catch (e) { console.warn("CloudStorage load error:", e); }
+      const value = await cloudGetItem(cloud, key);
+      if (value) {
+        if (String(value).startsWith("__CHUNKS__:")) {
+          const n = parseInt(String(value).split(":")[1], 10) || 0;
+          let full = "";
+          for (let i = 0; i < n; i++) {
+            const part = await cloudGetItem(cloud, `${key}_c${i}`);
+            if (part) full += part;
+          }
+          if (full) {
+            try {
+              return JSON.parse(full);
+            } catch (e) {
+              console.warn("CloudStorage chunk parse error", key, e);
+            }
+          }
+        } else {
+          try {
+            return JSON.parse(value);
+          } catch (e) {
+            console.warn("CloudStorage parse error", key, e);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("CloudStorage load error:", key, e);
+    }
   }
-  // Fallback localStorage
+
+  // 2) Fallback localStorage (только это устройство)
   try {
     if (typeof localStorage !== "undefined") {
       const val = localStorage.getItem("krost_" + key);
@@ -844,6 +918,14 @@ export default function App() {
         setUsedFreeDelivery(cloudUsedFreeDelivery || []);
         setAdminOrders(cloudAdminOrders || []);
         setPromoCodes(cloudPromoCodes || []);
+
+        // Миграция: пересохраняем крупные данные чанками, чтобы они появились на других устройствах
+        setTimeout(() => {
+          if (cloudAdminOrders && cloudAdminOrders.length) saveToCloud(CLOUD_KEYS.adminOrders, cloudAdminOrders);
+          if (cloudOrderHistory && cloudOrderHistory.length) saveToCloud(CLOUD_KEYS.orderHistory, cloudOrderHistory);
+          if (cloudProducts && cloudProducts.length) saveToCloud(CLOUD_KEYS.products, cloudProducts);
+        }, 800);
+
         const list = cloudProducts && cloudProducts.length > 0 ? cloudProducts : DEFAULT_PRODUCTS;
         // Если у старых товаров нет нормальных картинок — подставляем из DEFAULT
         const fixed = list.map(p => {
