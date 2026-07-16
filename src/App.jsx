@@ -1003,7 +1003,10 @@ export default function App() {
       deliveryPrice, discount, usedBonus, finalTotal: orderTotal, date: new Date().toISOString(),
       status: "Новый", trackingNumber: null, freeDelivery,
       referredBy: referredBy || null,
-      referralBonus
+      referralBonus,
+      tgId: user?.id || null,
+      tgUsername: user?.username || null,
+      tgName: user?.name || null,
     };
     setOrderHistory(prev => [order, ...prev]);
     setAdminOrders(prev => [order, ...prev]);
@@ -2094,13 +2097,25 @@ export default function App() {
             {adminOrders.length === 0 ? (
               <Text style={[styles.empty, isDark && styles.textDark]}>Заказов пока нет</Text>
             ) : (
-              <ScrollView horizontal showsHorizontalScrollIndicator nestedScrollEnabled style={styles.crmTableScroll}>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator
+                nestedScrollEnabled
+                style={[styles.crmTableScroll, { maxHeight: 480 }]}
+              >
+                <ScrollView
+                  nestedScrollEnabled
+                  style={{ maxHeight: 480 }}
+                  showsVerticalScrollIndicator
+                >
                 <View style={styles.crmTable}>
                   <View style={[styles.crmRow, styles.crmHeaderRow]}>
                     <Text style={[styles.crmCell, styles.crmHead, { width: 70, textAlign: "center" }]}>#</Text>
-                    <Text style={[styles.crmCell, styles.crmHead, { width: 90, textAlign: "center" }]}>Дата</Text>
+                    <Text style={[styles.crmCell, styles.crmHead, { width: 120, textAlign: "center" }]}>Дата / Время</Text>
                     <Text style={[styles.crmCell, styles.crmHead, { width: 180, textAlign: "center" }]}>Статус</Text>
                     <Text style={[styles.crmCell, styles.crmHead, { width: 130, textAlign: "center" }]}>ФИО</Text>
+                    <Text style={[styles.crmCell, styles.crmHead, { width: 120, textAlign: "center" }]}>Телефон</Text>
+                    <Text style={[styles.crmCell, styles.crmHead, { width: 140, textAlign: "center" }]}>Telegram</Text>
                     <Text style={[styles.crmCell, styles.crmHead, { width: 140, textAlign: "center" }]}>Трек-номер</Text>
                     <Text style={[styles.crmCell, styles.crmHead, { width: 180, textAlign: "center" }]}>Товар</Text>
                     <Text style={[styles.crmCell, styles.crmHead, { width: 90, textAlign: "center" }]}>Сумма</Text>
@@ -2110,13 +2125,27 @@ export default function App() {
                       .map((i) => `${i.name}${i.size ? ` (${i.size})` : ""}`)
                       .join(", ");
                     const isPost = order.delivery === "europost";
+                    const dateStr = order.date
+                      ? new Date(order.date).toLocaleString("ru-RU", {
+                          day: "2-digit",
+                          month: "2-digit",
+                          year: "numeric",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })
+                      : "—";
+                    const tgLink = order.tgUsername
+                      ? `https://t.me/${order.tgUsername}`
+                      : order.tgId && /^\d+$/.test(String(order.tgId))
+                        ? `tg://user?id=${order.tgId}`
+                        : null;
                     return (
                       <View key={order.id} style={[styles.crmRow, isDark && styles.crmRowDark]}>
                         <Text style={[styles.crmCell, isDark && styles.textDark, { width: 70, fontWeight: "800" }]}>
                           #{order.id}
                         </Text>
-                        <Text style={[styles.crmCell, isDark && styles.textDark, { width: 90 }]}>
-                          {order.date ? new Date(order.date).toLocaleDateString("ru-RU") : "—"}
+                        <Text style={[styles.crmCell, isDark && styles.textDark, { width: 120, fontSize: 11 }]}>
+                          {dateStr}
                         </Text>
                         <View style={[styles.crmCell, { width: 180 }]}>
                           <TouchableOpacity
@@ -2152,6 +2181,30 @@ export default function App() {
                         <Text style={[styles.crmCell, isDark && styles.textDark, { width: 130 }]} numberOfLines={2}>
                           {order.fullName || "—"}
                         </Text>
+                        <Text style={[styles.crmCell, isDark && styles.textDark, { width: 120, fontSize: 12 }]} numberOfLines={1}>
+                          {order.phone || "—"}
+                        </Text>
+                        <View style={[styles.crmCell, { width: 140 }]}>
+                          {tgLink ? (
+                            <TouchableOpacity
+                              onPress={() => {
+                                try {
+                                  if (typeof window !== "undefined" && window.open) {
+                                    window.open(tgLink, "_blank");
+                                  } else if (tg?.openTelegramLink) {
+                                    tg.openTelegramLink(tgLink);
+                                  }
+                                } catch (e) {}
+                              }}
+                            >
+                              <Text style={{ color: "#0088cc", fontSize: 12, fontWeight: "600" }} numberOfLines={1}>
+                                {order.tgUsername ? `@${order.tgUsername}` : "Открыть в TG"}
+                              </Text>
+                            </TouchableOpacity>
+                          ) : (
+                            <Text style={[styles.crmMuted, isDark && styles.textDark]}>—</Text>
+                          )}
+                        </View>
                         <View style={[styles.crmCell, { width: 140 }]}>
                           {isPost ? (
                             <TextInput
@@ -2179,6 +2232,7 @@ export default function App() {
                     );
                   })}
                 </View>
+                </ScrollView>
               </ScrollView>
             )}
 
