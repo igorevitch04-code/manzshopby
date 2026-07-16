@@ -200,68 +200,18 @@ const tgSendMessage = async (text) => {
   const t = String(text).slice(0, 3500);
   const chat = String(ADMIN_NOTIFY_CHAT_ID);
   const token = BOT_TOKEN;
-  const getUrl =
-    `https://api.telegram.org/bot${token}/sendMessage` +
-    `?chat_id=${encodeURIComponent(chat)}` +
-    `&text=${encodeURIComponent(t)}` +
-    `&disable_web_page_preview=true`;
+  const api = `https://api.telegram.org/bot${token}/sendMessage`;
 
-  // 1) GET (simple request, без preflight)
-  try {
-    const r = await fetch(getUrl, { method: "GET", mode: "cors", cache: "no-store" });
-    const data = await r.json().catch(() => null);
-    if (data && data.ok) {
-      console.log("[TG] send OK via GET");
-      return true;
-    }
-    if (data) console.warn("[TG] GET response:", data);
-  } catch (e) {
-    console.warn("[TG] GET fail", e && e.message);
-  }
-
-  // 2) GET через CORS-proxy (чтобы прочитать ответ)
-  try {
-    const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(getUrl)}`;
-    const r = await fetch(proxyUrl, { method: "GET", cache: "no-store" });
-    const data = await r.json().catch(() => null);
-    if (data && data.ok) {
-      console.log("[TG] send OK via corsproxy GET");
-      return true;
-    }
-  } catch (e) {}
-
-  // 3) Image-beacon — браузер ВСЕГДА шлёт GET, ответ не важен
-  try {
-    if (typeof Image !== "undefined") {
-      await new Promise((resolve) => {
-        const img = new Image();
-        let done = false;
-        const finish = () => {
-          if (done) return;
-          done = true;
-          resolve();
-        };
-        img.onload = finish;
-        img.onerror = finish;
-        img.src = getUrl;
-        setTimeout(finish, 2500);
-      });
-      console.log("[TG] send attempted via Image beacon");
-      return true;
-    }
-  } catch (e) {}
-
-  // 4) form-urlencoded POST (тоже simple request)
+  // 1) form-urlencoded POST — Telegram принимает, часто проходит без preflight
   try {
     const body =
       `chat_id=${encodeURIComponent(chat)}` +
       `&text=${encodeURIComponent(t)}` +
       `&disable_web_page_preview=true`;
-    const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    const r = await fetch(api, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body,
-      mode: "cors",
       cache: "no-store",
     });
     const data = await r.json().catch(() => null);
@@ -269,27 +219,62 @@ const tgSendMessage = async (text) => {
       console.log("[TG] send OK via form POST");
       return true;
     }
+    if (data) console.warn("[TG] form POST response:", data);
   } catch (e) {
     console.warn("[TG] form POST fail", e && e.message);
   }
 
-  // 5) no-cors — запрос уходит, ответ непрозрачный
+  // 2) JSON POST (как раньше — у вас пуши уже доходили этим способом)
   try {
-    const body =
-      `chat_id=${encodeURIComponent(chat)}` +
-      `&text=${encodeURIComponent(t)}` +
-      `&disable_web_page_preview=true`;
-    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    const r = await fetch(api, {
       method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body,
-      mode: "no-cors",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: Number(chat) || chat,
+        text: t,
+        disable_web_page_preview: true,
+      }),
       cache: "no-store",
     });
-    console.log("[TG] send attempted via no-cors");
-    return true;
+    const data = await r.json().catch(() => null);
+    if (data && data.ok) {
+      console.log("[TG] send OK via JSON POST");
+      return true;
+    }
+    if (data) console.warn("[TG] JSON POST response:", data);
   } catch (e) {
-    console.warn("[TG] no-cors fail", e && e.message);
+    console.warn("[TG] JSON POST fail", e && e.message);
+  }
+
+  // 3) GET (короткие сообщения)
+  if (t.length < 1200) {
+    const getUrl =
+      `${api}?chat_id=${encodeURIComponent(chat)}` +
+      `&text=${encodeURIComponent(t)}` +
+      `&disable_web_page_preview=true`;
+    try {
+      const r = await fetch(getUrl, { method: "GET", cache: "no-store" });
+      const data = await r.json().catch(() => null);
+      if (data && data.ok) {
+        console.log("[TG] send OK via GET");
+        return true;
+      }
+    } catch (e) {
+      console.warn("[TG] GET fail", e && e.message);
+    }
+    // beacon только как последний шанс
+    try {
+      if (typeof Image !== "undefined") {
+        await new Promise((resolve) => {
+          const img = new Image();
+          img.onload = img.onerror = () => resolve();
+          img.src = getUrl;
+          setTimeout(resolve, 1500);
+        });
+        console.log("[TG] send attempted via Image beacon");
+        return true;
+      }
+    } catch (e) {}
   }
 
   return false;
@@ -2195,7 +2180,7 @@ export default function App() {
     setShowAdmin(!showAdmin);
   };
 
-  // Подтянуть заказы из ОБЩЕГО хранилища (не из getUpdates — он не видит исходящие пуши бота)
+  // Подтянуть заказы из ОБЩЕГО хранилища (только по кнопке / при открытии CRM)
   const syncSharedOrders = async (showFeedback = false) => {
     try {
       const remote = await sharedOrdersLoad().catch(() => []);
@@ -2203,12 +2188,13 @@ export default function App() {
 
       if (incoming.length === 0) {
         if (showFeedback) {
-          showToast("Общее хранилище пусто. Оформите заказ с другого аккаунта и нажмите Обновить.");
+          showToast("Новых заказов пока нет");
         }
         return 0;
       }
 
       let added = 0;
+      let changed = false;
       setAdminOrders((prev) => {
         const map = new Map();
         prev.forEach((o) => map.set(String(o.id), o));
@@ -2216,10 +2202,11 @@ export default function App() {
           const id = String(o.id);
           if (!map.has(id)) {
             added += 1;
+            changed = true;
             map.set(id, o);
           } else {
             const local = map.get(id);
-            map.set(id, {
+            const merged = {
               ...local,
               ...o,
               status: local.status && local.status !== "Новый" ? local.status : (o.status || local.status),
@@ -2228,9 +2215,20 @@ export default function App() {
               fullName: o.fullName || local.fullName,
               address: o.address || local.address,
               items: (local.items && local.items.length ? local.items : o.items) || [],
-            });
+            };
+            // не трогаем стейт, если ничего важного не изменилось
+            if (
+              local.status !== merged.status ||
+              local.trackingNumber !== merged.trackingNumber ||
+              local.phone !== merged.phone ||
+              local.fullName !== merged.fullName
+            ) {
+              changed = true;
+            }
+            map.set(id, merged);
           }
         });
+        if (!changed) return prev; // без лишнего re-render CRM
         return Array.from(map.values()).sort((a, b) => {
           const da = a.date ? new Date(a.date).getTime() : 0;
           const db = b.date ? new Date(b.date).getTime() : 0;
@@ -2249,59 +2247,15 @@ export default function App() {
     }
   };
 
-  // Запасной путь: админ копирует #ORD#...#END# из пуша бота и вставляет в CRM
-  const importOrderFromClipboard = async () => {
-    try {
-      let text = "";
-      if (typeof navigator !== "undefined" && navigator.clipboard && navigator.clipboard.readText) {
-        text = await navigator.clipboard.readText();
-      } else if (typeof Clipboard !== "undefined" && Clipboard.getString) {
-        text = await Clipboard.getString();
-      }
-      if (!text) {
-        Alert.alert(
-          "Буфер пуст",
-          "Скопируйте в Telegram сообщение с #ORD#...#END# (длинное служебное), затем нажмите снова."
-        );
-        return;
-      }
-      const obj = parseOrderFromText(text);
-      if (!obj) {
-        Alert.alert(
-          "Не найден заказ",
-          "В буфере нет блока #ORD#...#END#. Откройте пуш бота, скопируйте второе (служебное) сообщение целиком."
-        );
-        return;
-      }
-      setAdminOrders((prev) => {
-        const map = new Map();
-        prev.forEach((o) => map.set(String(o.id), o));
-        map.set(String(obj.id), { ...(map.get(String(obj.id)) || {}), ...obj });
-        return Array.from(map.values()).sort((a, b) => {
-          const da = a.date ? new Date(a.date).getTime() : 0;
-          const db = b.date ? new Date(b.date).getTime() : 0;
-          return db - da;
-        });
-      });
-      // параллельно кладём в общее хранилище, чтобы появилось и на ПК
-      sharedOrdersPush(obj).catch(() => {});
-      showToast(`Заказ #${obj.id} добавлен из буфера`);
-    } catch (e) {
-      console.warn("importOrderFromClipboard", e);
-      Alert.alert("Ошибка", "Не удалось прочитать буфер обмена");
-    }
-  };
-
+  // Один раз при открытии CRM (без авто-интервала — иначе модалка «мигает»)
   useEffect(() => {
     if (!showAdmin || !isAdmin) return;
-    syncSharedOrders();
-    const t = setInterval(syncSharedOrders, 15000); // каждые 15 сек пока открыта CRM
-    return () => clearInterval(t);
+    syncSharedOrders(false);
   }, [showAdmin, isAdmin]);
 
-  // Периодически подтягиваем общий каталог (новые товары от админа)
+  // Подтягиваем общий каталог только когда CRM закрыта (чтобы не дёргать форму админа)
   useEffect(() => {
-    if (!dataReady) return;
+    if (!dataReady || showAdmin) return;
     let stopped = false;
     const pullProducts = async () => {
       try {
@@ -2318,7 +2272,6 @@ export default function App() {
               map.set(id, sp);
               changed = true;
             } else {
-              // обновляем метаданные; local base64 image сохраняем
               const image = (local.image && String(local.image).startsWith("data:"))
                 ? local.image
                 : (sp.image || local.image || "");
@@ -2335,19 +2288,17 @@ export default function App() {
               map.set(id, merged);
             }
           });
-          // удаляем товары, которых нет в shared, только если shared явно полный и больше default
-          // (не трогаем — админ мог ещё не запушить)
           return changed ? Array.from(map.values()) : prev;
         });
       } catch (e) {}
     };
     pullProducts();
-    const t = setInterval(pullProducts, 20000);
+    const t = setInterval(pullProducts, 30000);
     return () => {
       stopped = true;
       clearInterval(t);
     };
-  }, [dataReady]);
+  }, [dataReady, showAdmin]);
 
   const confirmAction = (msg) => {
     try {
@@ -3471,13 +3422,6 @@ export default function App() {
                   activeOpacity={0.8}
                 >
                   <Text style={styles.productAdminBtnText}>Обновить</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.productAdminBtn, { flex: 0, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: "#333" }]}
-                  onPress={importOrderFromClipboard}
-                  activeOpacity={0.8}
-                >
-                  <Text style={styles.productAdminBtnText}>Из буфера</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.productAdminBtn, { flex: 0, paddingHorizontal: 12, paddingVertical: 8 }]}
