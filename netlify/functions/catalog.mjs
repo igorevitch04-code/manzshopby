@@ -43,7 +43,6 @@ const normalizeProducts = (list) =>
     };
   });
 
-// --- keyvalue pointer ---
 async function kvGet(key) {
   const url = `https://keyvalue.immanuel.co/api/KeyVal/GetValue/${KV_APP}/${encodeURIComponent(key)}`;
   try {
@@ -72,7 +71,6 @@ async function kvSet(key, value) {
   }
 }
 
-// --- jsonblob ---
 async function blobRead(id) {
   if (!id) return null;
   try {
