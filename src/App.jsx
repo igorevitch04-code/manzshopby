@@ -297,27 +297,19 @@ const notifyAdminNewOrder = async (order) => {
         ? `id:${order.tgId}`
         : "—";
 
-    // Короткое человекочитаемое уведомление (влезает в GET URL)
     const humanText =
       `🛍 Новый заказ #${order.id}\n` +
       `ФИО: ${order.fullName || "—"}\n` +
       `Тел: ${order.phone || "—"}\n` +
       `TG: ${tgPart}\n` +
       `Доставка: ${deliveryLabel}\n` +
-      `Адрес: ${(order.address || "—").slice(0, 120)}\n` +
+      `Адрес: ${(order.address || "—").slice(0, 160)}\n` +
       `Сумма: ${order.finalTotal} BYN\n` +
       `Товар: ${itemsShort || "—"}`;
 
-    const ok1 = await tgSendMessage(humanText);
-
-    // Машинный блок для CRM (короткий)
-    const payload = compactOrderForBot(order);
-    const machineText = `#ORD#${JSON.stringify(payload)}#END#`;
-    // если слишком длинный для URL — режем address/items уже в compact
-    const ok2 = machineText.length < 1800 ? await tgSendMessage(machineText) : false;
-
-    console.log("[TG] notify order", order.id, "human:", ok1, "machine:", ok2);
-    return ok1 || ok2;
+    const ok = await tgSendMessage(humanText);
+    console.log("[TG] notify order", order.id, "ok:", ok);
+    return ok;
   } catch (e) {
     console.warn("notifyAdminNewOrder", e);
     return false;
@@ -1255,13 +1247,18 @@ export default function App() {
   const [orderHistory, setOrderHistory] = useState([]);
   const [products, setProducts] = useState(DEFAULT_PRODUCTS);
   const [dataReady, setDataReady] = useState(false);
+  // CRM form local state (на уровне App — чтобы Modal не размонтировался при re-render)
+  const [localBroadcast, setLocalBroadcast] = useState("");
+  const [productSearch, setProductSearch] = useState("");
+  const [localPromo, setLocalPromo] = useState({ code: "", discount: "", maxUses: "", description: "" });
+  const [localProduct, setLocalProduct] = useState(null);
+  const [localIsNew, setLocalIsNew] = useState(false);
   // Сразу предзагружаем картинки, чтобы не было пустых карточек
   useEffect(() => {
     preloadImages(DEFAULT_PRODUCTS);
   }, []);
   const [adminOrders, setAdminOrders] = useState([]);
   const [showAdmin, setShowAdmin] = useState(false);
-  const [ordersFullscreen, setOrdersFullscreen] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null);
   const [productDraft, setProductDraft] = useState(null);
   const [isNewProduct, setIsNewProduct] = useState(false);
@@ -2247,11 +2244,6 @@ export default function App() {
     }
   };
 
-  // Один раз при открытии CRM (без авто-интервала — иначе модалка «мигает»)
-  useEffect(() => {
-    if (!showAdmin || !isAdmin) return;
-    syncSharedOrders(false);
-  }, [showAdmin, isAdmin]);
 
   // Подтягиваем общий каталог только когда CRM закрыта (чтобы не дёргать форму админа)
   useEffect(() => {
@@ -3294,10 +3286,12 @@ export default function App() {
                 <Text style={[styles.trackingText, isDark && styles.textDark]}>Трек-номер: {order.trackingNumber}</Text>
               )}
               <Text style={[styles.orderTotal, isDark && styles.textDark]}>Сумма: {money(order.finalTotal)}</Text>
-              {order.items.slice(0, 3).map((item, i) => (
+              {(order.items || []).slice(0, 3).map((item, i) => (
                 <Text key={i} style={[styles.orderItem, isDark && styles.textDark]}>• {item.name} x1</Text>
               ))}
-              {order.items.length > 3 && <Text style={[styles.orderMore, isDark && styles.textDark]}>и ещё {order.items.length - 3}...</Text>}
+              {(order.items || []).length > 3 && (
+                <Text style={[styles.orderMore, isDark && styles.textDark]}>и ещё {order.items.length - 3}...</Text>
+              )}
             </View>
           ))
         )}
@@ -3306,692 +3300,27 @@ export default function App() {
     );
   };
 
-  // ---- AdminPanel ----
-  const AdminPanel = () => {
-    const { theme } = useTheme();
-    const isDark = theme === "dark";
+  // ---- CRM helpers (стейт форм на уровне App — Modal не размонтируется) ----
+  useEffect(() => {
+    if (productDraft) {
+      setLocalProduct((prev) => {
+        if (prev && prev.id === productDraft.id) return prev;
+        return { ...productDraft };
+      });
+      setLocalIsNew(isNewProduct);
+    } else {
+      setLocalProduct(null);
+    }
+  }, [productDraft, isNewProduct]);
 
-    // === ВСЕ ФОРМЫ — ТОЛЬКО ЛОКАЛЬНЫЙ СТЕЙТ (клавиатура не сбрасывается) ===
-    const [localBroadcast, setLocalBroadcast] = useState("");
-    const [trackingDrafts, setTrackingDrafts] = useState({});
-    const [openStatusId, setOpenStatusId] = useState(null);
-    const [productSearch, setProductSearch] = useState("");
-
-    // Локальная форма промокода
-    const [localPromo, setLocalPromo] = useState({ code: "", discount: "", maxUses: "", description: "" });
-
-    // Локальная форма товара (копия productDraft)
-    const [localProduct, setLocalProduct] = useState(null);
-    const [localIsNew, setLocalIsNew] = useState(false);
-
-    // Синхронизируем локальную форму только при открытии/закрытии редактора (по id),
-    // чтобы ввод name/price не затирался при обновлении image в productDraft.
-    useEffect(() => {
-      if (productDraft) {
-        setLocalProduct((prev) => {
-          if (prev && prev.id === productDraft.id) {
-            // тот же товар — не перезаписываем поля, которые пользователь уже ввёл
-            return prev;
-          }
-          return { ...productDraft };
-        });
-        setLocalIsNew(isNewProduct);
-      } else {
-        setLocalProduct(null);
-      }
-    }, [productDraft, isNewProduct]);
-
-    if (!showAdmin || !isAdmin) return null;
-
-    const today = new Date().toISOString().split("T")[0];
-    const todayRevenue = adminOrders
-      .filter((o) => o.date && o.date.startsWith(today))
-      .reduce((sum, o) => sum + (o.finalTotal || 0), 0);
-
-    const monthStart = new Date();
-    monthStart.setDate(1);
-    monthStart.setHours(0, 0, 0, 0);
-    const monthRevenue = adminOrders
-      .filter((o) => o.date && new Date(o.date) >= monthStart)
-      .reduce((sum, o) => sum + (o.finalTotal || 0), 0);
-
-    const statusColor = (s) => {
-      if (s === "Новый") return "#f59e0b";
-      if (s === "Отправить") return "#3b82f6";
-      if (s === "Ждем поставку") return "#8b5cf6";
-      if (s === "Доставляется") return "#06b6d4";
-      if (s === "Забрать деньги") return "#f97316";
-      if (s === "Деньги получены") return "#22c55e";
-      return "#999";
-    };
-
-    const handleTrackingChange = (orderId, text) => {
-      setTrackingDrafts((prev) => ({ ...prev, [orderId]: text }));
-    };
-
-    const commitTracking = (orderId) => {
-      const val = trackingDrafts[orderId];
-      if (val !== undefined) {
-        updateTracking(orderId, val);
-      }
-    };
-
-    const handleSendBroadcast = () => {
-      if (!localBroadcast.trim()) {
-        Alert.alert("Ошибка", "Введите текст");
-        return;
-      }
-      setBroadcastText(localBroadcast);
-      Alert.alert("Рассылка отправлена", `Сообщение: ${localBroadcast}\nПолучателей: ${users.length}`);
-      setLocalBroadcast("");
-    };
-
-    return (
-      <Modal visible={showAdmin} animationType="fade" transparent={false}>
-        <View style={[styles.page, isDark && styles.pageDark, { paddingTop: 40 }]}>
-          <TouchableOpacity onPress={() => setShowAdmin(false)} style={styles.closeAdmin}>
-            <Text style={[styles.closeAdminText, isDark && styles.textDark]}>✕ Закрыть CRM</Text>
-          </TouchableOpacity>
-
-          <ScrollView
-            style={{ flex: 1 }}
-            contentContainerStyle={{ paddingBottom: 60, flexGrow: 1 }}
-            keyboardShouldPersistTaps="always"
-            nestedScrollEnabled
-            keyboardDismissMode="none"
-          >
-            <Text style={[styles.pageTitle, isDark && styles.textDark]}>CRM</Text>
-
-            {/* Stats */}
-            <View style={styles.adminStatCard}>
-              <Text style={styles.adminStatWhite}>Сегодня: {money(todayRevenue)}</Text>
-              <Text style={styles.adminStatWhite}>За месяц: {money(monthRevenue)}</Text>
-              <Text style={styles.adminStatWhite}>Всего заказов: {adminOrders.length}</Text>
-              <Text style={styles.adminStatWhite}>Товаров в каталоге: {products.length}</Text>
-            </View>
-
-            {/* ORDERS TABLE */}
-            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 4, flexWrap: "wrap", gap: 8 }}>
-              <Text style={[styles.sectionTitle, isDark && styles.textDark, { marginBottom: 0 }]}>
-                Управление заказами
-              </Text>
-              <View style={{ flexDirection: "row", gap: 8 }}>
-                <TouchableOpacity
-                  style={[styles.productAdminBtn, { flex: 0, paddingHorizontal: 12, paddingVertical: 8 }]}
-                  onPress={() => syncSharedOrders(true)}
-                  activeOpacity={0.8}
-                >
-                  <Text style={styles.productAdminBtnText}>Обновить</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.productAdminBtn, { flex: 0, paddingHorizontal: 12, paddingVertical: 8 }]}
-                  onPress={() => setOrdersFullscreen(true)}
-                  activeOpacity={0.8}
-                >
-                  <Text style={styles.productAdminBtnText}>На весь экран</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-            {adminOrders.length === 0 ? (
-              <Text style={[styles.empty, isDark && styles.textDark]}>Заказов пока нет</Text>
-            ) : (
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator
-                nestedScrollEnabled
-                style={[styles.crmTableScroll, { maxHeight: 480 }]}
-              >
-                <ScrollView
-                  nestedScrollEnabled
-                  style={{ maxHeight: 480 }}
-                  showsVerticalScrollIndicator
-                >
-                <View style={styles.crmTable}>
-                  <View style={[styles.crmRow, styles.crmHeaderRow]}>
-                    <Text style={[styles.crmCell, styles.crmHead, { width: 70, textAlign: "center" }]}>#</Text>
-                    <Text style={[styles.crmCell, styles.crmHead, { width: 120, textAlign: "center" }]}>Дата / Время</Text>
-                    <Text style={[styles.crmCell, styles.crmHead, { width: 180, textAlign: "center" }]}>Статус</Text>
-                    <Text style={[styles.crmCell, styles.crmHead, { width: 200, textAlign: "center" }]}>Данные</Text>
-                    <Text style={[styles.crmCell, styles.crmHead, { width: 140, textAlign: "center" }]}>Telegram</Text>
-                    <Text style={[styles.crmCell, styles.crmHead, { width: 140, textAlign: "center" }]}>Трек-номер</Text>
-                    <Text style={[styles.crmCell, styles.crmHead, { width: 180, textAlign: "center" }]}>Товар</Text>
-                    <Text style={[styles.crmCell, styles.crmHead, { width: 90, textAlign: "center" }]}>Сумма</Text>
-                  </View>
-                  {adminOrders.map((order) => {
-                    const itemsLabel = (order.items || [])
-                      .map((i) => `${i.name}${i.size ? ` (${i.size})` : ""}`)
-                      .join(", ");
-                    const isPost = order.delivery === "europost";
-                    const dateStr = order.date
-                      ? new Date(order.date).toLocaleString("ru-RU", {
-                          day: "2-digit",
-                          month: "2-digit",
-                          year: "numeric",
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })
-                      : "—";
-                    const tgLink = order.tgUsername
-                      ? `https://t.me/${order.tgUsername}`
-                      : order.tgId && /^\d+$/.test(String(order.tgId))
-                        ? `tg://user?id=${order.tgId}`
-                        : null;
-                    return (
-                      <View key={order.id} style={[styles.crmRow, isDark && styles.crmRowDark]}>
-                        <Text style={[styles.crmCell, isDark && styles.textDark, { width: 70, fontWeight: "800" }]}>
-                          #{order.id}
-                        </Text>
-                        <Text style={[styles.crmCell, isDark && styles.textDark, { width: 120, fontSize: 11 }]}>
-                          {dateStr}
-                        </Text>
-                        <View style={[styles.crmCell, { width: 180 }]}>
-                          <TouchableOpacity
-                            style={[
-                              styles.crmStatusChip,
-                              { backgroundColor: statusColor(order.status), marginBottom: 4 },
-                            ]}
-                            onPress={() => setOpenStatusId(openStatusId === order.id ? null : order.id)}
-                            activeOpacity={0.7}
-                          >
-                            <Text style={[styles.crmStatusChipText, { color: "#fff" }]}>
-                              {order.status} ▾
-                            </Text>
-                          </TouchableOpacity>
-                          {openStatusId === order.id && (
-                            <View style={{ flexDirection: "row", flexWrap: "wrap", marginTop: 2 }}>
-                              {ORDER_STATUSES.filter(s => s !== order.status).map((s) => (
-                                <TouchableOpacity
-                                  key={s}
-                                  style={styles.crmStatusChip}
-                                  onPress={() => {
-                                    changeStatus(order.id, s);
-                                    setOpenStatusId(null);
-                                  }}
-                                  activeOpacity={0.7}
-                                >
-                                  <Text style={styles.crmStatusChipText}>{s}</Text>
-                                </TouchableOpacity>
-                              ))}
-                            </View>
-                          )}
-                        </View>
-                        <View style={[styles.crmCell, { width: 200 }]}>
-                          <Text style={[isDark && styles.textDark, { fontSize: 12, fontWeight: "700" }]} numberOfLines={1}>
-                            {order.fullName || "—"}
-                          </Text>
-                          <Text style={[isDark && styles.textDark, { fontSize: 11, color: "#666", marginTop: 2 }]} numberOfLines={2}>
-                            {order.address || "—"}
-                          </Text>
-                          <Text style={[isDark && styles.textDark, { fontSize: 11, marginTop: 2 }]} numberOfLines={1}>
-                            {order.phone || "—"}
-                          </Text>
-                        </View>
-                        <View style={[styles.crmCell, { width: 140 }]}>
-                          {tgLink ? (
-                            <TouchableOpacity
-                              onPress={() => {
-                                try {
-                                  if (typeof window !== "undefined" && window.open) {
-                                    window.open(tgLink, "_blank");
-                                  } else if (tg?.openTelegramLink) {
-                                    tg.openTelegramLink(tgLink);
-                                  }
-                                } catch (e) {}
-                              }}
-                            >
-                              <Text style={{ color: "#0088cc", fontSize: 12, fontWeight: "600" }} numberOfLines={1}>
-                                {order.tgUsername ? `@${order.tgUsername}` : "Открыть в TG"}
-                              </Text>
-                            </TouchableOpacity>
-                          ) : (
-                            <Text style={[styles.crmMuted, isDark && styles.textDark]}>—</Text>
-                          )}
-                        </View>
-                        <View style={[styles.crmCell, { width: 140 }]}>
-                          {isPost ? (
-                            <TextInput
-                              style={[styles.crmTrackInput, isDark && styles.inputDark]}
-                              placeholder="Трек..."
-                              placeholderTextColor="#999"
-                              value={trackingDrafts[order.id] !== undefined ? trackingDrafts[order.id] : (order.trackingNumber || "")}
-                              onChangeText={(t) => handleTrackingChange(order.id, t)}
-                              onBlur={() => commitTracking(order.id)}
-                              onSubmitEditing={() => commitTracking(order.id)}
-                              blurOnSubmit={false}
-                              returnKeyType="done"
-                            />
-                          ) : (
-                            <Text style={[styles.crmMuted, isDark && styles.textDark]}>Курьер</Text>
-                          )}
-                        </View>
-                        <Text style={[styles.crmCell, isDark && styles.textDark, { width: 180 }]} numberOfLines={3}>
-                          {itemsLabel || "—"}
-                        </Text>
-                        <Text style={[styles.crmCell, isDark && styles.textDark, { width: 90, fontWeight: "700" }]}>
-                          {money(order.finalTotal || 0)}
-                        </Text>
-                      </View>
-                    );
-                  })}
-                </View>
-                </ScrollView>
-              </ScrollView>
-            )}
-
-            {/* Полноэкранная таблица заказов (удобно с ПК) */}
-            <Modal visible={ordersFullscreen} animationType="fade" transparent={false} onRequestClose={() => setOrdersFullscreen(false)}>
-              <View style={{ flex: 1, backgroundColor: isDark ? "#111" : "#f5f5f5", paddingTop: 16 }}>
-                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 16, marginBottom: 12 }}>
-                  <Text style={[styles.pageTitle, isDark && styles.textDark, { marginBottom: 0 }]}>Заказы · полный экран</Text>
-                  <View style={{ flexDirection: "row", gap: 8 }}>
-                    <TouchableOpacity
-                      style={[styles.productAdminBtn, { flex: 0, paddingHorizontal: 14, paddingVertical: 10 }]}
-                      onPress={() => syncSharedOrders(true)}
-                    >
-                      <Text style={styles.productAdminBtnText}>Обновить</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.productAdminBtn, { flex: 0, paddingHorizontal: 14, paddingVertical: 10, backgroundColor: "#ef4444" }]}
-                      onPress={() => setOrdersFullscreen(false)}
-                    >
-                      <Text style={styles.productAdminBtnText}>Закрыть</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-                <ScrollView horizontal style={{ flex: 1 }} contentContainerStyle={{ flexGrow: 1 }}>
-                  <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 12 }}>
-                    <View style={styles.crmTable}>
-                      <View style={[styles.crmRow, styles.crmHeaderRow]}>
-                        <Text style={[styles.crmCell, styles.crmHead, { width: 70, textAlign: "center" }]}>#</Text>
-                        <Text style={[styles.crmCell, styles.crmHead, { width: 120, textAlign: "center" }]}>Дата / Время</Text>
-                        <Text style={[styles.crmCell, styles.crmHead, { width: 180, textAlign: "center" }]}>Статус</Text>
-                        <Text style={[styles.crmCell, styles.crmHead, { width: 200, textAlign: "center" }]}>Данные</Text>
-                        <Text style={[styles.crmCell, styles.crmHead, { width: 140, textAlign: "center" }]}>Telegram</Text>
-                        <Text style={[styles.crmCell, styles.crmHead, { width: 140, textAlign: "center" }]}>Трек</Text>
-                        <Text style={[styles.crmCell, styles.crmHead, { width: 200, textAlign: "center" }]}>Товар</Text>
-                        <Text style={[styles.crmCell, styles.crmHead, { width: 90, textAlign: "center" }]}>Сумма</Text>
-                      </View>
-                      {adminOrders.map((order) => {
-                        const itemsLabel = (order.items || [])
-                          .map((i) => `${i.name}${i.size ? ` (${i.size})` : ""}`)
-                          .join(", ");
-                        const dateStr = order.date
-                          ? new Date(order.date).toLocaleString("ru-RU", {
-                              day: "2-digit", month: "2-digit", year: "numeric",
-                              hour: "2-digit", minute: "2-digit",
-                            })
-                          : "—";
-                        return (
-                          <View key={`fs-${order.id}`} style={[styles.crmRow, isDark && styles.crmRowDark]}>
-                            <Text style={[styles.crmCell, isDark && styles.textDark, { width: 70, fontWeight: "800" }]}>#{order.id}</Text>
-                            <Text style={[styles.crmCell, isDark && styles.textDark, { width: 120, fontSize: 11 }]}>{dateStr}</Text>
-                            <View style={[styles.crmCell, { width: 180 }]}>
-                              <TouchableOpacity
-                                style={[styles.crmStatusChip, { backgroundColor: statusColor(order.status) }]}
-                                onPress={() => setOpenStatusId(openStatusId === order.id ? null : order.id)}
-                              >
-                                <Text style={[styles.crmStatusChipText, { color: "#fff" }]}>{order.status} ▾</Text>
-                              </TouchableOpacity>
-                              {openStatusId === order.id && (
-                                <View style={{ flexDirection: "row", flexWrap: "wrap", marginTop: 4 }}>
-                                  {ORDER_STATUSES.filter((s) => s !== order.status).map((s) => (
-                                    <TouchableOpacity
-                                      key={s}
-                                      style={styles.crmStatusChip}
-                                      onPress={() => { changeStatus(order.id, s); setOpenStatusId(null); }}
-                                    >
-                                      <Text style={styles.crmStatusChipText}>{s}</Text>
-                                    </TouchableOpacity>
-                                  ))}
-                                </View>
-                              )}
-                            </View>
-                            <View style={[styles.crmCell, { width: 200 }]}>
-                              <Text style={[isDark && styles.textDark, { fontSize: 12, fontWeight: "700" }]}>{order.fullName || "—"}</Text>
-                              <Text style={{ fontSize: 11, color: "#666" }}>{order.address || "—"}</Text>
-                              <Text style={[isDark && styles.textDark, { fontSize: 11 }]}>{order.phone || "—"}</Text>
-                            </View>
-                            <Text style={[styles.crmCell, { width: 140, color: "#0088cc", fontSize: 12 }]}>
-                              {order.tgUsername ? `@${order.tgUsername}` : order.tgId || "—"}
-                            </Text>
-                            <Text style={[styles.crmCell, isDark && styles.textDark, { width: 140, fontSize: 12 }]}>
-                              {order.trackingNumber || (order.delivery === "europost" ? "—" : "Курьер")}
-                            </Text>
-                            <Text style={[styles.crmCell, isDark && styles.textDark, { width: 200 }]} numberOfLines={3}>{itemsLabel || "—"}</Text>
-                            <Text style={[styles.crmCell, isDark && styles.textDark, { width: 90, fontWeight: "700" }]}>{money(order.finalTotal || 0)}</Text>
-                          </View>
-                        );
-                      })}
-                    </View>
-                  </ScrollView>
-                </ScrollView>
-              </View>
-            </Modal>
-
-            {/* PROMO CODES */}
-            <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Промокоды</Text>
-            <View style={[styles.promoFormCard, isDark && styles.productEditDark]}>
-              <Text style={[styles.crmMuted, isDark && styles.textDark, { marginBottom: 8 }]}>
-                Новый промокод
-              </Text>
-              <TextInput
-                style={[styles.editInput, isDark && styles.inputDark]}
-                placeholder="Код (SAVE10)"
-                placeholderTextColor="#999"
-                value={localPromo.code}
-                onChangeText={(t) => setLocalPromo((f) => ({ ...f, code: t }))}
-                autoCapitalize="characters"
-                blurOnSubmit={false}
-              />
-              <TextInput
-                style={[styles.editInput, isDark && styles.inputDark]}
-                placeholder="Скидка %"
-                placeholderTextColor="#999"
-                value={localPromo.discount}
-                onChangeText={(t) => setLocalPromo((f) => ({ ...f, discount: t.replace(/\D/g, "") }))}
-                keyboardType="numeric"
-                blurOnSubmit={false}
-              />
-              <TextInput
-                style={[styles.editInput, isDark && styles.inputDark]}
-                placeholder="Кол-во использований (напр. 50)"
-                placeholderTextColor="#999"
-                value={localPromo.maxUses}
-                onChangeText={(t) => setLocalPromo((f) => ({ ...f, maxUses: t.replace(/\D/g, "") }))}
-                keyboardType="numeric"
-                blurOnSubmit={false}
-              />
-              <TextInput
-                style={[styles.editInput, isDark && styles.inputDark]}
-                placeholder="Описание (необязательно)"
-                placeholderTextColor="#999"
-                value={localPromo.description}
-                onChangeText={(t) => setLocalPromo((f) => ({ ...f, description: t }))}
-                blurOnSubmit={false}
-              />
-              <TouchableOpacity style={styles.addBtn} onPress={() => {
-                // Временно подставляем локальные данные в глобальный стейт и вызываем оригинальную функцию
-                setPromoForm(localPromo);
-                setTimeout(() => {
-                  addPromoFromForm();
-                  setLocalPromo({ code: "", discount: "", maxUses: "", description: "" });
-                }, 0);
-              }}>
-                <Text style={styles.buttonText}>+ Создать промокод</Text>
-              </TouchableOpacity>
-            </View>
-
-            {promoCodes.map((promo) => {
-              const used = Number(promo.usedCount) || 0;
-              const maxU = promo.maxUses != null ? Number(promo.maxUses) : 999999;
-              const left = Math.max(0, maxU - used);
-              return (
-                <View key={promo.code} style={[styles.productEdit, isDark && styles.productEditDark]}>
-                  <Text style={[styles.productName, isDark && styles.textDark]}>
-                    {promo.code} — {promo.discount}%
-                  </Text>
-                  {!!promo.description && (
-                    <Text style={[styles.brand, isDark && styles.textDark]}>{promo.description}</Text>
-                  )}
-                  <Text style={[styles.crmMuted, isDark && styles.textDark]}>
-                    Использовано: {used} / {maxU >= 999999 ? "∞" : maxU} · Осталось: {maxU >= 999999 ? "∞" : left}
-                  </Text>
-                  <View style={styles.editActions}>
-                    <TouchableOpacity onPress={() => deletePromoCode(promo.code)}>
-                      <Text style={[styles.editAction, { color: "red" }]}>🗑 Удалить</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              );
-            })}
-
-            {/* PRODUCTS */}
-            <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Управление товарами</Text>
-            <TouchableOpacity style={styles.addBtn} onPress={startAddProduct}>
-              <Text style={styles.buttonText}>+ Добавить товар</Text>
-            </TouchableOpacity>
-
-            {/* Поиск по модели */}
-            <TextInput
-              style={[styles.editInput, isDark && styles.inputDark, { marginBottom: 10 }]}
-              placeholder="🔍 Поиск по названию / бренду..."
-              placeholderTextColor="#999"
-              value={productSearch}
-              onChangeText={setProductSearch}
-              blurOnSubmit={false}
-            />
-
-            {/* Product editor (local draft — клавиатура не сбрасывается) */}
-            {localProduct && (
-              <View style={[styles.productEdit, isDark && styles.productEditDark, { borderWidth: 2, borderColor: "#111" }]}>
-                <Text style={[styles.productName, isDark && styles.textDark]}>
-                  {localIsNew ? "Новый товар" : "Редактирование"}
-                </Text>
-                <TextInput
-                  style={[styles.editInput, isDark && styles.inputDark]}
-                  value={localProduct.brand || ""}
-                  onChangeText={(t) => setLocalProduct((d) => ({ ...d, brand: t }))}
-                  placeholder="Бренд"
-                  placeholderTextColor="#999"
-                  blurOnSubmit={false}
-                />
-                <TextInput
-                  style={[styles.editInput, isDark && styles.inputDark]}
-                  value={localProduct.name || ""}
-                  onChangeText={(t) => setLocalProduct((d) => ({ ...d, name: t }))}
-                  placeholder="Название"
-                  placeholderTextColor="#999"
-                  blurOnSubmit={false}
-                />
-                <TextInput
-                  style={[styles.editInput, isDark && styles.inputDark]}
-                  value={localProduct.price || ""}
-                  onChangeText={(t) => setLocalProduct((d) => ({ ...d, price: t }))}
-                  placeholder="Цена"
-                  placeholderTextColor="#999"
-                  keyboardType="numeric"
-                  blurOnSubmit={false}
-                />
-                <TextInput
-                  style={[styles.editInput, isDark && styles.inputDark]}
-                  value={localProduct.oldPrice || ""}
-                  onChangeText={(t) => setLocalProduct((d) => ({ ...d, oldPrice: t }))}
-                  placeholder="Старая цена (необязательно)"
-                  placeholderTextColor="#999"
-                  keyboardType="numeric"
-                  blurOnSubmit={false}
-                />
-                <TextInput
-                  style={[styles.editInput, isDark && styles.inputDark]}
-                  value={localProduct.description || ""}
-                  onChangeText={(t) => setLocalProduct((d) => ({ ...d, description: t }))}
-                  placeholder="Описание"
-                  placeholderTextColor="#999"
-                  multiline
-                  blurOnSubmit={false}
-                  textAlignVertical="top"
-                />
-                <TextInput
-                  style={[styles.editInput, isDark && styles.inputDark]}
-                  value={localProduct.sizes || ""}
-                  onChangeText={(t) => setLocalProduct((d) => ({ ...d, sizes: t }))}
-                  placeholder="Размеры через запятую"
-                  placeholderTextColor="#999"
-                  blurOnSubmit={false}
-                />
-                <TextInput
-                  style={[styles.editInput, isDark && styles.inputDark]}
-                  value={localProduct.image || ""}
-                  onChangeText={(t) => setLocalProduct((d) => ({ ...d, image: t }))}
-                  placeholder="URL картинки или загрузите фото"
-                  placeholderTextColor="#999"
-                  blurOnSubmit={false}
-                  autoCapitalize="none"
-                />
-                <TouchableOpacity
-                  style={[styles.addBtn, { marginTop: 4 }]}
-                  onPress={() =>
-                    pickProductImage((dataUrl) => {
-                      // Важно: обновляем ЛОКАЛЬНУЮ форму, не затирая name/price
-                      setLocalProduct((d) => (d ? { ...d, image: dataUrl } : d));
-                    })
-                  }
-                >
-                  <Text style={styles.buttonText}>📷 Загрузить своё фото</Text>
-                </TouchableOpacity>
-                {!!localProduct.image && (
-                  <SmartImage uri={localProduct.image} style={{ width: "100%", height: 140, borderRadius: 12, marginBottom: 8 }} />
-                )}
-                <View style={{ flexDirection: "row", gap: 8 }}>
-                  <TouchableOpacity
-                    style={[styles.saveBtn, { flex: 1 }]}
-                    onPress={() => {
-                      // Сохраняем напрямую из localProduct — без гонки setState
-                      saveProductDraft(localProduct, localIsNew);
-                      setLocalProduct(null);
-                    }}
-                  >
-                    <Text style={styles.buttonText}>Сохранить</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.saveBtn, { flex: 1, backgroundColor: "#888" }]}
-                    onPress={() => {
-                      setLocalProduct(null);
-                      cancelProductDraft();
-                    }}
-                  >
-                    <Text style={styles.buttonText}>Отмена</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            )}
-
-            <ScrollView
-              style={{ maxHeight: 480, marginBottom: 12 }}
-              nestedScrollEnabled
-              showsVerticalScrollIndicator
-              keyboardShouldPersistTaps="always"
-            >
-              {products
-                .filter((p) => {
-                  if (!productSearch.trim()) return true;
-                  const q = productSearch.trim().toLowerCase();
-                  return (
-                    (p.name || "").toLowerCase().includes(q) ||
-                    (p.brand || "").toLowerCase().includes(q)
-                  );
-                })
-                .slice()
-                .sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0))
-                .map((p) => (
-                  <View key={p.id} style={[styles.productEdit, isDark && styles.productEditDark]}>
-                    <View style={{ flexDirection: "row", alignItems: "center" }}>
-                      {!!p.image && (
-                        <SmartImage uri={p.image} style={{ width: 56, height: 56, borderRadius: 10, marginRight: 10 }} />
-                      )}
-                      <View style={{ flex: 1 }}>
-                        <Text style={[styles.productName, isDark && styles.textDark]}>
-                          {p.brand} {p.name}{p.pinned ? " · закреплено" : ""}
-                        </Text>
-                        <Text style={[styles.price, isDark && styles.textDark]}>{money(p.price)}</Text>
-                      </View>
-                    </View>
-                    <View style={styles.productAdminActions}>
-                      <TouchableOpacity
-                        style={[styles.productAdminBtn, p.pinned && styles.productAdminBtnActive]}
-                        onPress={() => togglePinProduct(p.id)}
-                        activeOpacity={0.8}
-                      >
-                        <Text style={styles.productAdminBtnText}>
-                          {p.pinned ? "Открепить" : "Закрепить"}
-                        </Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={styles.productAdminBtn}
-                        onPress={() => startEditProduct(p)}
-                        activeOpacity={0.8}
-                      >
-                        <Text style={styles.productAdminBtnText}>Редактировать</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={[styles.productAdminBtn, styles.productAdminBtnDanger]}
-                        onPress={() => deleteProduct(p.id)}
-                        activeOpacity={0.8}
-                      >
-                        <Text style={styles.productAdminBtnText}>Удалить</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                ))}
-            </ScrollView>
-
-            {/* Модерация отзывов */}
-            <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Модерация отзывов</Text>
-            {(() => {
-              const pending = [];
-              products.forEach((p) => {
-                (p.ratings || []).forEach((r, idx) => {
-                  if (r.approved === false) {
-                    pending.push({ product: p, review: r, index: idx });
-                  }
-                });
-              });
-              if (pending.length === 0) {
-                return (
-                  <Text style={[styles.empty, isDark && styles.textDark]}>Нет отзывов на проверке</Text>
-                );
-              }
-              return pending.map(({ product, review, index }) => (
-                <View key={`${product.id}-${index}`} style={[styles.productEdit, isDark && styles.productEditDark]}>
-                  <Text style={[styles.productName, isDark && styles.textDark]}>
-                    {product.brand} {product.name}
-                  </Text>
-                  <Text style={[styles.reviewRating, isDark && styles.textDark]}>
-                    {"★".repeat(review.rating)}{"☆".repeat(5 - review.rating)}
-                  </Text>
-                  <Text style={[styles.reviewComment, isDark && styles.textDark]}>
-                    {review.comment || "(без текста)"}
-                  </Text>
-                  <Text style={[styles.reviewDate, isDark && styles.textDark]}>
-                    {review.userName || "Пользователь"} · {new Date(review.date).toLocaleDateString("ru-RU")}
-                  </Text>
-                  <View style={{ flexDirection: "row", marginTop: 8, gap: 8 }}>
-                    <TouchableOpacity
-                      style={[styles.saveBtn, { flex: 1, backgroundColor: "#22c55e" }]}
-                      onPress={() => moderateReview(product.id, index, true)}
-                    >
-                      <Text style={styles.buttonText}>✓ Одобрить</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.saveBtn, { flex: 1, backgroundColor: "#ef4444" }]}
-                      onPress={() => moderateReview(product.id, index, false)}
-                    >
-                      <Text style={styles.buttonText}>✕ Отклонить</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              ));
-            })()}
-
-            {/* Broadcast */}
-            <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Рассылка</Text>
-            <TextInput
-              style={[styles.broadcastInput, isDark && styles.inputDark]}
-              placeholder="Текст сообщения"
-              placeholderTextColor={isDark ? "#999" : "#888"}
-              value={localBroadcast}
-              onChangeText={setLocalBroadcast}
-              multiline
-              blurOnSubmit={false}
-              textAlignVertical="top"
-            />
-            <TouchableOpacity style={styles.broadcastBtn} onPress={handleSendBroadcast}>
-              <Text style={styles.buttonText}>📨 Отправить рассылку ({users.length} получателей)</Text>
-            </TouchableOpacity>
-          </ScrollView>
-        </View>
-      </Modal>
-    );
+  const handleSendBroadcast = () => {
+    if (!localBroadcast.trim()) {
+      Alert.alert("Ошибка", "Введите текст");
+      return;
+    }
+    setBroadcastText(localBroadcast);
+    Alert.alert("Рассылка отправлена", `Сообщение: ${localBroadcast}\nПолучателей: ${users.length}`);
+    setLocalBroadcast("");
   };
 
   // ---- Review Prompt (после завершения заказа) ----
@@ -4336,7 +3665,347 @@ export default function App() {
         <Menu />
         <OrderModal />
         <ReviewPromptModal />
-        <AdminPanel />
+        {/* CRM */}
+        {isAdmin && (
+          <Modal visible={showAdmin} animationType="none" transparent={false} onRequestClose={() => setShowAdmin(false)}>
+            <View style={[styles.page, theme === "dark" && styles.pageDark, { paddingTop: 40 }]}>
+              <TouchableOpacity onPress={() => setShowAdmin(false)} style={styles.closeAdmin}>
+                <Text style={[styles.closeAdminText, theme === "dark" && styles.textDark]}>✕ Закрыть CRM</Text>
+              </TouchableOpacity>
+
+              <ScrollView
+                style={{ flex: 1 }}
+                contentContainerStyle={{ paddingBottom: 60, flexGrow: 1 }}
+                keyboardShouldPersistTaps="always"
+                nestedScrollEnabled
+                keyboardDismissMode="none"
+              >
+                <Text style={[styles.pageTitle, theme === "dark" && styles.textDark]}>CRM</Text>
+
+                <View style={styles.adminStatCard}>
+                  <Text style={styles.adminStatWhite}>Товаров в каталоге: {products.length}</Text>
+                  <Text style={styles.adminStatWhite}>Промокодов: {promoCodes.length}</Text>
+                  <Text style={[styles.adminStatWhite, { opacity: 0.75, fontSize: 13, marginTop: 6 }]}>
+                    Заказы приходят в Telegram-бот. Учёт — в Google Таблицах.
+                  </Text>
+                </View>
+
+                <Text style={[styles.sectionTitle, theme === "dark" && styles.textDark]}>Промокоды</Text>
+                <View style={[styles.promoFormCard, theme === "dark" && styles.productEditDark]}>
+                  <Text style={[styles.crmMuted, theme === "dark" && styles.textDark, { marginBottom: 8 }]}>
+                    Новый промокод
+                  </Text>
+                  <TextInput
+                    style={[styles.editInput, theme === "dark" && styles.inputDark]}
+                    placeholder="Код (SAVE10)"
+                    placeholderTextColor="#999"
+                    value={localPromo.code}
+                    onChangeText={(t) => setLocalPromo((f) => ({ ...f, code: t }))}
+                    autoCapitalize="characters"
+                    blurOnSubmit={false}
+                  />
+                  <TextInput
+                    style={[styles.editInput, theme === "dark" && styles.inputDark]}
+                    placeholder="Скидка %"
+                    placeholderTextColor="#999"
+                    value={localPromo.discount}
+                    onChangeText={(t) => setLocalPromo((f) => ({ ...f, discount: t.replace(/\D/g, "") }))}
+                    keyboardType="numeric"
+                    blurOnSubmit={false}
+                  />
+                  <TextInput
+                    style={[styles.editInput, theme === "dark" && styles.inputDark]}
+                    placeholder="Кол-во использований (напр. 50)"
+                    placeholderTextColor="#999"
+                    value={localPromo.maxUses}
+                    onChangeText={(t) => setLocalPromo((f) => ({ ...f, maxUses: t.replace(/\D/g, "") }))}
+                    keyboardType="numeric"
+                    blurOnSubmit={false}
+                  />
+                  <TextInput
+                    style={[styles.editInput, theme === "dark" && styles.inputDark]}
+                    placeholder="Описание (необязательно)"
+                    placeholderTextColor="#999"
+                    value={localPromo.description}
+                    onChangeText={(t) => setLocalPromo((f) => ({ ...f, description: t }))}
+                    blurOnSubmit={false}
+                  />
+                  <TouchableOpacity style={styles.addBtn} onPress={() => {
+                    setPromoForm(localPromo);
+                    setTimeout(() => {
+                      addPromoFromForm();
+                      setLocalPromo({ code: "", discount: "", maxUses: "", description: "" });
+                    }, 0);
+                  }}>
+                    <Text style={styles.buttonText}>+ Создать промокод</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {promoCodes.map((promo) => {
+                  const used = Number(promo.usedCount) || 0;
+                  const maxU = promo.maxUses != null ? Number(promo.maxUses) : 999999;
+                  const left = Math.max(0, maxU - used);
+                  return (
+                    <View key={promo.code} style={[styles.productEdit, theme === "dark" && styles.productEditDark]}>
+                      <Text style={[styles.productName, theme === "dark" && styles.textDark]}>
+                        {promo.code} — {promo.discount}%
+                      </Text>
+                      {!!promo.description && (
+                        <Text style={[styles.brand, theme === "dark" && styles.textDark]}>{promo.description}</Text>
+                      )}
+                      <Text style={[styles.crmMuted, theme === "dark" && styles.textDark]}>
+                        Использовано: {used} / {maxU >= 999999 ? "∞" : maxU} · Осталось: {maxU >= 999999 ? "∞" : left}
+                      </Text>
+                      <View style={styles.editActions}>
+                        <TouchableOpacity onPress={() => deletePromoCode(promo.code)}>
+                          <Text style={[styles.editAction, { color: "red" }]}>🗑 Удалить</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  );
+                })}
+
+                <Text style={[styles.sectionTitle, theme === "dark" && styles.textDark]}>Управление товарами</Text>
+                <TouchableOpacity style={styles.addBtn} onPress={startAddProduct}>
+                  <Text style={styles.buttonText}>+ Добавить товар</Text>
+                </TouchableOpacity>
+
+                <TextInput
+                  style={[styles.editInput, theme === "dark" && styles.inputDark, { marginBottom: 10 }]}
+                  placeholder="🔍 Поиск по названию / бренду..."
+                  placeholderTextColor="#999"
+                  value={productSearch}
+                  onChangeText={setProductSearch}
+                  blurOnSubmit={false}
+                />
+
+                {localProduct && (
+                  <View style={[styles.productEdit, theme === "dark" && styles.productEditDark, { borderWidth: 2, borderColor: "#111" }]}>
+                    <Text style={[styles.productName, theme === "dark" && styles.textDark]}>
+                      {localIsNew ? "Новый товар" : "Редактирование"}
+                    </Text>
+                    <TextInput
+                      style={[styles.editInput, theme === "dark" && styles.inputDark]}
+                      value={localProduct.brand || ""}
+                      onChangeText={(t) => setLocalProduct((d) => ({ ...d, brand: t }))}
+                      placeholder="Бренд"
+                      placeholderTextColor="#999"
+                      blurOnSubmit={false}
+                    />
+                    <TextInput
+                      style={[styles.editInput, theme === "dark" && styles.inputDark]}
+                      value={localProduct.name || ""}
+                      onChangeText={(t) => setLocalProduct((d) => ({ ...d, name: t }))}
+                      placeholder="Название"
+                      placeholderTextColor="#999"
+                      blurOnSubmit={false}
+                    />
+                    <TextInput
+                      style={[styles.editInput, theme === "dark" && styles.inputDark]}
+                      value={localProduct.price || ""}
+                      onChangeText={(t) => setLocalProduct((d) => ({ ...d, price: t }))}
+                      placeholder="Цена"
+                      placeholderTextColor="#999"
+                      keyboardType="numeric"
+                      blurOnSubmit={false}
+                    />
+                    <TextInput
+                      style={[styles.editInput, theme === "dark" && styles.inputDark]}
+                      value={localProduct.oldPrice || ""}
+                      onChangeText={(t) => setLocalProduct((d) => ({ ...d, oldPrice: t }))}
+                      placeholder="Старая цена (необязательно)"
+                      placeholderTextColor="#999"
+                      keyboardType="numeric"
+                      blurOnSubmit={false}
+                    />
+                    <TextInput
+                      style={[styles.editInput, theme === "dark" && styles.inputDark]}
+                      value={localProduct.description || ""}
+                      onChangeText={(t) => setLocalProduct((d) => ({ ...d, description: t }))}
+                      placeholder="Описание"
+                      placeholderTextColor="#999"
+                      multiline
+                      blurOnSubmit={false}
+                      textAlignVertical="top"
+                    />
+                    <TextInput
+                      style={[styles.editInput, theme === "dark" && styles.inputDark]}
+                      value={localProduct.sizes || ""}
+                      onChangeText={(t) => setLocalProduct((d) => ({ ...d, sizes: t }))}
+                      placeholder="Размеры через запятую"
+                      placeholderTextColor="#999"
+                      blurOnSubmit={false}
+                    />
+                    <TextInput
+                      style={[styles.editInput, theme === "dark" && styles.inputDark]}
+                      value={localProduct.image || ""}
+                      onChangeText={(t) => setLocalProduct((d) => ({ ...d, image: t }))}
+                      placeholder="URL картинки или загрузите фото"
+                      placeholderTextColor="#999"
+                      blurOnSubmit={false}
+                      autoCapitalize="none"
+                    />
+                    <TouchableOpacity
+                      style={[styles.addBtn, { marginTop: 4 }]}
+                      onPress={() =>
+                        pickProductImage((dataUrl) => {
+                          setLocalProduct((d) => (d ? { ...d, image: dataUrl } : d));
+                        })
+                      }
+                    >
+                      <Text style={styles.buttonText}>📷 Загрузить своё фото</Text>
+                    </TouchableOpacity>
+                    {!!localProduct.image && (
+                      <SmartImage uri={localProduct.image} style={{ width: "100%", height: 140, borderRadius: 12, marginBottom: 8 }} />
+                    )}
+                    <View style={{ flexDirection: "row", gap: 8 }}>
+                      <TouchableOpacity
+                        style={[styles.saveBtn, { flex: 1 }]}
+                        onPress={() => {
+                          saveProductDraft(localProduct, localIsNew);
+                          setLocalProduct(null);
+                        }}
+                      >
+                        <Text style={styles.buttonText}>Сохранить</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.saveBtn, { flex: 1, backgroundColor: "#888" }]}
+                        onPress={() => {
+                          setLocalProduct(null);
+                          cancelProductDraft();
+                        }}
+                      >
+                        <Text style={styles.buttonText}>Отмена</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
+
+                <ScrollView
+                  style={{ maxHeight: 480, marginBottom: 12 }}
+                  nestedScrollEnabled
+                  showsVerticalScrollIndicator
+                  keyboardShouldPersistTaps="always"
+                >
+                  {products
+                    .filter((p) => {
+                      if (!productSearch.trim()) return true;
+                      const q = productSearch.trim().toLowerCase();
+                      return (
+                        (p.name || "").toLowerCase().includes(q) ||
+                        (p.brand || "").toLowerCase().includes(q)
+                      );
+                    })
+                    .slice()
+                    .sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0))
+                    .map((p) => (
+                      <View key={p.id} style={[styles.productEdit, theme === "dark" && styles.productEditDark]}>
+                        <View style={{ flexDirection: "row", alignItems: "center" }}>
+                          {!!p.image && (
+                            <SmartImage uri={p.image} style={{ width: 56, height: 56, borderRadius: 10, marginRight: 10 }} />
+                          )}
+                          <View style={{ flex: 1 }}>
+                            <Text style={[styles.productName, theme === "dark" && styles.textDark]}>
+                              {p.brand} {p.name}{p.pinned ? " · закреплено" : ""}
+                            </Text>
+                            <Text style={[styles.price, theme === "dark" && styles.textDark]}>{money(p.price)}</Text>
+                          </View>
+                        </View>
+                        <View style={styles.productAdminActions}>
+                          <TouchableOpacity
+                            style={[styles.productAdminBtn, p.pinned && styles.productAdminBtnActive]}
+                            onPress={() => togglePinProduct(p.id)}
+                            activeOpacity={0.8}
+                          >
+                            <Text style={styles.productAdminBtnText}>
+                              {p.pinned ? "Открепить" : "Закрепить"}
+                            </Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={styles.productAdminBtn}
+                            onPress={() => startEditProduct(p)}
+                            activeOpacity={0.8}
+                          >
+                            <Text style={styles.productAdminBtnText}>Редактировать</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={[styles.productAdminBtn, styles.productAdminBtnDanger]}
+                            onPress={() => deleteProduct(p.id)}
+                            activeOpacity={0.8}
+                          >
+                            <Text style={styles.productAdminBtnText}>Удалить</Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    ))}
+                </ScrollView>
+
+                <Text style={[styles.sectionTitle, theme === "dark" && styles.textDark]}>Модерация отзывов</Text>
+                {(() => {
+                  const pending = [];
+                  products.forEach((p) => {
+                    (p.ratings || []).forEach((r, idx) => {
+                      if (r.approved === false) {
+                        pending.push({ product: p, review: r, index: idx });
+                      }
+                    });
+                  });
+                  if (pending.length === 0) {
+                    return (
+                      <Text style={[styles.empty, theme === "dark" && styles.textDark]}>Нет отзывов на проверке</Text>
+                    );
+                  }
+                  return pending.map(({ product, review, index }) => (
+                    <View key={`${product.id}-${index}`} style={[styles.productEdit, theme === "dark" && styles.productEditDark]}>
+                      <Text style={[styles.productName, theme === "dark" && styles.textDark]}>
+                        {product.brand} {product.name}
+                      </Text>
+                      <Text style={[styles.reviewRating, theme === "dark" && styles.textDark]}>
+                        {"★".repeat(review.rating)}{"☆".repeat(5 - review.rating)}
+                      </Text>
+                      <Text style={[styles.reviewComment, theme === "dark" && styles.textDark]}>
+                        {review.comment || "(без текста)"}
+                      </Text>
+                      <Text style={[styles.reviewDate, theme === "dark" && styles.textDark]}>
+                        {review.userName || "Пользователь"} · {new Date(review.date).toLocaleDateString("ru-RU")}
+                      </Text>
+                      <View style={{ flexDirection: "row", marginTop: 8, gap: 8 }}>
+                        <TouchableOpacity
+                          style={[styles.saveBtn, { flex: 1, backgroundColor: "#22c55e" }]}
+                          onPress={() => moderateReview(product.id, index, true)}
+                        >
+                          <Text style={styles.buttonText}>✓ Одобрить</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[styles.saveBtn, { flex: 1, backgroundColor: "#ef4444" }]}
+                          onPress={() => moderateReview(product.id, index, false)}
+                        >
+                          <Text style={styles.buttonText}>✕ Отклонить</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  ));
+                })()}
+
+                <Text style={[styles.sectionTitle, theme === "dark" && styles.textDark]}>Рассылка</Text>
+                <TextInput
+                  style={[styles.broadcastInput, theme === "dark" && styles.inputDark]}
+                  placeholder="Текст сообщения"
+                  placeholderTextColor={theme === "dark" ? "#999" : "#888"}
+                  value={localBroadcast}
+                  onChangeText={setLocalBroadcast}
+                  multiline
+                  blurOnSubmit={false}
+                  textAlignVertical="top"
+                />
+                <TouchableOpacity style={styles.broadcastBtn} onPress={handleSendBroadcast}>
+                  <Text style={styles.buttonText}>📨 Отправить рассылку ({users.length} получателей)</Text>
+                </TouchableOpacity>
+              </ScrollView>
+            </View>
+          </Modal>
+        )}
+
         <Toast message={toastMessage} visible={toastVisible} onHide={hideToast} />
       </View>
     </ThemeContext.Provider>
