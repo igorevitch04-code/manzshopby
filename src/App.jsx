@@ -641,9 +641,9 @@ export default function App() {
   }, [user?.id, referredBy]);
 
   // Авто-синхронизация рефералов (без кнопки): каждые 12 сек + при возврате в приложение
-  // Пока открыта админка — не трогаем, чтобы не было мерцания
+  // Пока открыта админка или окно заказа — не трогаем, чтобы не сбивать формы
   useEffect(() => {
-    if (showAdmin) return; // не запускаем интервал пока открыта CRM
+    if (showAdmin || orderModalVisible) return;
     const tick = () => {
       ensureReferralRegistered();
       syncReferralStatsFromCloud();
@@ -663,7 +663,7 @@ export default function App() {
         document.removeEventListener("visibilitychange", onVis);
       }
     };
-  }, [user?.id, showAdmin]);
+  }, [user?.id, showAdmin, orderModalVisible]);
 
   // Сохраняем текущую вкладку только в sessionStorage (живёт при refresh, умирает при полном закрытии)
   useEffect(() => {
@@ -906,10 +906,12 @@ export default function App() {
       const remoteEarn = await refApiGet(`earn_${myId}`);
       console.log("[Ref] remote count=", remoteCount, "earn=", remoteEarn);
 
+      // Обновляем счётчики тихо. Toast показываем ТОЛЬКО на странице профиля,
+      // чтобы не сбивать оформление заказа и админку.
       if (remoteCount != null) {
         setReferralCount((prev) => {
           const p = Number(prev) || 0;
-          if (remoteCount > p) {
+          if (remoteCount > p && page === "profile" && !orderModalVisible && !showAdmin) {
             const diff = remoteCount - p;
             setTimeout(() => showToast(`🎉 По вашей ссылке зарегистрировались: +${diff}`), 400);
           }
@@ -924,7 +926,9 @@ export default function App() {
           setReferralEarnings(remoteEarn);
           setBonusBalance((b) => b + add);
           await saveToCloud("krost_earn_synced", remoteEarn);
-          setTimeout(() => showToast(`💰 Вам начислено ${money(add)} с покупок реферала (2%)`), 700);
+          if (page === "profile" && !orderModalVisible && !showAdmin) {
+            setTimeout(() => showToast(`💰 Вам начислено ${money(add)} с покупок реферала (2%)`), 700);
+          }
         } else {
           setReferralEarnings(remoteEarn);
         }
