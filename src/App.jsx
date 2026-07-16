@@ -118,7 +118,7 @@ const LOGO_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAARgAAAC1CAYAAACE
 // highQuality=true — для страницы товара (w=700)
 const SmartImage = ({ uri, style, resizeMode = "contain", highQuality = false }) => {
   const [error, setError] = useState(false);
-  const bg = { backgroundColor: "#E8E8E6" };
+  const bg = { backgroundColor: "#FFFFFF" };
   const w = highQuality ? 700 : 400;
   const q = highQuality ? 80 : 70;
   const fastUri = uri
@@ -913,9 +913,21 @@ const pantryPutBasket = async (basket, payload) => {
 
 // Загрузка: индекс ID → каждый заказ; + pantry; + старый bulk-ключ
 const sharedOrdersLoad = async () => {
+  // 0) Netlify API — основной канал
+  try {
+    const fromApi = await netlifyOrdersLoad();
+    if (Array.isArray(fromApi)) {
+      return fromApi.sort((a, b) => {
+        const da = a.date ? new Date(a.date).getTime() : 0;
+        const db = b.date ? new Date(b.date).getTime() : 0;
+        return db - da;
+      });
+    }
+  } catch (e) {}
+
   const map = new Map();
 
-  // A) индекс + отдельные ключи (основной путь)
+  // A) индекс + отдельные ключи (fallback)
   try {
     const idxRaw = await kvGetString(ORDER_INDEX_KEY);
     if (idxRaw) {
@@ -999,6 +1011,13 @@ const sharedOrdersSave = async (orders) => {
 const sharedOrdersPush = async (order) => {
   try {
     const c = compactOrder(order);
+    // Netlify first
+    const okNetlify = await netlifyOrdersPushOne(c);
+    if (okNetlify) {
+      console.log("[Orders] shared push netlify OK", c.id);
+      return [c];
+    }
+
     let raw = JSON.stringify(c);
     if (raw.length > 1400) raw = JSON.stringify(ultraCompactOrder(c));
 
@@ -1033,7 +1052,12 @@ const sharedOrdersPush = async (order) => {
 
 const sharedOrdersUpdate = async (orderId, patch) => {
   try {
-    // обновляем отдельный ключ
+    const okNetlify = await netlifyOrdersPatch(orderId, patch);
+    if (okNetlify) {
+      console.log("[Orders] patch netlify OK", orderId, patch);
+      return true;
+    }
+    // fallback KV
     let cur = null;
     try {
       const raw = await kvGetString(orderItemKey(orderId));
@@ -1086,7 +1110,6 @@ const getCatalogApiUrls = () => {
   try {
     if (typeof window !== "undefined" && window.location && window.location.origin) {
       const origin = window.location.origin;
-      // не ходим на api с localhost telegram webview странных origin
       if (origin && !origin.startsWith("file:")) {
         urls.push(`${origin}/api/catalog`);
         urls.push(`${origin}/.netlify/functions/catalog`);
@@ -1094,6 +1117,89 @@ const getCatalogApiUrls = () => {
     }
   } catch (e) {}
   return urls;
+};
+
+const getOrdersApiUrls = () => {
+  const urls = [];
+  try {
+    if (typeof window !== "undefined" && window.location && window.location.origin) {
+      const origin = window.location.origin;
+      if (origin && !origin.startsWith("file:")) {
+        urls.push(`${origin}/api/orders`);
+        urls.push(`${origin}/.netlify/functions/orders`);
+      }
+    }
+  } catch (e) {}
+  return urls;
+};
+
+const netlifyOrdersLoad = async () => {
+  for (const url of getOrdersApiUrls()) {
+    try {
+      const r = await fetch(url, { method: "GET", cache: "no-store" });
+      if (!r.ok) continue;
+      const data = await r.json();
+      if (data && Array.isArray(data.orders)) {
+        console.log("[Orders] netlify load OK", data.orders.length, url);
+        return data.orders;
+      }
+    } catch (e) {}
+  }
+  return null;
+};
+
+const netlifyOrdersSave = async (orders) => {
+  const body = JSON.stringify({ orders: (orders || []).slice(0, 80) });
+  for (const url of getOrdersApiUrls()) {
+    try {
+      const r = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+        cache: "no-store",
+      });
+      const data = await r.json().catch(() => ({}));
+      if (r.ok && data && data.ok !== false) {
+        console.log("[Orders] netlify save OK", data.count, url);
+        return true;
+      }
+    } catch (e) {}
+  }
+  return false;
+};
+
+const netlifyOrdersPushOne = async (order) => {
+  const body = JSON.stringify({ order });
+  for (const url of getOrdersApiUrls()) {
+    try {
+      const r = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+        cache: "no-store",
+      });
+      const data = await r.json().catch(() => ({}));
+      if (r.ok && data && data.ok !== false) return true;
+    } catch (e) {}
+  }
+  return false;
+};
+
+const netlifyOrdersPatch = async (orderId, patch) => {
+  const body = JSON.stringify({ patch: { id: orderId, ...patch } });
+  for (const url of getOrdersApiUrls()) {
+    try {
+      const r = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+        cache: "no-store",
+      });
+      const data = await r.json().catch(() => ({}));
+      if (r.ok && data && data.ok !== false) return true;
+    } catch (e) {}
+  }
+  return false;
 };
 
 const compactProduct = (p) => {
@@ -1112,6 +1218,7 @@ const compactProduct = (p) => {
     sales: Number(p.sales) || 0,
     averageRating: Number(p.averageRating) || 0,
     pinned: !!p.pinned,
+    hidden: !!p.hidden,
     createdAt: p.createdAt || null,
     ratings: Array.isArray(p.ratings) ? p.ratings.slice(-20) : [],
   };
@@ -1666,6 +1773,46 @@ export default function App() {
       showToast(`💰 Начислено бонусов: ${totalCredit}`);
     }
   }, [orderHistory, user?.id]);
+
+  // Подтягиваем статусы своих заказов с сервера (бонусы + отзыв)
+  useEffect(() => {
+    if (!dataReady || !user?.id) return;
+    let stopped = false;
+    const syncMyOrders = async () => {
+      try {
+        const remote = await sharedOrdersLoad();
+        if (stopped || !Array.isArray(remote) || !remote.length) return;
+        setOrderHistory((prev) => {
+          if (!prev.length) return prev;
+          let changed = false;
+          const next = prev.map((local) => {
+            const r = remote.find((o) => String(o.id) === String(local.id));
+            if (!r) return local;
+            const statusChanged = r.status && r.status !== local.status;
+            const reviewChanged = !!r.askReview !== !!local.askReview;
+            const trackChanged = (r.trackingNumber || null) !== (local.trackingNumber || null);
+            if (!statusChanged && !reviewChanged && !trackChanged) return local;
+            changed = true;
+            return {
+              ...local,
+              status: r.status || local.status,
+              askReview: r.askReview != null ? !!r.askReview : local.askReview,
+              trackingNumber: r.trackingNumber || local.trackingNumber || null,
+              cashbackCredited:
+                r.cashbackCredited != null ? !!r.cashbackCredited : local.cashbackCredited,
+            };
+          });
+          return changed ? next : prev;
+        });
+      } catch (e) {}
+    };
+    syncMyOrders();
+    const t = setInterval(syncMyOrders, 12000);
+    return () => {
+      stopped = true;
+      clearInterval(t);
+    };
+  }, [dataReady, user?.id]);
 
   // Запрос отзыва: если есть завершённый заказ с askReview — показываем модалку
   // Если нажали «Позже» — больше не показываем (сохраняем в localStorage)
@@ -2426,6 +2573,19 @@ export default function App() {
     });
   };
 
+  // Скрыть / показать товар в каталоге (без удаления)
+  const toggleHideProduct = (id) => {
+    setProducts((prev) => {
+      const next = prev.map((p) => (p.id === id ? { ...p, hidden: !p.hidden } : p));
+      sharedProductsSave(next).then((ok) => {
+        const nowHidden = next.find((p) => p.id === id)?.hidden;
+        if (ok) showToast(nowHidden ? "🙈 Скрыто из каталога" : "👁 Снова в каталоге");
+        else showToast("⚠️ Не удалось сохранить на сервере");
+      });
+      return next;
+    });
+  };
+
   const startAddProduct = () => {
     const id = Date.now();
     setIsNewProduct(true);
@@ -2761,8 +2921,9 @@ export default function App() {
 
     // Фильтруем и сортируем локально
     let localFiltered = products.filter(p => {
+      if (p.hidden) return false; // скрытые админом — не показываем в каталоге
       const q = localSearch.toLowerCase();
-      const matchName = p.name.toLowerCase().includes(q) || p.brand.toLowerCase().includes(q);
+      const matchName = (p.name || "").toLowerCase().includes(q) || (p.brand || "").toLowerCase().includes(q);
       const matchBrand = localBrand ? p.brand === localBrand : true;
       const matchPrice = (localMin === "" || p.price >= parseInt(localMin)) && (localMax === "" || p.price <= parseInt(localMax));
       const matchNew = !onlyNew || (p.createdAt && new Date(p.createdAt).getTime() >= threeDaysAgo);
@@ -3413,6 +3574,12 @@ export default function App() {
     );
   };
 
+  // При открытии CRM подтягиваем заказы
+  useEffect(() => {
+    if (!showAdmin || !isAdmin) return;
+    syncSharedOrders(false);
+  }, [showAdmin, isAdmin]);
+
   // ---- CRM helpers (стейт форм на уровне App — Modal не размонтируется) ----
   useEffect(() => {
     if (productDraft) {
@@ -3813,7 +3980,7 @@ export default function App() {
                   <Text style={styles.adminStatWhite}>Товаров в каталоге: {products.length}</Text>
                   <Text style={styles.adminStatWhite}>Промокодов: {promoCodes.length}</Text>
                   <Text style={[styles.adminStatWhite, { opacity: 0.75, fontSize: 13, marginTop: 6 }]}>
-                    Заказы приходят в Telegram-бот. Учёт — в Google Таблицах.
+                    Пуш о заказе — в Telegram. Статусы меняйте ниже. Учёт — в Google Таблицах.
                   </Text>
                   <TouchableOpacity
                     style={[styles.addBtn, { marginTop: 12, marginBottom: 0, backgroundColor: "#fff" }]}
@@ -3823,6 +3990,69 @@ export default function App() {
                     <Text style={[styles.buttonText, { color: "#111" }]}>🌐 Опубликовать каталог для всех</Text>
                   </TouchableOpacity>
                 </View>
+
+                <Text style={[styles.sectionTitle, theme === "dark" && styles.textDark]}>Заказы (статусы)</Text>
+                <Text style={[styles.crmMuted, theme === "dark" && styles.textDark, { marginBottom: 8 }]}>
+                  Меняйте статус — клиент увидит его в профиле. При «Деньги получены» начислятся бонусы и запросится отзыв.
+                </Text>
+                <TouchableOpacity
+                  style={[styles.productAdminBtn, { alignSelf: "flex-start", marginBottom: 10, paddingHorizontal: 12 }]}
+                  onPress={() => syncSharedOrders(true)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.productAdminBtnText}>Обновить заказы</Text>
+                </TouchableOpacity>
+                {adminOrders.length === 0 ? (
+                  <Text style={[styles.empty, theme === "dark" && styles.textDark, { marginBottom: 16 }]}>
+                    Заказов пока нет. Оформите заказ с другого аккаунта и нажмите «Обновить заказы».
+                  </Text>
+                ) : (
+                  adminOrders.slice(0, 30).map((order) => (
+                    <View
+                      key={order.id}
+                      style={[styles.productEdit, theme === "dark" && styles.productEditDark]}
+                    >
+                      <Text style={[styles.productName, theme === "dark" && styles.textDark]}>
+                        #{order.id} · {order.fullName || "—"} · {order.phone || "—"}
+                      </Text>
+                      <Text style={[styles.crmMuted, theme === "dark" && styles.textDark]}>
+                        {(order.items || []).map((i) => `${i.brand || ""} ${i.name}${i.size ? ` (${i.size})` : ""}`).join(", ").slice(0, 120)}
+                      </Text>
+                      <Text style={[styles.crmMuted, theme === "dark" && styles.textDark]}>
+                        {order.finalTotal} BYN · TG: {order.tgUsername ? `@${order.tgUsername}` : order.tgId || "—"}
+                      </Text>
+                      <Text style={[styles.productName, theme === "dark" && styles.textDark, { marginTop: 6, fontSize: 14 }]}>
+                        Статус: {order.status || "Новый"}
+                      </Text>
+                      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+                        {ORDER_STATUSES.map((st) => (
+                          <TouchableOpacity
+                            key={st}
+                            style={[
+                              styles.productAdminBtn,
+                              order.status === st && styles.productAdminBtnActive,
+                              { paddingHorizontal: 8, paddingVertical: 6 },
+                            ]}
+                            onPress={() => changeStatus(order.id, st)}
+                            activeOpacity={0.8}
+                          >
+                            <Text style={[styles.productAdminBtnText, { fontSize: 11 }]}>{st}</Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                      {(order.delivery === "europost" || order.status === "Доставляется") && (
+                        <TextInput
+                          style={[styles.editInput, theme === "dark" && styles.inputDark, { marginTop: 8 }]}
+                          placeholder="Трек-номер"
+                          placeholderTextColor="#999"
+                          defaultValue={order.trackingNumber || ""}
+                          onEndEditing={(e) => updateTracking(order.id, e.nativeEvent.text)}
+                          blurOnSubmit
+                        />
+                      )}
+                    </View>
+                  ))
+                )}
 
                 <Text style={[styles.sectionTitle, theme === "dark" && styles.textDark]}>Промокоды</Text>
                 <View style={[styles.promoFormCard, theme === "dark" && styles.productEditDark]}>
@@ -4040,7 +4270,9 @@ export default function App() {
                           )}
                           <View style={{ flex: 1 }}>
                             <Text style={[styles.productName, theme === "dark" && styles.textDark]}>
-                              {p.brand} {p.name}{p.pinned ? " · закреплено" : ""}
+                              {p.brand} {p.name}
+                              {p.pinned ? " · закреплено" : ""}
+                              {p.hidden ? " · скрыт" : ""}
                             </Text>
                             <Text style={[styles.price, theme === "dark" && styles.textDark]}>{money(p.price)}</Text>
                           </View>
@@ -4053,6 +4285,15 @@ export default function App() {
                           >
                             <Text style={styles.productAdminBtnText}>
                               {p.pinned ? "Открепить" : "Закрепить"}
+                            </Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={[styles.productAdminBtn, p.hidden && styles.productAdminBtnActive]}
+                            onPress={() => toggleHideProduct(p.id)}
+                            activeOpacity={0.8}
+                          >
+                            <Text style={styles.productAdminBtnText}>
+                              {p.hidden ? "Показать" : "Скрыть"}
                             </Text>
                           </TouchableOpacity>
                           <TouchableOpacity
@@ -4187,7 +4428,7 @@ const styles = StyleSheet.create({
 
   grid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between" },
   card: { width: "48%", backgroundColor: "#fff", borderRadius: 20, padding: 8, marginBottom: 12, position: "relative" },
-  image: { height: 120, width: "100%", borderRadius: 16, backgroundColor: "#E8E8E6" },
+  image: { height: 120, width: "100%", borderRadius: 16, backgroundColor: "#FFFFFF" },
   bigImageWrap: {
     width: "100%",
     position: "relative",
