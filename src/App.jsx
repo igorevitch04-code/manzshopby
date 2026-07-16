@@ -2714,22 +2714,34 @@ export default function App() {
                       )}
                       <View style={{ flex: 1 }}>
                         <Text style={[styles.productName, isDark && styles.textDark]}>
-                          {p.pinned ? "📌 " : ""}{p.brand} {p.name}
+                          {p.brand} {p.name}{p.pinned ? " · закреплено" : ""}
                         </Text>
                         <Text style={[styles.price, isDark && styles.textDark]}>{money(p.price)}</Text>
                       </View>
                     </View>
-                    <View style={styles.editActions}>
-                      <TouchableOpacity onPress={() => togglePinProduct(p.id)}>
-                        <Text style={[styles.editAction, { color: p.pinned ? "#f59e0b" : undefined }]}>
-                          {p.pinned ? "📌 Открепить" : "📍 Закрепить"}
+                    <View style={styles.productAdminActions}>
+                      <TouchableOpacity
+                        style={[styles.productAdminBtn, p.pinned && styles.productAdminBtnActive]}
+                        onPress={() => togglePinProduct(p.id)}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={styles.productAdminBtnText}>
+                          {p.pinned ? "Открепить" : "Закрепить"}
                         </Text>
                       </TouchableOpacity>
-                      <TouchableOpacity onPress={() => startEditProduct(p)}>
-                        <Text style={styles.editAction}>✎ Редактировать</Text>
+                      <TouchableOpacity
+                        style={styles.productAdminBtn}
+                        onPress={() => startEditProduct(p)}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={styles.productAdminBtnText}>Редактировать</Text>
                       </TouchableOpacity>
-                      <TouchableOpacity onPress={() => deleteProduct(p.id)}>
-                        <Text style={[styles.editAction, { color: "red" }]}>🗑 Удалить</Text>
+                      <TouchableOpacity
+                        style={[styles.productAdminBtn, styles.productAdminBtnDanger]}
+                        onPress={() => deleteProduct(p.id)}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={styles.productAdminBtnText}>Удалить</Text>
                       </TouchableOpacity>
                     </View>
                   </View>
@@ -3690,6 +3702,32 @@ const styles = StyleSheet.create({
   saveBtn: { backgroundColor: "#111", padding: 8, borderRadius: 16, alignItems: "center" },
   editActions: { flexDirection: "row", marginTop: 4 },
   editAction: { fontSize: 18, marginRight: 12 },
+  productAdminActions: {
+    flexDirection: "row",
+    marginTop: 10,
+    gap: 6,
+  },
+  productAdminBtn: {
+    flex: 1,
+    backgroundColor: "#111",
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  productAdminBtnActive: {
+    backgroundColor: "#333",
+  },
+  productAdminBtnDanger: {
+    backgroundColor: "#111",
+  },
+  productAdminBtnText: {
+    color: "#fff",
+    fontSize: 11,
+    fontWeight: "700",
+    textAlign: "center",
+  },
   trackingInput: { borderWidth: 1, borderColor: "#ddd", borderRadius: 8, padding: 4, flex: 1, marginRight: 6, fontSize: 13 },
   broadcastInput: { borderWidth: 1, borderColor: "#ddd", borderRadius: 14, padding: 10, marginBottom: 12, minHeight: 60, fontSize: 14 },
   broadcastBtn: { backgroundColor: "#111", padding: 12, borderRadius: 20, alignItems: "center", marginBottom: 20 },
