@@ -1984,6 +1984,10 @@ export default function App() {
   const AdminPanel = () => {
     const { theme } = useTheme();
     const isDark = theme === "dark";
+    // Локальные стейты, чтобы клавиатура не закрывалась при каждом символе
+    const [localBroadcast, setLocalBroadcast] = useState(broadcastText);
+    const [trackingDrafts, setTrackingDrafts] = useState({});
+
     if (!showAdmin || !isAdmin) return null;
 
     const today = new Date().toISOString().split("T")[0];
@@ -2007,6 +2011,27 @@ export default function App() {
       return "#999";
     };
 
+    const handleTrackingChange = (orderId, text) => {
+      setTrackingDrafts((prev) => ({ ...prev, [orderId]: text }));
+    };
+
+    const commitTracking = (orderId) => {
+      const val = trackingDrafts[orderId];
+      if (val !== undefined) {
+        updateTracking(orderId, val);
+      }
+    };
+
+    const handleSendBroadcast = () => {
+      if (!localBroadcast.trim()) {
+        Alert.alert("Ошибка", "Введите текст");
+        return;
+      }
+      setBroadcastText(localBroadcast);
+      Alert.alert("Рассылка отправлена", `Сообщение: ${localBroadcast}\nПолучателей: ${users.length}`);
+      setLocalBroadcast("");
+    };
+
     return (
       <Modal visible={showAdmin} animationType="slide" transparent={false}>
         <View style={[styles.page, isDark && styles.pageDark, { paddingTop: 40 }]}>
@@ -2017,8 +2042,9 @@ export default function App() {
           <ScrollView
             style={{ flex: 1 }}
             contentContainerStyle={{ paddingBottom: 60, flexGrow: 1 }}
-            keyboardShouldPersistTaps="handled"
+            keyboardShouldPersistTaps="always"
             nestedScrollEnabled
+            keyboardDismissMode="none"
           >
             <Text style={[styles.pageTitle, isDark && styles.textDark]}>CRM · Админ-панель</Text>
 
@@ -2060,29 +2086,28 @@ export default function App() {
                           {order.date ? new Date(order.date).toLocaleDateString("ru-RU") : "—"}
                         </Text>
                         <View style={[styles.crmCell, { width: 150 }]}>
-                          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 4 }}>
-                              {ORDER_STATUSES.map((s) => (
-                                <TouchableOpacity
-                                  key={s}
+                          <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
+                            {ORDER_STATUSES.map((s) => (
+                              <TouchableOpacity
+                                key={s}
+                                style={[
+                                  styles.crmStatusChip,
+                                  order.status === s && { backgroundColor: statusColor(s) },
+                                ]}
+                                onPress={() => changeStatus(order.id, s)}
+                                activeOpacity={0.7}
+                              >
+                                <Text
                                   style={[
-                                    styles.crmStatusChip,
-                                    order.status === s && { backgroundColor: statusColor(s) },
+                                    styles.crmStatusChipText,
+                                    order.status === s && { color: "#fff" },
                                   ]}
-                                  onPress={() => changeStatus(order.id, s)}
                                 >
-                                  <Text
-                                    style={[
-                                      styles.crmStatusChipText,
-                                      order.status === s && { color: "#fff" },
-                                    ]}
-                                  >
-                                    {s}
-                                  </Text>
-                                </TouchableOpacity>
-                              ))}
-                            </View>
-                          </ScrollView>
+                                  {s}
+                                </Text>
+                              </TouchableOpacity>
+                            ))}
+                          </View>
                         </View>
                         <Text style={[styles.crmCell, isDark && styles.textDark, { width: 130 }]} numberOfLines={2}>
                           {order.fullName || "—"}
@@ -2093,8 +2118,12 @@ export default function App() {
                               style={[styles.crmTrackInput, isDark && styles.inputDark]}
                               placeholder="Трек..."
                               placeholderTextColor="#999"
-                              value={order.trackingNumber || ""}
-                              onChangeText={(t) => updateTracking(order.id, t)}
+                              value={trackingDrafts[order.id] !== undefined ? trackingDrafts[order.id] : (order.trackingNumber || "")}
+                              onChangeText={(t) => handleTrackingChange(order.id, t)}
+                              onBlur={() => commitTracking(order.id)}
+                              onSubmitEditing={() => commitTracking(order.id)}
+                              blurOnSubmit={false}
+                              returnKeyType="done"
                             />
                           ) : (
                             <Text style={[styles.crmMuted, isDark && styles.textDark]}>Курьер</Text>
@@ -2305,12 +2334,13 @@ export default function App() {
               style={[styles.broadcastInput, isDark && styles.inputDark]}
               placeholder="Текст сообщения"
               placeholderTextColor={isDark ? "#999" : "#888"}
-              value={broadcastText}
-              onChangeText={setBroadcastText}
+              value={localBroadcast}
+              onChangeText={setLocalBroadcast}
               multiline
               blurOnSubmit={false}
+              textAlignVertical="top"
             />
-            <TouchableOpacity style={styles.broadcastBtn} onPress={sendBroadcast}>
+            <TouchableOpacity style={styles.broadcastBtn} onPress={handleSendBroadcast}>
               <Text style={styles.buttonText}>📨 Отправить рассылку ({users.length} получателей)</Text>
             </TouchableOpacity>
           </ScrollView>
