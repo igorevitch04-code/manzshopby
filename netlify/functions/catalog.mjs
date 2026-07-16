@@ -37,7 +37,17 @@ const normalizeProducts = (list) =>
       pinned: !!p.pinned,
       hidden: !!p.hidden,
       createdAt: p.createdAt || null,
-      ratings: Array.isArray(p.ratings) ? p.ratings.slice(-40) : [],
+      ratings: Array.isArray(p.ratings)
+        ? p.ratings.slice(-40).map((r) => ({
+            userId: r.userId,
+            userName: (r.userName || "").slice(0, 40),
+            rating: Number(r.rating) || 0,
+            comment: (r.comment || "").slice(0, 400),
+            date: r.date || null,
+            approved: r.approved === true ? true : r.approved === false ? false : false,
+            adminReply: r.adminReply ? String(r.adminReply).slice(0, 300) : null,
+          }))
+        : [],
     };
   });
 
