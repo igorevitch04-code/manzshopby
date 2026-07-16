@@ -1314,6 +1314,36 @@ const sharedProductsSave = async (products) => {
 };
 
 // Слить локальный каталог с общим (общий приоритетнее)
+const mergeRatingsLists = (a, b) => {
+  const map = new Map();
+  const keyOf = (r) =>
+    `${r.userId || ""}|${r.date || ""}|${(r.comment || "").slice(0, 40)}|${r.rating || 0}`;
+  const put = (r) => {
+    if (!r) return;
+    const k = keyOf(r);
+    const prev = map.get(k);
+    if (!prev) {
+      map.set(k, r);
+      return;
+    }
+    map.set(k, {
+      ...prev,
+      ...r,
+      // одобренный побеждает
+      approved:
+        prev.approved === true || r.approved === true
+          ? true
+          : r.approved === false || prev.approved === false
+            ? false
+            : prev.approved,
+      adminReply: r.adminReply || prev.adminReply || null,
+    });
+  };
+  (a || []).forEach(put);
+  (b || []).forEach(put);
+  return Array.from(map.values()).slice(-40);
+};
+
 // Сервер — источник правды: чего нет на сервере, того нет в каталоге (удаления синхронизируются)
 const applyServerCatalog = (localList, serverList) => {
   if (!Array.isArray(serverList)) return localList || [];
@@ -1330,16 +1360,13 @@ const applyServerCatalog = (localList, serverList) => {
         return {
           ...sp,
           image: local.image,
-          ratings: local.ratings || sp.ratings || [],
+          ratings: mergeRatingsLists(local.ratings, sp.ratings),
         };
       }
       return {
         ...sp,
         image: sp.image || (local && local.image) || "",
-        ratings:
-          (local && local.ratings && local.ratings.length
-            ? local.ratings
-            : sp.ratings) || [],
+        ratings: mergeRatingsLists(sp.ratings, local && local.ratings),
       };
     });
   result.sort((a, b) => {
@@ -1835,11 +1862,12 @@ export default function App() {
               ...local,
               status: newStatus,
               askReview: r.askReview != null ? !!r.askReview : local.askReview,
+              // трек всегда с сервера (CRM), если пришёл
               trackingNumber:
-                local.delivery === "europost"
-                  ? r.trackingNumber || local.trackingNumber || null
+                r.trackingNumber != null && String(r.trackingNumber).trim() !== ""
+                  ? String(r.trackingNumber).trim()
                   : local.trackingNumber || null,
-              delivery: r.delivery || local.delivery,
+              delivery: r.delivery || local.delivery || "courier",
               cashbackCredited: credited,
             };
           });
@@ -2274,44 +2302,59 @@ export default function App() {
   };
 
   const addRating = (productId, rating, comment) => {
-    setProducts(prev => prev.map(p => {
-      if (p.id === productId) {
-        // Отзыв создаётся как pending — виден только после одобрения админом
-        const newRatings = [...p.ratings, {
-          userId: user.id,
-          userName: user.name || "Пользователь",
-          rating,
-          comment,
-          date: new Date().toISOString(),
-          approved: false,
-          adminReply: null,
-        }];
-        // Средний рейтинг считаем только по одобренным
-        const approved = newRatings.filter(r => r.approved !== false);
-        const avg = approved.length > 0
-          ? approved.reduce((s, r) => s + r.rating, 0) / approved.length
-          : 0;
+    setProducts((prev) => {
+      const next = prev.map((p) => {
+        if (p.id !== productId) return p;
+        const newRatings = [
+          ...(p.ratings || []),
+          {
+            userId: user.id,
+            userName: user.name || "Пользователь",
+            rating,
+            comment,
+            date: new Date().toISOString(),
+            approved: false,
+            adminReply: null,
+          },
+        ];
+        const approvedOnly = newRatings.filter((r) => r.approved === true);
+        const avg =
+          approvedOnly.length > 0
+            ? approvedOnly.reduce((s, r) => s + r.rating, 0) / approvedOnly.length
+            : p.averageRating || 0;
         return { ...p, ratings: newRatings, averageRating: avg };
-      }
-      return p;
-    }));
+      });
+      // чтобы админ увидел отзыв на модерации
+      sharedProductsSave(next).catch(() => {});
+      return next;
+    });
   };
 
   // Одобрить / отклонить отзыв (админ)
   const moderateReview = (productId, reviewIndex, approve) => {
-    setProducts(prev => prev.map(p => {
-      if (p.id !== productId) return p;
-      const newRatings = p.ratings.map((r, i) => {
-        if (i !== reviewIndex) return r;
-        if (approve) return { ...r, approved: true };
-        return null; // отклонить = удалить
-      }).filter(Boolean);
-      const approved = newRatings.filter(r => r.approved !== false);
-      const avg = approved.length > 0
-        ? approved.reduce((s, r) => s + r.rating, 0) / approved.length
-        : 0;
-      return { ...p, ratings: newRatings, averageRating: avg };
-    }));
+    setProducts((prev) => {
+      const next = prev.map((p) => {
+        if (p.id !== productId) return p;
+        const newRatings = (p.ratings || [])
+          .map((r, i) => {
+            if (i !== reviewIndex) return r;
+            if (approve) return { ...r, approved: true };
+            return null;
+          })
+          .filter(Boolean);
+        const approvedOnly = newRatings.filter((r) => r.approved === true);
+        const avg =
+          approvedOnly.length > 0
+            ? approvedOnly.reduce((s, r) => s + r.rating, 0) / approvedOnly.length
+            : 0;
+        return { ...p, ratings: newRatings, averageRating: avg };
+      });
+      sharedProductsSave(next).then((ok) => {
+        if (ok) showToast(approve ? "✅ Отзыв опубликован" : "Отзыв отклонён");
+        else showToast("⚠️ Не удалось сохранить на сервере");
+      });
+      return next;
+    });
   };
 
   // Ответ админа на отзыв
@@ -2818,9 +2861,16 @@ export default function App() {
   };
 
   const updateTracking = (orderId, trackingNumber) => {
-    setAdminOrders((prev) => prev.map((o) => (o.id === orderId ? { ...o, trackingNumber } : o)));
-    setOrderHistory((prev) => prev.map((o) => (o.id === orderId ? { ...o, trackingNumber } : o)));
-    sharedOrdersUpdate(orderId, { trackingNumber }).catch(() => {});
+    const track = String(trackingNumber || "").trim();
+    setAdminOrders((prev) =>
+      prev.map((o) => (o.id === orderId ? { ...o, trackingNumber: track || null } : o))
+    );
+    setOrderHistory((prev) =>
+      prev.map((o) => (o.id === orderId ? { ...o, trackingNumber: track || null } : o))
+    );
+    sharedOrdersUpdate(orderId, { trackingNumber: track || null }).then((ok) => {
+      if (ok) showToast(track ? "Трек сохранён" : "Трек очищен");
+    });
   };
 
   const sendBroadcast = () => {
@@ -3592,7 +3642,10 @@ export default function App() {
               <Text style={[styles.orderId, isDark && styles.textDark]}>Заказ #{order.id}</Text>
               <Text style={[styles.orderDate, isDark && styles.textDark]}>{new Date(order.date).toLocaleDateString()}</Text>
               <Text style={[styles.orderStatus, isDark && styles.textDark]}>Статус: {getClientStatus(order.status)}</Text>
-              {order.delivery === "europost" && !!order.trackingNumber && (
+              {(order.delivery === "europost" ||
+                order.delivery === "euro" ||
+                String(order.delivery || "").toLowerCase().includes("евро")) &&
+                !!order.trackingNumber && (
                 <Text style={[styles.trackingText, isDark && styles.textDark]}>
                   Трек-номер: {order.trackingNumber}
                 </Text>
