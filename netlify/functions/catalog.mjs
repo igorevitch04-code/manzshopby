@@ -11,7 +11,6 @@ const corsHeaders = {
   "Cache-Control": "no-store",
 };
 
-// Тот же токен, что уже в App.jsx (он и так виден в клиенте)
 const BOT_TOKEN = "8912775566:AAHEExxwO5Ub39DU0tDT97Hlppw1IfLwjvU";
 
 const json = (status, data) =>
@@ -23,6 +22,17 @@ const normalizeProducts = (list) =>
       p && typeof p.image === "string" && p.image.startsWith("data:")
         ? ""
         : (p && p.image) || "";
+    const ratings = Array.isArray(p.ratings)
+      ? p.ratings.slice(-40).map((r) => ({
+          userId: r.userId,
+          userName: String(r.userName || "").slice(0, 40),
+          rating: Number(r.rating) || 0,
+          comment: String(r.comment || "").slice(0, 400),
+          date: r.date || null,
+          approved: r.approved === true,
+          adminReply: r.adminReply ? String(r.adminReply).slice(0, 300) : null,
+        }))
+      : [];
     return {
       id: p.id,
       brand: p.brand || "",
@@ -30,31 +40,21 @@ const normalizeProducts = (list) =>
       price: Number(p.price) || 0,
       oldPrice: p.oldPrice != null ? Number(p.oldPrice) : null,
       image,
-      description: (p.description || "").slice(0, 500),
+      description: String(p.description || "").slice(0, 500),
       sizes: Array.isArray(p.sizes) ? p.sizes : [],
       sales: Number(p.sales) || 0,
       averageRating: Number(p.averageRating) || 0,
       pinned: !!p.pinned,
       hidden: !!p.hidden,
       createdAt: p.createdAt || null,
-      ratings: Array.isArray(p.ratings)
-        ? p.ratings.slice(-40).map((r) => ({
-            userId: r.userId,
-            userName: (r.userName || "").slice(0, 40),
-            rating: Number(r.rating) || 0,
-            comment: (r.comment || "").slice(0, 400),
-            date: r.date || null,
-            approved: r.approved === true ? true : r.approved === false ? false : false,
-            adminReply: r.adminReply ? String(r.adminReply).slice(0, 300) : null,
-          }))
-        : [],
+      ratings,
     };
   });
 
 async function tgGetDesc() {
   try {
     const r = await fetch(
-      `https://api.telegram.org/bot${BOT_TOKEN}/getMyShortDescription`,
+      "https://api.telegram.org/bot" + BOT_TOKEN + "/getMyShortDescription",
       { cache: "no-store" }
     );
     const data = await r.json();
@@ -70,7 +70,6 @@ async function tgGetPointer() {
     const m = String(desc).match(/mz:([A-Za-z0-9_-]+)/);
     return m ? m[1] : null;
   } catch (e) {
-    console.warn("tgGetPointer", e);
     return null;
   }
 }
@@ -79,24 +78,24 @@ async function tgSetPointer(blobId) {
   try {
     const desc = await tgGetDesc();
     const ord = String(desc).match(/ord:([A-Za-z0-9_-]+)/);
-    const parts = [`mz:${blobId}`];
-    if (ord) parts.push(`ord:${ord[1]}`);
+    const u = String(desc).match(/u:([A-Za-z0-9_-]+)/);
+    const parts = ["mz:" + blobId];
+    if (ord) parts.push("ord:" + ord[1]);
+    if (u) parts.push("u:" + u[1]);
     const text = parts.join(";");
-    const body = `short_description=${encodeURIComponent(text)}`;
+    const body = "short_description=" + encodeURIComponent(text);
     const r = await fetch(
-      `https://api.telegram.org/bot${BOT_TOKEN}/setMyShortDescription`,
+      "https://api.telegram.org/bot" + BOT_TOKEN + "/setMyShortDescription",
       {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body,
+        body: body,
         cache: "no-store",
       }
     );
     const data = await r.json();
-    console.log("tgSetPointer", data);
     return !!(data && data.ok);
   } catch (e) {
-    console.warn("tgSetPointer", e);
     return false;
   }
 }
@@ -104,41 +103,32 @@ async function tgSetPointer(blobId) {
 async function blobRead(id) {
   if (!id) return null;
   try {
-    const r = await fetch(`https://jsonblob.com/api/jsonBlob/${id}`, {
+    const r = await fetch("https://jsonblob.com/api/jsonBlob/" + id, {
       headers: { Accept: "application/json" },
       cache: "no-store",
     });
-    if (!r.ok) {
-      console.warn("blobRead status", r.status);
-      return null;
-    }
+    if (!r.ok) return null;
     return await r.json();
   } catch (e) {
-    console.warn("blobRead", e);
     return null;
   }
 }
 
 async function blobWrite(id, payload) {
   const body = JSON.stringify(payload);
-
   if (id) {
     try {
-      const r = await fetch(`https://jsonblob.com/api/jsonBlob/${id}`, {
+      const r = await fetch("https://jsonblob.com/api/jsonBlob/" + id, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
           Accept: "application/json",
         },
-        body,
+        body: body,
       });
       if (r.ok || r.status === 200 || r.status === 201) return id;
-      console.warn("blob PUT status", r.status, await r.text().catch(() => ""));
-    } catch (e) {
-      console.warn("blob PUT", e);
-    }
+    } catch (e) {}
   }
-
   try {
     const r = await fetch("https://jsonblob.com/api/jsonBlob", {
       method: "POST",
@@ -146,33 +136,19 @@ async function blobWrite(id, payload) {
         "Content-Type": "application/json",
         Accept: "application/json",
       },
-      body,
+      body: body,
     });
-    const text = await r.text().catch(() => "");
-    console.log("blob POST status", r.status, "headers x-jsonblob", r.headers.get("X-jsonblob"));
-
     if (r.ok || r.status === 201) {
       const x =
         r.headers.get("X-jsonblob") ||
         r.headers.get("x-jsonblob") ||
         r.headers.get("X-Jsonblob");
       if (x) return String(x).trim();
-
       const loc = r.headers.get("Location") || r.headers.get("location") || "";
-      if (loc) {
-        const parts = loc.split("/").filter(Boolean);
-        if (parts.length) return parts[parts.length - 1];
-      }
-
-      // иногда id в теле
-      try {
-        const parsed = JSON.parse(text);
-        if (parsed && parsed.id) return String(parsed.id);
-      } catch (e) {}
+      const parts = loc.split("/").filter(Boolean);
+      if (parts.length) return parts[parts.length - 1];
     }
-  } catch (e) {
-    console.warn("blob POST", e);
-  }
+  } catch (e) {}
   return null;
 }
 
@@ -185,15 +161,12 @@ export default async (req) => {
     if (req.method === "GET") {
       const blobId = await tgGetPointer();
       const data = blobId ? await blobRead(blobId) : null;
-      const products =
-        data && Array.isArray(data.products)
-          ? data.products
-          : Array.isArray(data)
-            ? data
-            : [];
+      let products = [];
+      if (data && Array.isArray(data.products)) products = data.products;
+      else if (Array.isArray(data)) products = data;
       return json(200, {
         ok: true,
-        products,
+        products: products,
         updatedAt: (data && data.updatedAt) || null,
         storage: blobId ? "jsonblob+tg" : "empty",
         blobId: blobId || null,
@@ -210,12 +183,12 @@ export default async (req) => {
 
       const products = normalizeProducts(body.products);
       const payload = {
-        products,
+        products: products,
         updatedAt: new Date().toISOString(),
         v: 2,
       };
 
-      let blobId = await tgGetPointer();
+      const blobId = await tgGetPointer();
       const written = await blobWrite(blobId, payload);
       if (!written) {
         return json(500, {
@@ -226,7 +199,6 @@ export default async (req) => {
       }
 
       const pointerOk = await tgSetPointer(written);
-      // перечитаем для проверки
       const verify = await blobRead(written);
 
       return json(200, {
@@ -235,7 +207,7 @@ export default async (req) => {
         updatedAt: payload.updatedAt,
         storage: "jsonblob+tg",
         blobId: written,
-        pointerOk,
+        pointerOk: pointerOk,
         verified: !!(verify && (verify.products || Array.isArray(verify))),
       });
     }
