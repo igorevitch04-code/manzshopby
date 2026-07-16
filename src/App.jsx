@@ -191,20 +191,35 @@ const compactOrderForBot = (o) => ({
 });
 
 const tgSendMessage = async (text) => {
-  const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      chat_id: ADMIN_NOTIFY_CHAT_ID,
-      text: String(text).slice(0, 4000),
-      disable_web_page_preview: true,
-    }),
-  });
-  const data = await r.json().catch(() => ({}));
-  if (!data.ok) {
-    console.warn("[TG] sendMessage error:", data);
+  if (!BOT_TOKEN || !ADMIN_NOTIFY_CHAT_ID) {
+    console.warn("[TG] BOT_TOKEN или ADMIN_NOTIFY_CHAT_ID не заданы");
+    return false;
   }
-  return !!data.ok;
+  const body = JSON.stringify({
+    chat_id: ADMIN_NOTIFY_CHAT_ID,
+    text: String(text).slice(0, 4000),
+    disable_web_page_preview: true,
+  });
+  const urls = [
+    `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,
+    // CORS-proxy fallback (на случай блокировки прямого запроса из WebView)
+    `https://corsproxy.io/?${encodeURIComponent(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`)}`,
+  ];
+  for (const url of urls) {
+    try {
+      const r = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+      });
+      const data = await r.json().catch(() => ({}));
+      if (data && data.ok) return true;
+      console.warn("[TG] sendMessage error:", data);
+    } catch (e) {
+      console.warn("[TG] sendMessage fetch fail", e);
+    }
+  }
+  return false;
 };
 
 const notifyAdminNewOrder = async (order) => {
@@ -636,10 +651,12 @@ const refApiAdd = async (key, amount) => {
 // ОБЩЕЕ ХРАНИЛИЩЕ ЗАКАЗОВ (видно админу от всех клиентов)
 // CloudStorage у каждого свой — используем getpantry.cloud (JSON basket)
 // ==============================
-const SHARED_ORDERS_KEY = "manzshop_orders_v1";
+const SHARED_ORDERS_KEY = "manzshop_orders_v2";
+const SHARED_PRODUCTS_KEY = "manzshop_products_v2";
 const SHARED_BLOB_KEY = "manzshop_orders_blob_id";
-const SHARED_PANTRY_KEY = "manzshop_pantry_id_v1";
-// Если у вас уже есть pantry — можно вписать сюда вручную:
+const SHARED_PANTRY_KEY = "manzshop_pantry_id_v2";
+// Общий pantry для ВСЕХ устройств/пользователей. Если пусто — создаётся один раз и пишется в KV.
+// Можно вписать свой pantryId с getpantry.cloud вручную:
 const HARDCODED_PANTRY_ID = "";
 
 // --- helpers: общий pantry id ---
@@ -660,25 +677,26 @@ const kvGetString = async (key) => {
 };
 
 const kvSetString = async (key, value) => {
-  try {
-    const url = `https://keyvalue.immanuel.co/api/KeyVal/UpdateValue/manzshopby/${key}/${encodeURIComponent(
-      String(value)
-    )}`;
-    await fetch(url, { method: "POST", mode: "cors", cache: "no-store" });
-  } catch (e) {}
+  const raw = String(value);
+  // keyvalue ограничивает длину URL — для больших payload не подходит
+  if (raw.length > 1500) {
+    console.warn("[KV] value too long for keyvalue", key, raw.length);
+    return false;
+  }
+  const base = `https://keyvalue.immanuel.co/api/KeyVal/UpdateValue/manzshopby/${key}/${encodeURIComponent(raw)}`;
+  for (const url of withProxies(base)) {
+    try {
+      const r = await fetch(url, { method: "POST", mode: "cors", cache: "no-store" });
+      if (r.ok) return true;
+    } catch (e) {}
+  }
+  return false;
 };
 
 const ensurePantryId = async () => {
   if (HARDCODED_PANTRY_ID) return HARDCODED_PANTRY_ID;
 
-  try {
-    if (typeof localStorage !== "undefined") {
-      const local = localStorage.getItem("krost_pantry_id");
-      if (local) return local;
-    }
-  } catch (e) {}
-
-  // общий id из keyvalue (виден всем клиентам)
+  // Сначала ОБЩИЙ id из keyvalue (чтобы телефон и ПК использовали один pantry)
   const remote = await kvGetString(SHARED_PANTRY_KEY);
   if (remote) {
     try {
@@ -686,6 +704,18 @@ const ensurePantryId = async () => {
     } catch (e) {}
     return remote;
   }
+
+  // Локальный кэш — только если remote ещё нет
+  try {
+    if (typeof localStorage !== "undefined") {
+      const local = localStorage.getItem("krost_pantry_id");
+      if (local) {
+        // публикуем локальный id в KV, чтобы другие устройства подхватили
+        await kvSetString(SHARED_PANTRY_KEY, local);
+        return local;
+      }
+    }
+  } catch (e) {}
 
   // создаём pantry
   try {
@@ -748,29 +778,55 @@ const compactOrder = (o) => ({
   })),
 });
 
+const pantryBasketUrls = (pantryId, basket) => {
+  const base = `https://getpantry.cloud/apiv1/pantry/${pantryId}/basket/${basket}`;
+  return [
+    base,
+    `https://corsproxy.io/?${encodeURIComponent(base)}`,
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(base)}`,
+  ];
+};
+
+const pantryGetBasket = async (basket) => {
+  const pantryId = await ensurePantryId();
+  if (!pantryId) return null;
+  for (const url of pantryBasketUrls(pantryId, basket)) {
+    try {
+      const r = await fetch(url, { cache: "no-store", mode: "cors" });
+      if (!r.ok) continue;
+      const data = await r.json();
+      return data;
+    } catch (e) {}
+  }
+  return null;
+};
+
+const pantryPutBasket = async (basket, payload) => {
+  const pantryId = await ensurePantryId();
+  if (!pantryId) return false;
+  for (const url of pantryBasketUrls(pantryId, basket)) {
+    for (const method of ["PUT", "POST"]) {
+      try {
+        const r = await fetch(url, {
+          method,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (r.ok) return true;
+      } catch (e) {}
+    }
+  }
+  return false;
+};
+
 const sharedOrdersLoad = async () => {
   try {
-    const pantryId = await ensurePantryId();
-    if (pantryId) {
-      // GET basket
-      const urls = [
-        `https://getpantry.cloud/apiv1/pantry/${pantryId}/basket/orders`,
-        `https://corsproxy.io/?${encodeURIComponent(
-          `https://getpantry.cloud/apiv1/pantry/${pantryId}/basket/orders`
-        )}`,
-      ];
-      for (const url of urls) {
-        try {
-          const r = await fetch(url, { cache: "no-store", mode: "cors" });
-          if (!r.ok) continue;
-          const data = await r.json();
-          if (Array.isArray(data)) return data;
-          if (data && Array.isArray(data.orders)) return data.orders;
-        } catch (e) {}
-      }
+    const data = await pantryGetBasket("orders");
+    if (data) {
+      if (Array.isArray(data)) return data;
+      if (Array.isArray(data.orders)) return data.orders;
     }
-
-    // fallback keyvalue
+    // fallback keyvalue (короткий список)
     const raw = await kvGetString(SHARED_ORDERS_KEY);
     if (raw) {
       try {
@@ -787,36 +843,33 @@ const sharedOrdersLoad = async () => {
 };
 
 const sharedOrdersSave = async (orders) => {
-  const list = (Array.isArray(orders) ? orders : []).slice(0, 60).map(compactOrder);
-  const payload = { orders: list };
+  const list = (Array.isArray(orders) ? orders : []).slice(0, 80).map(compactOrder);
+  const payload = { orders: list, updatedAt: new Date().toISOString() };
 
-  // 1) getpantry (прямой + через corsproxy)
-  try {
-    const pantryId = await ensurePantryId();
-    if (pantryId) {
-      const base = `https://getpantry.cloud/apiv1/pantry/${pantryId}/basket/orders`;
-      const urls = [base, `https://corsproxy.io/?${encodeURIComponent(base)}`];
-      for (const url of urls) {
-        for (const method of ["PUT", "POST"]) {
-          try {
-            const r = await fetch(url, {
-              method,
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(payload),
-            });
-            if (r.ok) return true;
-          } catch (e) {}
-        }
-      }
-    }
-  } catch (e) {
-    console.warn("sharedOrdersSave pantry", e);
+  const okPantry = await pantryPutBasket("orders", payload);
+  if (okPantry) {
+    console.log("[Orders] pantry save OK", list.length);
+    return true;
   }
 
-  // 2) keyvalue fallback (может обрезать очень длинные данные)
+  // fallback: только компактный список без тяжёлых полей
   try {
-    await kvSetString(SHARED_ORDERS_KEY, JSON.stringify(list));
-    return true;
+    const slim = list.slice(0, 20).map((o) => ({
+      id: o.id,
+      date: o.date,
+      status: o.status,
+      fullName: o.fullName,
+      phone: o.phone,
+      address: (o.address || "").slice(0, 80),
+      finalTotal: o.finalTotal,
+      delivery: o.delivery,
+      tgId: o.tgId,
+      tgUsername: o.tgUsername,
+      items: (o.items || []).slice(0, 3).map((i) => ({ name: i.name, size: i.size, price: i.price })),
+    }));
+    const okKv = await kvSetString(SHARED_ORDERS_KEY, JSON.stringify(slim));
+    console.log("[Orders] kv save", okKv ? "OK" : "FAIL", slim.length);
+    return okKv;
   } catch (e) {
     console.warn("sharedOrdersSave kv", e);
   }
@@ -827,7 +880,7 @@ const sharedOrdersPush = async (order) => {
   try {
     const current = await sharedOrdersLoad();
     const without = current.filter((o) => String(o.id) !== String(order.id));
-    const next = [compactOrder(order), ...without].slice(0, 60);
+    const next = [compactOrder(order), ...without].slice(0, 80);
     const ok = await sharedOrdersSave(next);
     console.log("[Orders] shared push", ok ? "OK" : "FAIL", order.id);
     return ok ? next : null;
@@ -849,6 +902,50 @@ const sharedOrdersUpdate = async (orderId, patch) => {
     console.warn("sharedOrdersUpdate", e);
     return null;
   }
+};
+
+// ----- Общий каталог товаров (виден всем пользователям / устройствам) -----
+const compactProduct = (p) => {
+  const image = (p.image || "").startsWith("data:")
+    ? "" // base64 не кладём в общее хранилище — слишком большой
+    : (p.image || "");
+  return {
+    id: p.id,
+    brand: p.brand || "",
+    name: p.name || "",
+    price: Number(p.price) || 0,
+    oldPrice: p.oldPrice != null ? Number(p.oldPrice) : null,
+    image,
+    description: (p.description || "").slice(0, 500),
+    sizes: Array.isArray(p.sizes) ? p.sizes : [],
+    sales: Number(p.sales) || 0,
+    ratings: Array.isArray(p.ratings) ? p.ratings.slice(-30) : [],
+    averageRating: Number(p.averageRating) || 0,
+    pinned: !!p.pinned,
+    createdAt: p.createdAt || null,
+  };
+};
+
+const sharedProductsLoad = async () => {
+  try {
+    const data = await pantryGetBasket("products");
+    if (data) {
+      if (Array.isArray(data)) return data;
+      if (Array.isArray(data.products)) return data.products;
+    }
+  } catch (e) {
+    console.warn("sharedProductsLoad", e);
+  }
+  return null; // null = не удалось загрузить (не пустой каталог)
+};
+
+const sharedProductsSave = async (products) => {
+  const list = (Array.isArray(products) ? products : []).map(compactProduct);
+  // base64 картинки остаются только локально у админа; в shared — URL
+  const payload = { products: list, updatedAt: new Date().toISOString() };
+  const ok = await pantryPutBasket("products", payload);
+  console.log("[Products] shared save", ok ? "OK" : "FAIL", list.length);
+  return ok;
 };
 
 // ==============================
@@ -982,6 +1079,7 @@ export default function App() {
   const [maxPrice, setMaxPrice] = useState("");
   const [orderHistory, setOrderHistory] = useState([]);
   const [products, setProducts] = useState(DEFAULT_PRODUCTS);
+  const [dataReady, setDataReady] = useState(false);
   // Сразу предзагружаем картинки, чтобы не было пустых карточек
   useEffect(() => {
     preloadImages(DEFAULT_PRODUCTS);
@@ -1081,34 +1179,82 @@ export default function App() {
         setAdminOrders(cloudAdminOrders || []);
         setPromoCodes(cloudPromoCodes || []);
 
-        // Миграция: пересохраняем крупные данные чанками, чтобы они появились на других устройствах
-        setTimeout(() => {
-          if (cloudAdminOrders && cloudAdminOrders.length) saveToCloud(CLOUD_KEYS.adminOrders, cloudAdminOrders);
-          if (cloudOrderHistory && cloudOrderHistory.length) saveToCloud(CLOUD_KEYS.orderHistory, cloudOrderHistory);
-          if (cloudProducts && cloudProducts.length) saveToCloud(CLOUD_KEYS.products, cloudProducts);
-        }, 800);
-
-        const list = cloudProducts && cloudProducts.length > 0 ? cloudProducts : DEFAULT_PRODUCTS;
-        // Если у старых товаров нет нормальных картинок — подставляем из DEFAULT
-        const fixed = list.map(p => {
-          const def = DEFAULT_PRODUCTS.find(d => d.id === p.id);
-          if (p.image && !p.image.includes("via.placeholder") && p.image.length > 10) return p;
+        // Личный каталог (CloudStorage) + общий каталог (pantry) для всех устройств/пользователей
+        let list = cloudProducts && cloudProducts.length > 0 ? cloudProducts : DEFAULT_PRODUCTS;
+        try {
+          const sharedProds = await sharedProductsLoad();
+          if (Array.isArray(sharedProds) && sharedProds.length > 0) {
+            // Мержим: shared имеет приоритет по id, локальные base64-картинки сохраняем
+            const map = new Map();
+            list.forEach((p) => map.set(String(p.id), p));
+            sharedProds.forEach((sp) => {
+              const id = String(sp.id);
+              const local = map.get(id);
+              if (local && local.image && String(local.image).startsWith("data:") && !sp.image) {
+                map.set(id, { ...sp, image: local.image });
+              } else {
+                map.set(id, { ...(local || {}), ...sp, image: sp.image || (local && local.image) || "" });
+              }
+            });
+            list = Array.from(map.values());
+          }
+        } catch (e) {
+          console.warn("shared products merge", e);
+        }
+        const fixed = list.map((p) => {
+          const def = DEFAULT_PRODUCTS.find((d) => d.id === p.id);
+          if (p.image && !String(p.image).includes("via.placeholder") && String(p.image).length > 10) return p;
           return def ? { ...p, image: def.image } : p;
         });
         setProducts(fixed);
         preloadImages(fixed);
+
+        // Общие заказы (другие пользователи / другое устройство)
+        try {
+          const remoteOrders = await sharedOrdersLoad();
+          if (Array.isArray(remoteOrders) && remoteOrders.length) {
+            const map = new Map();
+            (cloudAdminOrders || []).forEach((o) => map.set(String(o.id), o));
+            remoteOrders.forEach((o) => {
+              const id = String(o.id);
+              if (!map.has(id)) map.set(id, o);
+              else {
+                const local = map.get(id);
+                map.set(id, {
+                  ...local,
+                  ...o,
+                  status: local.status && local.status !== "Новый" ? local.status : (o.status || local.status),
+                  trackingNumber: local.trackingNumber || o.trackingNumber || null,
+                  items: (local.items && local.items.length ? local.items : o.items) || [],
+                });
+              }
+            });
+            const merged = Array.from(map.values()).sort((a, b) => {
+              const da = a.date ? new Date(a.date).getTime() : 0;
+              const db = b.date ? new Date(b.date).getTime() : 0;
+              return db - da;
+            });
+            setAdminOrders(merged);
+          }
+        } catch (e) {
+          console.warn("shared orders merge on load", e);
+        }
+
         if (cloudTheme) setTheme(cloudTheme);
         if (cloudReferredBy) setReferredBy(cloudReferredBy);
         setReferralCount(cloudReferralCount || 0);
         setReferralEarnings(cloudReferralEarnings || 0);
         setReferralNotified(!!cloudReferralNotified);
 
-        // Синхронизируем реферальные счётчики с публичным API (между аккаунтами)
+        // ВАЖНО: разрешаем сохранение только после загрузки — иначе пустой стейт затирает CloudStorage
+        setDataReady(true);
+
         setTimeout(() => {
           try { syncReferralStatsFromCloud(); } catch (e) {}
         }, 900);
       } catch (e) {
         console.warn("Ошибка загрузки", e);
+        setDataReady(true);
       }
     };
     loadAll();
@@ -1116,22 +1262,23 @@ export default function App() {
 
   // ==============================
   // СОХРАНЕНИЕ (CloudStorage + localStorage)
+  // Не пишем до dataReady — иначе стартовые [] / DEFAULT затирают данные на других устройствах
   // ==============================
-  useEffect(() => { saveToCloud(CLOUD_KEYS.cart, cart); }, [cart]);
-  useEffect(() => { saveToCloud(CLOUD_KEYS.favorites, favorites); }, [favorites]);
-  useEffect(() => { saveToCloud(CLOUD_KEYS.orders, orders); }, [orders]);
-  useEffect(() => { saveToCloud(CLOUD_KEYS.bonus, bonusBalance); }, [bonusBalance]);
-  useEffect(() => { saveToCloud(CLOUD_KEYS.orderHistory, orderHistory); }, [orderHistory]);
-  useEffect(() => { saveToCloud(CLOUD_KEYS.lastOrderNumber, lastOrderNumber); }, [lastOrderNumber]);
-  useEffect(() => { saveToCloud(CLOUD_KEYS.usedFreeDelivery, usedFreeDelivery); }, [usedFreeDelivery]);
-  useEffect(() => { saveToCloud(CLOUD_KEYS.adminOrders, adminOrders); }, [adminOrders]);
-  useEffect(() => { saveToCloud(CLOUD_KEYS.promoCodes, promoCodes); }, [promoCodes]);
-  useEffect(() => { saveToCloud(CLOUD_KEYS.products, products); }, [products]);
-  useEffect(() => { saveToCloud(CLOUD_KEYS.theme, theme); }, [theme]);
-  useEffect(() => { if (referredBy != null) saveToCloud(CLOUD_KEYS.referredBy, referredBy); }, [referredBy]);
-  useEffect(() => { saveToCloud(CLOUD_KEYS.referralCount, referralCount); }, [referralCount]);
-  useEffect(() => { saveToCloud(CLOUD_KEYS.referralEarnings, referralEarnings); }, [referralEarnings]);
-  useEffect(() => { saveToCloud(CLOUD_KEYS.referralNotified, referralNotified); }, [referralNotified]);
+  useEffect(() => { if (!dataReady) return; saveToCloud(CLOUD_KEYS.cart, cart); }, [cart, dataReady]);
+  useEffect(() => { if (!dataReady) return; saveToCloud(CLOUD_KEYS.favorites, favorites); }, [favorites, dataReady]);
+  useEffect(() => { if (!dataReady) return; saveToCloud(CLOUD_KEYS.orders, orders); }, [orders, dataReady]);
+  useEffect(() => { if (!dataReady) return; saveToCloud(CLOUD_KEYS.bonus, bonusBalance); }, [bonusBalance, dataReady]);
+  useEffect(() => { if (!dataReady) return; saveToCloud(CLOUD_KEYS.orderHistory, orderHistory); }, [orderHistory, dataReady]);
+  useEffect(() => { if (!dataReady) return; saveToCloud(CLOUD_KEYS.lastOrderNumber, lastOrderNumber); }, [lastOrderNumber, dataReady]);
+  useEffect(() => { if (!dataReady) return; saveToCloud(CLOUD_KEYS.usedFreeDelivery, usedFreeDelivery); }, [usedFreeDelivery, dataReady]);
+  useEffect(() => { if (!dataReady) return; saveToCloud(CLOUD_KEYS.adminOrders, adminOrders); }, [adminOrders, dataReady]);
+  useEffect(() => { if (!dataReady) return; saveToCloud(CLOUD_KEYS.promoCodes, promoCodes); }, [promoCodes, dataReady]);
+  useEffect(() => { if (!dataReady) return; saveToCloud(CLOUD_KEYS.products, products); }, [products, dataReady]);
+  useEffect(() => { if (!dataReady) return; saveToCloud(CLOUD_KEYS.theme, theme); }, [theme, dataReady]);
+  useEffect(() => { if (!dataReady) return; if (referredBy != null) saveToCloud(CLOUD_KEYS.referredBy, referredBy); }, [referredBy, dataReady]);
+  useEffect(() => { if (!dataReady) return; saveToCloud(CLOUD_KEYS.referralCount, referralCount); }, [referralCount, dataReady]);
+  useEffect(() => { if (!dataReady) return; saveToCloud(CLOUD_KEYS.referralEarnings, referralEarnings); }, [referralEarnings, dataReady]);
+  useEffect(() => { if (!dataReady) return; saveToCloud(CLOUD_KEYS.referralNotified, referralNotified); }, [referralNotified, dataReady]);
 
   // Если referredBy уже есть, а Telegram ID стал числовым — дорегистрируем реферала
   useEffect(() => {
@@ -1607,13 +1754,26 @@ export default function App() {
     };
     setOrderHistory(prev => [order, ...prev]);
     setAdminOrders(prev => [order, ...prev]);
-    // Дублируем в общее хранилище + уведомление админу в Telegram
+    // Дублируем в общее хранилище + уведомление админу в Telegram (с ретраями)
     (async () => {
-      const result = await sharedOrdersPush(order);
-      if (!result) {
-        console.warn("[Orders] Не удалось сохранить заказ в общее хранилище");
+      let pushed = null;
+      for (let attempt = 0; attempt < 3 && !pushed; attempt++) {
+        pushed = await sharedOrdersPush(order);
+        if (!pushed) await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
       }
-      await notifyAdminNewOrder(order);
+      if (!pushed) {
+        console.warn("[Orders] Не удалось сохранить заказ в общее хранилище после 3 попыток");
+      }
+      let notified = false;
+      for (let attempt = 0; attempt < 3 && !notified; attempt++) {
+        notified = await notifyAdminNewOrder(order);
+        if (!notified) await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+      }
+      if (!notified) {
+        console.warn("[Orders] push в Telegram не дошёл. Проверьте BOT_TOKEN и что админ написал боту /start");
+      } else {
+        console.log("[Orders] Telegram notify OK", order.id);
+      }
     })();
     // Увеличиваем счётчик использований промокода
     if (promoCode) {
@@ -1914,6 +2074,56 @@ export default function App() {
     return () => clearInterval(t);
   }, [showAdmin, isAdmin]);
 
+  // Периодически подтягиваем общий каталог (новые товары от админа)
+  useEffect(() => {
+    if (!dataReady) return;
+    let stopped = false;
+    const pullProducts = async () => {
+      try {
+        const sharedProds = await sharedProductsLoad();
+        if (stopped || !Array.isArray(sharedProds) || sharedProds.length === 0) return;
+        setProducts((prev) => {
+          const map = new Map();
+          prev.forEach((p) => map.set(String(p.id), p));
+          let changed = false;
+          sharedProds.forEach((sp) => {
+            const id = String(sp.id);
+            const local = map.get(id);
+            if (!local) {
+              map.set(id, sp);
+              changed = true;
+            } else {
+              // обновляем метаданные; local base64 image сохраняем
+              const image = (local.image && String(local.image).startsWith("data:"))
+                ? local.image
+                : (sp.image || local.image || "");
+              const merged = { ...local, ...sp, image };
+              if (
+                local.name !== merged.name ||
+                local.price !== merged.price ||
+                local.brand !== merged.brand ||
+                !!local.pinned !== !!merged.pinned ||
+                (local.image || "") !== (merged.image || "")
+              ) {
+                changed = true;
+              }
+              map.set(id, merged);
+            }
+          });
+          // удаляем товары, которых нет в shared, только если shared явно полный и больше default
+          // (не трогаем — админ мог ещё не запушить)
+          return changed ? Array.from(map.values()) : prev;
+        });
+      } catch (e) {}
+    };
+    pullProducts();
+    const t = setInterval(pullProducts, 20000);
+    return () => {
+      stopped = true;
+      clearInterval(t);
+    };
+  }, [dataReady]);
+
   const confirmAction = (msg) => {
     try {
       if (typeof window !== "undefined" && typeof window.confirm === "function") {
@@ -1925,16 +2135,22 @@ export default function App() {
 
   const deleteProduct = (id) => {
     if (!confirmAction("Удалить этот товар?")) return;
-    setProducts((prev) => prev.filter((p) => p.id !== id));
+    setProducts((prev) => {
+      const next = prev.filter((p) => p.id !== id);
+      sharedProductsSave(next).catch(() => {});
+      return next;
+    });
     setEditingProduct((cur) => (cur === id ? null : cur));
     setProductDraft((d) => (d && d.id === id ? null : d));
   };
 
   // Закрепить / открепить товар (закреплённые всегда сверху в каталоге)
   const togglePinProduct = (id) => {
-    setProducts((prev) =>
-      prev.map((p) => (p.id === id ? { ...p, pinned: !p.pinned } : p))
-    );
+    setProducts((prev) => {
+      const next = prev.map((p) => (p.id === id ? { ...p, pinned: !p.pinned } : p));
+      sharedProductsSave(next).catch(() => {});
+      return next;
+    });
   };
 
   const startAddProduct = () => {
@@ -1972,7 +2188,7 @@ export default function App() {
     setProductDraft((d) => (d ? { ...d, [field]: value } : d));
   };
 
-  const pickProductImage = () => {
+  const pickProductImage = (onPicked) => {
     try {
       if (typeof document === "undefined") {
         Alert.alert("Ошибка", "Загрузка фото доступна в Telegram / браузере");
@@ -1990,7 +2206,10 @@ export default function App() {
         }
         const reader = new FileReader();
         reader.onload = () => {
-          updateProductDraft("image", String(reader.result || ""));
+          const dataUrl = String(reader.result || "");
+          // Обновляем и глобальный draft, и локальную форму (через callback)
+          updateProductDraft("image", dataUrl);
+          if (typeof onPicked === "function") onPicked(dataUrl);
         };
         reader.readAsDataURL(file);
       };
@@ -2001,19 +2220,30 @@ export default function App() {
     }
   };
 
-  const saveProductDraft = () => {
-    if (!productDraft) return;
-    const brand = (productDraft.brand || "").trim() || "Бренд";
-    const name = (productDraft.name || "").trim() || "Товар";
-    const price = parseInt(String(productDraft.price).replace(/\D/g, ""), 10) || 0;
-    const oldRaw = String(productDraft.oldPrice || "").replace(/\D/g, "");
+  // draftOverride — чтобы сохранять из локальной формы AdminPanel без гонки setState
+  const saveProductDraft = (draftOverride, isNewOverride) => {
+    const draft = draftOverride || productDraft;
+    const makingNew = typeof isNewOverride === "boolean" ? isNewOverride : isNewProduct;
+    if (!draft) return;
+    const brand = (draft.brand || "").trim() || "Бренд";
+    const name = (draft.name || "").trim() || "Товар";
+    const price = parseInt(String(draft.price).replace(/\D/g, ""), 10) || 0;
+    const oldRaw = String(draft.oldPrice || "").replace(/\D/g, "");
     const oldPrice = oldRaw ? parseInt(oldRaw, 10) : null;
-    const image = (productDraft.image || "").trim() || "https://via.placeholder.com/400?text=Photo";
-    const description = (productDraft.description || "").trim();
-    const sizes = String(productDraft.sizes || "")
+    const image = (draft.image || "").trim() || "https://via.placeholder.com/400?text=Photo";
+    const description = (draft.description || "").trim();
+    const sizes = String(draft.sizes || "")
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean);
+    if (!name || name === "Товар") {
+      // если пользователь ничего не ввёл — всё равно сохраняем, но предупреждаем
+      console.warn("[Product] name empty, using placeholder");
+    }
+    if (!price) {
+      Alert.alert("Цена", "Укажите цену товара");
+      return;
+    }
     const payload = {
       brand,
       name,
@@ -2023,10 +2253,11 @@ export default function App() {
       description,
       sizes: sizes.length ? sizes : ["40", "41", "42"],
     };
-    if (isNewProduct) {
-      setProducts((prev) => [
+    let nextProducts = null;
+    if (makingNew) {
+      nextProducts = [
         {
-          id: productDraft.id,
+          id: draft.id,
           ...payload,
           sales: 0,
           ratings: [],
@@ -2034,17 +2265,26 @@ export default function App() {
           createdAt: new Date().toISOString(),
           pinned: false,
         },
-        ...prev,
-      ]);
+        ...products,
+      ];
+      setProducts(nextProducts);
     } else {
-      setProducts((prev) =>
-        prev.map((p) => (p.id === productDraft.id ? { ...p, ...payload } : p))
-      );
+      nextProducts = products.map((p) => (p.id === draft.id ? { ...p, ...payload } : p));
+      setProducts(nextProducts);
     }
     setEditingProduct(null);
     setProductDraft(null);
     setIsNewProduct(false);
-    showToast("✅ Товар сохранён");
+    // Публикуем каталог для всех пользователей (URL-картинки; base64 только локально)
+    const hasDataImage = String(payload.image || "").startsWith("data:");
+    sharedProductsSave(nextProducts).then((ok) => {
+      if (!ok) console.warn("[Products] shared save failed — другие устройства могут не увидеть товар сразу");
+    });
+    if (hasDataImage) {
+      showToast("✅ Сохранено. Для других устройств укажите URL фото (не файл)");
+    } else {
+      showToast("✅ Товар сохранён");
+    }
   };
 
   const cancelProductDraft = () => {
@@ -2908,10 +3148,17 @@ export default function App() {
     const [localProduct, setLocalProduct] = useState(null);
     const [localIsNew, setLocalIsNew] = useState(false);
 
-    // Синхронизируем локальную форму товара когда открывают редактирование
+    // Синхронизируем локальную форму только при открытии/закрытии редактора (по id),
+    // чтобы ввод name/price не затирался при обновлении image в productDraft.
     useEffect(() => {
       if (productDraft) {
-        setLocalProduct({ ...productDraft });
+        setLocalProduct((prev) => {
+          if (prev && prev.id === productDraft.id) {
+            // тот же товар — не перезаписываем поля, которые пользователь уже ввёл
+            return prev;
+          }
+          return { ...productDraft };
+        });
         setLocalIsNew(isNewProduct);
       } else {
         setLocalProduct(null);
@@ -3405,18 +3652,29 @@ export default function App() {
                   blurOnSubmit={false}
                   autoCapitalize="none"
                 />
-                <TouchableOpacity style={[styles.addBtn, { marginTop: 4 }]} onPress={pickProductImage}>
+                <TouchableOpacity
+                  style={[styles.addBtn, { marginTop: 4 }]}
+                  onPress={() =>
+                    pickProductImage((dataUrl) => {
+                      // Важно: обновляем ЛОКАЛЬНУЮ форму, не затирая name/price
+                      setLocalProduct((d) => (d ? { ...d, image: dataUrl } : d));
+                    })
+                  }
+                >
                   <Text style={styles.buttonText}>📷 Загрузить своё фото</Text>
                 </TouchableOpacity>
                 {!!localProduct.image && (
                   <SmartImage uri={localProduct.image} style={{ width: "100%", height: 140, borderRadius: 12, marginBottom: 8 }} />
                 )}
                 <View style={{ flexDirection: "row", gap: 8 }}>
-                  <TouchableOpacity style={[styles.saveBtn, { flex: 1 }]} onPress={() => {
-                    // Передаём локальные данные в глобальный draft и сохраняем
-                    setProductDraft(localProduct);
-                    setTimeout(() => saveProductDraft(), 0);
-                  }}>
+                  <TouchableOpacity
+                    style={[styles.saveBtn, { flex: 1 }]}
+                    onPress={() => {
+                      // Сохраняем напрямую из localProduct — без гонки setState
+                      saveProductDraft(localProduct, localIsNew);
+                      setLocalProduct(null);
+                    }}
+                  >
                     <Text style={styles.buttonText}>Сохранить</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
