@@ -161,10 +161,10 @@ const preloadImages = (list) => {
 const getBrands = (products) => [...new Set(products.map(p => p.brand))];
 
 const ADMIN_IDS = [778715828, 987654321];
-// Чтобы заказы друзей приходили вам в Telegram — вставьте токен бота от @BotFather
-// (бот должен быть запущен, вы хотя бы раз написали ему /start)
+// Чтобы заказы приходили вам в Telegram — токен от @BotFather
+// Админ (chat_id) хотя бы раз должен написать боту /start
 const BOT_TOKEN = "8912775566:AAHEExxwO5Ub39DU0tDT97Hlppw1IfLwjvU";
-const ADMIN_NOTIFY_CHAT_ID = ADMIN_IDS[0]; // 778715828 — напишите боту /start с этого аккаунта
+const ADMIN_NOTIFY_CHAT_ID = ADMIN_IDS[0]; // 778715828
 
 const compactOrderForBot = (o) => ({
   id: o.id,
@@ -172,7 +172,7 @@ const compactOrderForBot = (o) => ({
   status: o.status || "Новый",
   fullName: o.fullName || "",
   phone: o.phone || "",
-  address: o.address || "",
+  address: (o.address || "").slice(0, 120),
   finalTotal: o.finalTotal,
   delivery: o.delivery || "courier",
   trackingNumber: o.trackingNumber || null,
@@ -181,7 +181,7 @@ const compactOrderForBot = (o) => ({
   freeDelivery: !!o.freeDelivery,
   pendingCashback: o.pendingCashback || 0,
   cashbackCredited: !!o.cashbackCredited,
-  items: (o.items || []).map((i) => ({
+  items: (o.items || []).slice(0, 8).map((i) => ({
     id: i.id,
     name: i.name,
     brand: i.brand,
@@ -190,35 +190,108 @@ const compactOrderForBot = (o) => ({
   })),
 });
 
+// Надёжная отправка в Telegram из WebView/браузера.
+// JSON POST часто режется CORS-preflight — поэтому GET + form-urlencoded + beacon.
 const tgSendMessage = async (text) => {
   if (!BOT_TOKEN || !ADMIN_NOTIFY_CHAT_ID) {
     console.warn("[TG] BOT_TOKEN или ADMIN_NOTIFY_CHAT_ID не заданы");
     return false;
   }
-  const body = JSON.stringify({
-    chat_id: ADMIN_NOTIFY_CHAT_ID,
-    text: String(text).slice(0, 4000),
-    disable_web_page_preview: true,
-  });
-  const urls = [
-    `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,
-    // CORS-proxy fallback (на случай блокировки прямого запроса из WebView)
-    `https://corsproxy.io/?${encodeURIComponent(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`)}`,
-  ];
-  for (const url of urls) {
-    try {
-      const r = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body,
-      });
-      const data = await r.json().catch(() => ({}));
-      if (data && data.ok) return true;
-      console.warn("[TG] sendMessage error:", data);
-    } catch (e) {
-      console.warn("[TG] sendMessage fetch fail", e);
+  const t = String(text).slice(0, 3500);
+  const chat = String(ADMIN_NOTIFY_CHAT_ID);
+  const token = BOT_TOKEN;
+  const getUrl =
+    `https://api.telegram.org/bot${token}/sendMessage` +
+    `?chat_id=${encodeURIComponent(chat)}` +
+    `&text=${encodeURIComponent(t)}` +
+    `&disable_web_page_preview=true`;
+
+  // 1) GET (simple request, без preflight)
+  try {
+    const r = await fetch(getUrl, { method: "GET", mode: "cors", cache: "no-store" });
+    const data = await r.json().catch(() => null);
+    if (data && data.ok) {
+      console.log("[TG] send OK via GET");
+      return true;
     }
+    if (data) console.warn("[TG] GET response:", data);
+  } catch (e) {
+    console.warn("[TG] GET fail", e && e.message);
   }
+
+  // 2) GET через CORS-proxy (чтобы прочитать ответ)
+  try {
+    const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(getUrl)}`;
+    const r = await fetch(proxyUrl, { method: "GET", cache: "no-store" });
+    const data = await r.json().catch(() => null);
+    if (data && data.ok) {
+      console.log("[TG] send OK via corsproxy GET");
+      return true;
+    }
+  } catch (e) {}
+
+  // 3) Image-beacon — браузер ВСЕГДА шлёт GET, ответ не важен
+  try {
+    if (typeof Image !== "undefined") {
+      await new Promise((resolve) => {
+        const img = new Image();
+        let done = false;
+        const finish = () => {
+          if (done) return;
+          done = true;
+          resolve();
+        };
+        img.onload = finish;
+        img.onerror = finish;
+        img.src = getUrl;
+        setTimeout(finish, 2500);
+      });
+      console.log("[TG] send attempted via Image beacon");
+      return true;
+    }
+  } catch (e) {}
+
+  // 4) form-urlencoded POST (тоже simple request)
+  try {
+    const body =
+      `chat_id=${encodeURIComponent(chat)}` +
+      `&text=${encodeURIComponent(t)}` +
+      `&disable_web_page_preview=true`;
+    const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body,
+      mode: "cors",
+      cache: "no-store",
+    });
+    const data = await r.json().catch(() => null);
+    if (data && data.ok) {
+      console.log("[TG] send OK via form POST");
+      return true;
+    }
+  } catch (e) {
+    console.warn("[TG] form POST fail", e && e.message);
+  }
+
+  // 5) no-cors — запрос уходит, ответ непрозрачный
+  try {
+    const body =
+      `chat_id=${encodeURIComponent(chat)}` +
+      `&text=${encodeURIComponent(t)}` +
+      `&disable_web_page_preview=true`;
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body,
+      mode: "no-cors",
+      cache: "no-store",
+    });
+    console.log("[TG] send attempted via no-cors");
+    return true;
+  } catch (e) {
+    console.warn("[TG] no-cors fail", e && e.message);
+  }
+
   return false;
 };
 
@@ -231,27 +304,32 @@ const notifyAdminNewOrder = async (order) => {
     const deliveryLabel = order.delivery === "europost" ? "Европочта" : "Курьер";
     const itemsShort = (order.items || [])
       .map((i) => `${i.brand || ""} ${i.name}${i.size ? ` (${i.size})` : ""}`.trim())
-      .join(", ");
+      .join(", ")
+      .slice(0, 400);
     const tgPart = order.tgUsername
       ? `@${order.tgUsername}`
       : order.tgId
         ? `id:${order.tgId}`
         : "—";
 
-    // 1) Человекочитаемое уведомление
+    // Короткое человекочитаемое уведомление (влезает в GET URL)
     const humanText =
-      `Новый заказ\n\n` +
+      `🛍 Новый заказ #${order.id}\n` +
       `ФИО: ${order.fullName || "—"}\n` +
-      `Способ доставки и адрес: ${deliveryLabel}, ${order.address || "—"}\n` +
-      `ФИО, номер телефона и тг: ${order.fullName || "—"}, ${order.phone || "—"}, ${tgPart}\n` +
-      `Сумма к оплате и товар: ${order.finalTotal} BYN — ${itemsShort || "—"}`;
+      `Тел: ${order.phone || "—"}\n` +
+      `TG: ${tgPart}\n` +
+      `Доставка: ${deliveryLabel}\n` +
+      `Адрес: ${(order.address || "—").slice(0, 120)}\n` +
+      `Сумма: ${order.finalTotal} BYN\n` +
+      `Товар: ${itemsShort || "—"}`;
 
     const ok1 = await tgSendMessage(humanText);
 
-    // 2) Служебное сообщение для таблицы CRM (парсится кнопкой «Обновить»)
+    // Машинный блок для CRM (короткий)
     const payload = compactOrderForBot(order);
     const machineText = `#ORD#${JSON.stringify(payload)}#END#`;
-    const ok2 = await tgSendMessage(machineText);
+    // если слишком длинный для URL — режем address/items уже в compact
+    const ok2 = machineText.length < 1800 ? await tgSendMessage(machineText) : false;
 
     console.log("[TG] notify order", order.id, "human:", ok1, "machine:", ok2);
     return ok1 || ok2;
@@ -265,14 +343,16 @@ const notifyAdminNewOrder = async (order) => {
 const fetchOrdersFromBot = async () => {
   if (!BOT_TOKEN) return [];
   try {
+    const base = `https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?limit=100`;
     const urls = [
-      `https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?limit=100`,
-      `https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?limit=100&allowed_updates=${encodeURIComponent('["message"]')}`,
+      base,
+      `https://corsproxy.io/?${encodeURIComponent(base)}`,
+      `https://api.allorigins.win/raw?url=${encodeURIComponent(base)}`,
     ];
     let results = [];
     for (const url of urls) {
       try {
-        const r = await fetch(url, { cache: "no-store" });
+        const r = await fetch(url, { cache: "no-store", mode: "cors" });
         if (!r.ok) continue;
         const data = await r.json();
         if (data && data.ok && Array.isArray(data.result)) {
@@ -298,7 +378,7 @@ const fetchOrdersFromBot = async () => {
         } catch (e) {}
       }
 
-      // 2) Парсинг старого формата пуша
+      // 2) Парсинг человекочитаемого формата
       if (text.includes("Новый заказ") || text.includes("новый заказ")) {
         const idMatch = text.match(/#(\d+)/);
         const phoneMatch = text.match(/\+?\d{9,15}/);
@@ -313,41 +393,26 @@ const fetchOrdersFromBot = async () => {
 
         for (const line of lines) {
           if (line.startsWith("ФИО:")) fullName = line.replace("ФИО:", "").trim();
+          if (line.startsWith("Тел:")) phone = line.replace("Тел:", "").trim();
+          if (line.startsWith("TG:") && line.includes("@")) {
+            tgUsername = line.replace("TG:", "").trim().replace("@", "");
+          }
+          if (line.startsWith("Доставка:") && line.toLowerCase().includes("евро")) delivery = "europost";
+          if (line.startsWith("Адрес:")) address = line.replace("Адрес:", "").trim();
+          if (line.startsWith("Сумма:")) {
+            const tm = line.match(/(\d+(?:[.,]\d+)?)/);
+            if (tm) total = parseFloat(tm[1].replace(",", "."));
+          }
+          if (line.startsWith("Товар:")) {
+            const after = line.replace("Товар:", "").trim();
+            if (after) items = [{ name: after, price: total }];
+          }
           if (line.includes("Способ доставки и адрес:")) {
             const rest = line.split(":")[1] || "";
             if (rest.toLowerCase().includes("евро")) delivery = "europost";
             const parts = rest.split(",").map((s) => s.trim());
             if (parts.length > 1) address = parts.slice(1).join(", ");
             else address = rest.trim();
-          }
-          if (line.includes("номер телефона")) {
-            const rest = line.split(":").slice(1).join(":").trim();
-            const bits = rest.split(",").map((s) => s.trim());
-            if (bits[0] && !fullName) fullName = bits[0];
-            if (bits[1]) phone = bits[1];
-            if (bits[2] && bits[2].startsWith("@")) tgUsername = bits[2].replace("@", "");
-          }
-          if (line.includes("Сумма к оплате")) {
-            const tm = line.match(/(\d+(?:[.,]\d+)?)\s*BYN/i);
-            if (tm) total = parseFloat(tm[1].replace(",", "."));
-            const after = line.split("—")[1] || line.split("-")[1] || "";
-            if (after.trim()) items = [{ name: after.trim(), price: total }];
-          }
-          // старый формат
-          if (line.startsWith("👤")) fullName = line.replace("👤", "").trim();
-          if (line.startsWith("📞")) phone = line.replace("📞", "").trim();
-          if (line.startsWith("📍")) address = line.replace("📍", "").trim();
-          if (line.startsWith("🚚")) delivery = line.includes("Евро") ? "europost" : "courier";
-          if (line.startsWith("💰")) {
-            const tm = line.match(/(\d+)/);
-            if (tm) total = parseInt(tm[1], 10);
-          }
-          if (line.startsWith("✈️")) {
-            const t = line.replace("✈️", "").trim();
-            if (t.startsWith("@")) tgUsername = t.slice(1);
-          }
-          if (line.startsWith("•")) {
-            items.push({ name: line.replace("•", "").trim(), price: total });
           }
         }
 
@@ -649,28 +714,34 @@ const refApiAdd = async (key, amount) => {
 
 // ==============================
 // ОБЩЕЕ ХРАНИЛИЩЕ ЗАКАЗОВ (видно админу от всех клиентов)
-// CloudStorage у каждого свой — используем getpantry.cloud (JSON basket)
+// CloudStorage у каждого свой — пишем заказы по одному ключу + индекс ID.
+// getUpdates НЕ видит сообщения, которые бот сам отправил админу — на него нельзя полагаться.
 // ==============================
-const SHARED_ORDERS_KEY = "manzshop_orders_v2";
+const SHARED_ORDERS_KEY = "manzshop_orders_v3";
 const SHARED_PRODUCTS_KEY = "manzshop_products_v2";
 const SHARED_BLOB_KEY = "manzshop_orders_blob_id";
-const SHARED_PANTRY_KEY = "manzshop_pantry_id_v2";
-// Общий pantry для ВСЕХ устройств/пользователей. Если пусто — создаётся один раз и пишется в KV.
-// Можно вписать свой pantryId с getpantry.cloud вручную:
+const SHARED_PANTRY_KEY = "manzshop_pantry_id_v3";
+const ORDER_INDEX_KEY = "mo3_idx";
+const orderItemKey = (id) => `mo3_${id}`;
+// Можно вписать свой pantryId с getpantry.cloud вручную (если уже есть):
 const HARDCODED_PANTRY_ID = "";
 
-// --- helpers: общий pantry id ---
+// --- KV helpers (keyvalue.immanuel.co) ---
 const kvGetString = async (key) => {
-  const urls = withProxies(
-    `https://keyvalue.immanuel.co/api/KeyVal/GetValue/manzshopby/${key}`
-  );
+  const base = `https://keyvalue.immanuel.co/api/KeyVal/GetValue/manzshopby/${encodeURIComponent(String(key))}`;
+  const urls = [
+    base,
+    `https://corsproxy.io/?${encodeURIComponent(base)}`,
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(base)}`,
+  ];
   for (const url of urls) {
     try {
       const r = await fetch(url, { cache: "no-store", mode: "cors" });
       if (!r.ok) continue;
       let text = (await r.text()) || "";
+      // allorigins/corsproxy иногда оборачивают в кавычки
       text = text.replace(/^"|"$/g, "").trim();
-      if (text && text !== "null" && text.length > 3) return text;
+      if (text && text !== "null" && text !== "undefined" && text.length > 0) return text;
     } catch (e) {}
   }
   return null;
@@ -678,13 +749,42 @@ const kvGetString = async (key) => {
 
 const kvSetString = async (key, value) => {
   const raw = String(value);
-  // keyvalue ограничивает длину URL — для больших payload не подходит
   if (raw.length > 1500) {
-    console.warn("[KV] value too long for keyvalue", key, raw.length);
+    console.warn("[KV] value too long", key, raw.length);
     return false;
   }
-  const base = `https://keyvalue.immanuel.co/api/KeyVal/UpdateValue/manzshopby/${key}/${encodeURIComponent(raw)}`;
-  for (const url of withProxies(base)) {
+  const base =
+    `https://keyvalue.immanuel.co/api/KeyVal/UpdateValue/manzshopby/` +
+    `${encodeURIComponent(String(key))}/${encodeURIComponent(raw)}`;
+
+  // 1) GET — без CORS-preflight
+  try {
+    const r = await fetch(base, { method: "GET", mode: "cors", cache: "no-store" });
+    if (r.ok) return true;
+  } catch (e) {}
+
+  // 2) Image-beacon GET
+  try {
+    if (typeof Image !== "undefined") {
+      await new Promise((resolve) => {
+        const img = new Image();
+        let done = false;
+        const finish = () => {
+          if (done) return;
+          done = true;
+          resolve();
+        };
+        img.onload = finish;
+        img.onerror = finish;
+        img.src = base;
+        setTimeout(finish, 2000);
+      });
+      return true;
+    }
+  } catch (e) {}
+
+  // 3) POST + proxies
+  for (const url of [base, `https://corsproxy.io/?${encodeURIComponent(base)}`]) {
     try {
       const r = await fetch(url, { method: "POST", mode: "cors", cache: "no-store" });
       if (r.ok) return true;
@@ -696,28 +796,25 @@ const kvSetString = async (key, value) => {
 const ensurePantryId = async () => {
   if (HARDCODED_PANTRY_ID) return HARDCODED_PANTRY_ID;
 
-  // Сначала ОБЩИЙ id из keyvalue (чтобы телефон и ПК использовали один pantry)
   const remote = await kvGetString(SHARED_PANTRY_KEY);
-  if (remote) {
+  if (remote && remote.length > 8) {
     try {
       if (typeof localStorage !== "undefined") localStorage.setItem("krost_pantry_id", remote);
     } catch (e) {}
     return remote;
   }
 
-  // Локальный кэш — только если remote ещё нет
   try {
     if (typeof localStorage !== "undefined") {
       const local = localStorage.getItem("krost_pantry_id");
-      if (local) {
-        // публикуем локальный id в KV, чтобы другие устройства подхватили
+      if (local && local.length > 8) {
         await kvSetString(SHARED_PANTRY_KEY, local);
         return local;
       }
     }
   } catch (e) {}
 
-  // создаём pantry
+  // создаём pantry один раз
   try {
     const createUrls = [
       "https://getpantry.cloud/apiv1/pantry",
@@ -729,7 +826,7 @@ const ensurePantryId = async () => {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            name: "manzshop_orders",
+            name: "manzshop_orders_v3",
             description: "Shared orders for manzshop mini app",
           }),
         });
@@ -741,6 +838,7 @@ const ensurePantryId = async () => {
               if (typeof localStorage !== "undefined") localStorage.setItem("krost_pantry_id", id);
             } catch (e) {}
             await kvSetString(SHARED_PANTRY_KEY, id);
+            console.log("[Orders] created pantry", id);
             return id;
           }
         }
@@ -750,7 +848,6 @@ const ensurePantryId = async () => {
     console.warn("ensurePantryId create", e);
   }
 
-  // если create не прошёл — ещё раз пробуем прочитать (вдруг другой клиент уже создал)
   const again = await kvGetString(SHARED_PANTRY_KEY);
   if (again) return again;
   return null;
@@ -759,20 +856,38 @@ const ensurePantryId = async () => {
 const compactOrder = (o) => ({
   id: o.id,
   date: o.date,
-  status: o.status,
-  fullName: o.fullName,
-  phone: o.phone,
-  address: o.address,
+  status: o.status || "Новый",
+  fullName: o.fullName || "",
+  phone: o.phone || "",
+  address: (o.address || "").slice(0, 140),
   finalTotal: o.finalTotal,
-  delivery: o.delivery,
+  delivery: o.delivery || "courier",
   trackingNumber: o.trackingNumber || null,
   tgId: o.tgId || null,
   tgUsername: o.tgUsername || null,
   freeDelivery: !!o.freeDelivery,
-  items: (o.items || []).map((i) => ({
+  items: (o.items || []).slice(0, 6).map((i) => ({
     id: i.id,
     name: i.name,
     brand: i.brand,
+    size: i.size,
+    price: i.price,
+  })),
+});
+
+const ultraCompactOrder = (o) => ({
+  id: o.id,
+  date: o.date,
+  status: o.status || "Новый",
+  fullName: (o.fullName || "").slice(0, 40),
+  phone: o.phone || "",
+  address: (o.address || "").slice(0, 60),
+  finalTotal: o.finalTotal,
+  delivery: o.delivery || "courier",
+  tgId: o.tgId || null,
+  tgUsername: o.tgUsername || null,
+  items: (o.items || []).slice(0, 2).map((i) => ({
+    name: i.name,
     size: i.size,
     price: i.price,
   })),
@@ -819,71 +934,120 @@ const pantryPutBasket = async (basket, payload) => {
   return false;
 };
 
+// Загрузка: индекс ID → каждый заказ; + pantry; + старый bulk-ключ
 const sharedOrdersLoad = async () => {
+  const map = new Map();
+
+  // A) индекс + отдельные ключи (основной путь)
   try {
-    const data = await pantryGetBasket("orders");
-    if (data) {
-      if (Array.isArray(data)) return data;
-      if (Array.isArray(data.orders)) return data.orders;
-    }
-    // fallback keyvalue (короткий список)
-    const raw = await kvGetString(SHARED_ORDERS_KEY);
-    if (raw) {
-      try {
-        let parsed = JSON.parse(raw);
-        if (typeof parsed === "string") parsed = JSON.parse(parsed);
-        if (Array.isArray(parsed)) return parsed;
-        if (parsed && Array.isArray(parsed.orders)) return parsed.orders;
-      } catch (e) {}
+    const idxRaw = await kvGetString(ORDER_INDEX_KEY);
+    if (idxRaw) {
+      const ids = String(idxRaw)
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .slice(0, 50);
+      for (const id of ids) {
+        try {
+          const raw = await kvGetString(orderItemKey(id));
+          if (!raw) continue;
+          const obj = JSON.parse(raw);
+          if (obj && obj.id != null) map.set(String(obj.id), obj);
+        } catch (e) {}
+      }
     }
   } catch (e) {
-    console.warn("sharedOrdersLoad", e);
+    console.warn("sharedOrdersLoad index", e);
   }
-  return [];
+
+  // B) pantry
+  try {
+    const data = await pantryGetBasket("orders");
+    const list = Array.isArray(data) ? data : data && Array.isArray(data.orders) ? data.orders : [];
+    list.forEach((o) => {
+      if (o && o.id != null && !map.has(String(o.id))) map.set(String(o.id), o);
+    });
+  } catch (e) {}
+
+  // C) старый bulk KV
+  try {
+    const raw = await kvGetString(SHARED_ORDERS_KEY);
+    if (raw) {
+      let parsed = JSON.parse(raw);
+      if (typeof parsed === "string") parsed = JSON.parse(parsed);
+      const list = Array.isArray(parsed) ? parsed : parsed && Array.isArray(parsed.orders) ? parsed.orders : [];
+      list.forEach((o) => {
+        if (o && o.id != null && !map.has(String(o.id))) map.set(String(o.id), o);
+      });
+    }
+  } catch (e) {}
+
+  const orders = Array.from(map.values()).sort((a, b) => {
+    const da = a.date ? new Date(a.date).getTime() : 0;
+    const db = b.date ? new Date(b.date).getTime() : 0;
+    return db - da;
+  });
+  console.log("[Orders] shared load", orders.length);
+  return orders;
 };
 
 const sharedOrdersSave = async (orders) => {
-  const list = (Array.isArray(orders) ? orders : []).slice(0, 80).map(compactOrder);
-  const payload = { orders: list, updatedAt: new Date().toISOString() };
+  const list = (Array.isArray(orders) ? orders : []).slice(0, 50).map(compactOrder);
+  let anyOk = false;
 
-  const okPantry = await pantryPutBasket("orders", payload);
-  if (okPantry) {
-    console.log("[Orders] pantry save OK", list.length);
-    return true;
+  // пишем каждый заказ + индекс
+  const ids = list.map((o) => String(o.id));
+  const idxOk = await kvSetString(ORDER_INDEX_KEY, ids.join(","));
+  if (idxOk) anyOk = true;
+
+  for (const o of list.slice(0, 30)) {
+    let raw = JSON.stringify(o);
+    if (raw.length > 1400) raw = JSON.stringify(ultraCompactOrder(o));
+    if (raw.length > 1400) continue;
+    const ok = await kvSetString(orderItemKey(o.id), raw);
+    if (ok) anyOk = true;
   }
 
-  // fallback: только компактный список без тяжёлых полей
-  try {
-    const slim = list.slice(0, 20).map((o) => ({
-      id: o.id,
-      date: o.date,
-      status: o.status,
-      fullName: o.fullName,
-      phone: o.phone,
-      address: (o.address || "").slice(0, 80),
-      finalTotal: o.finalTotal,
-      delivery: o.delivery,
-      tgId: o.tgId,
-      tgUsername: o.tgUsername,
-      items: (o.items || []).slice(0, 3).map((i) => ({ name: i.name, size: i.size, price: i.price })),
-    }));
-    const okKv = await kvSetString(SHARED_ORDERS_KEY, JSON.stringify(slim));
-    console.log("[Orders] kv save", okKv ? "OK" : "FAIL", slim.length);
-    return okKv;
-  } catch (e) {
-    console.warn("sharedOrdersSave kv", e);
-  }
-  return false;
+  // pantry best-effort
+  const okPantry = await pantryPutBasket("orders", {
+    orders: list,
+    updatedAt: new Date().toISOString(),
+  });
+  if (okPantry) anyOk = true;
+
+  console.log("[Orders] shared save", anyOk ? "OK" : "FAIL", list.length, "pantry", okPantry);
+  return anyOk;
 };
 
 const sharedOrdersPush = async (order) => {
   try {
-    const current = await sharedOrdersLoad();
-    const without = current.filter((o) => String(o.id) !== String(order.id));
-    const next = [compactOrder(order), ...without].slice(0, 80);
-    const ok = await sharedOrdersSave(next);
-    console.log("[Orders] shared push", ok ? "OK" : "FAIL", order.id);
-    return ok ? next : null;
+    const c = compactOrder(order);
+    let raw = JSON.stringify(c);
+    if (raw.length > 1400) raw = JSON.stringify(ultraCompactOrder(c));
+
+    // 1) сам заказ (главное)
+    const okItem = raw.length <= 1500 ? await kvSetString(orderItemKey(c.id), raw) : false;
+
+    // 2) индекс: prepend id
+    let ids = [];
+    try {
+      const idxRaw = await kvGetString(ORDER_INDEX_KEY);
+      if (idxRaw) ids = String(idxRaw).split(",").map((s) => s.trim()).filter(Boolean);
+    } catch (e) {}
+    ids = [String(c.id), ...ids.filter((x) => x !== String(c.id))].slice(0, 50);
+    const okIdx = await kvSetString(ORDER_INDEX_KEY, ids.join(","));
+
+    // 3) pantry — подтягиваем текущие и мержим
+    try {
+      const current = await sharedOrdersLoad();
+      const without = current.filter((o) => String(o.id) !== String(c.id));
+      const next = [c, ...without].slice(0, 50);
+      await pantryPutBasket("orders", { orders: next, updatedAt: new Date().toISOString() });
+    } catch (e) {}
+
+    const ok = okItem || okIdx;
+    console.log("[Orders] shared push", ok ? "OK" : "FAIL", c.id, "item", okItem, "idx", okIdx);
+    return ok ? [c] : null;
   } catch (e) {
     console.warn("sharedOrdersPush", e);
     return null;
@@ -892,16 +1056,42 @@ const sharedOrdersPush = async (order) => {
 
 const sharedOrdersUpdate = async (orderId, patch) => {
   try {
-    const current = await sharedOrdersLoad();
-    const next = current.map((o) =>
-      String(o.id) === String(orderId) ? { ...o, ...patch } : o
-    );
-    await sharedOrdersSave(next);
-    return next;
+    // обновляем отдельный ключ
+    let cur = null;
+    try {
+      const raw = await kvGetString(orderItemKey(orderId));
+      if (raw) cur = JSON.parse(raw);
+    } catch (e) {}
+    if (!cur) {
+      const all = await sharedOrdersLoad();
+      cur = all.find((o) => String(o.id) === String(orderId)) || { id: orderId };
+    }
+    const next = { ...cur, ...patch };
+    let raw = JSON.stringify(compactOrder(next));
+    if (raw.length > 1400) raw = JSON.stringify(ultraCompactOrder(next));
+    await kvSetString(orderItemKey(orderId), raw);
+
+    // pantry merge
+    const list = await sharedOrdersLoad();
+    const merged = list.map((o) => (String(o.id) === String(orderId) ? { ...o, ...patch } : o));
+    await pantryPutBasket("orders", { orders: merged.map(compactOrder), updatedAt: new Date().toISOString() });
+    return merged;
   } catch (e) {
     console.warn("sharedOrdersUpdate", e);
     return null;
   }
+};
+
+// Разбор текста #ORD#...#END# (из пуша / буфера обмена)
+const parseOrderFromText = (text) => {
+  if (!text) return null;
+  const m = String(text).match(/#ORD#([\s\S]*?)#END#/);
+  if (!m) return null;
+  try {
+    const obj = JSON.parse(m[1]);
+    if (obj && obj.id != null) return obj;
+  } catch (e) {}
+  return null;
 };
 
 // ----- Общий каталог товаров (виден всем пользователям / устройствам) -----
@@ -1763,6 +1953,8 @@ export default function App() {
       }
       if (!pushed) {
         console.warn("[Orders] Не удалось сохранить заказ в общее хранилище после 3 попыток");
+      } else {
+        console.log("[Orders] shared storage OK", order.id);
       }
       let notified = false;
       for (let attempt = 0; attempt < 3 && !notified; attempt++) {
@@ -2003,25 +2195,15 @@ export default function App() {
     setShowAdmin(!showAdmin);
   };
 
-  // Подтянуть заказы: общее хранилище + сообщения бота
+  // Подтянуть заказы из ОБЩЕГО хранилища (не из getUpdates — он не видит исходящие пуши бота)
   const syncSharedOrders = async (showFeedback = false) => {
     try {
-      const [remote, fromBot] = await Promise.all([
-        sharedOrdersLoad().catch(() => []),
-        fetchOrdersFromBot().catch(() => []),
-      ]);
-
-      const incoming = [];
-      if (Array.isArray(remote)) incoming.push(...remote);
-      if (Array.isArray(fromBot)) incoming.push(...fromBot);
+      const remote = await sharedOrdersLoad().catch(() => []);
+      const incoming = Array.isArray(remote) ? remote : [];
 
       if (incoming.length === 0) {
         if (showFeedback) {
-          showToast(
-            BOT_TOKEN
-              ? "Новых заказов из бота нет. Оформите тестовый заказ."
-              : "Укажите BOT_TOKEN в коде, чтобы подтягивать заказы"
-          );
+          showToast("Общее хранилище пусто. Оформите заказ с другого аккаунта и нажмите Обновить.");
         }
         return 0;
       }
@@ -2057,13 +2239,56 @@ export default function App() {
       });
 
       if (showFeedback) {
-        showToast(added > 0 ? `Добавлено в таблицу: ${added}` : `Синхронизировано: ${incoming.length}`);
+        showToast(added > 0 ? `Добавлено заказов: ${added}` : `Синхронизировано: ${incoming.length}`);
       }
       return incoming.length;
     } catch (e) {
       console.warn("syncSharedOrders", e);
       if (showFeedback) showToast("Ошибка синхронизации заказов");
       return 0;
+    }
+  };
+
+  // Запасной путь: админ копирует #ORD#...#END# из пуша бота и вставляет в CRM
+  const importOrderFromClipboard = async () => {
+    try {
+      let text = "";
+      if (typeof navigator !== "undefined" && navigator.clipboard && navigator.clipboard.readText) {
+        text = await navigator.clipboard.readText();
+      } else if (typeof Clipboard !== "undefined" && Clipboard.getString) {
+        text = await Clipboard.getString();
+      }
+      if (!text) {
+        Alert.alert(
+          "Буфер пуст",
+          "Скопируйте в Telegram сообщение с #ORD#...#END# (длинное служебное), затем нажмите снова."
+        );
+        return;
+      }
+      const obj = parseOrderFromText(text);
+      if (!obj) {
+        Alert.alert(
+          "Не найден заказ",
+          "В буфере нет блока #ORD#...#END#. Откройте пуш бота, скопируйте второе (служебное) сообщение целиком."
+        );
+        return;
+      }
+      setAdminOrders((prev) => {
+        const map = new Map();
+        prev.forEach((o) => map.set(String(o.id), o));
+        map.set(String(obj.id), { ...(map.get(String(obj.id)) || {}), ...obj });
+        return Array.from(map.values()).sort((a, b) => {
+          const da = a.date ? new Date(a.date).getTime() : 0;
+          const db = b.date ? new Date(b.date).getTime() : 0;
+          return db - da;
+        });
+      });
+      // параллельно кладём в общее хранилище, чтобы появилось и на ПК
+      sharedOrdersPush(obj).catch(() => {});
+      showToast(`Заказ #${obj.id} добавлен из буфера`);
+    } catch (e) {
+      console.warn("importOrderFromClipboard", e);
+      Alert.alert("Ошибка", "Не удалось прочитать буфер обмена");
     }
   };
 
@@ -3246,6 +3471,13 @@ export default function App() {
                   activeOpacity={0.8}
                 >
                   <Text style={styles.productAdminBtnText}>Обновить</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.productAdminBtn, { flex: 0, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: "#333" }]}
+                  onPress={importOrderFromClipboard}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.productAdminBtnText}>Из буфера</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.productAdminBtn, { flex: 0, paddingHorizontal: 12, paddingVertical: 8 }]}
