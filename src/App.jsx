@@ -641,7 +641,9 @@ export default function App() {
   }, [user?.id, referredBy]);
 
   // Авто-синхронизация рефералов (без кнопки): каждые 12 сек + при возврате в приложение
+  // Пока открыта админка — не трогаем, чтобы не было мерцания
   useEffect(() => {
+    if (showAdmin) return; // не запускаем интервал пока открыта CRM
     const tick = () => {
       ensureReferralRegistered();
       syncReferralStatsFromCloud();
@@ -661,7 +663,7 @@ export default function App() {
         document.removeEventListener("visibilitychange", onVis);
       }
     };
-  }, [user?.id]);
+  }, [user?.id, showAdmin]);
 
   // Сохраняем текущую вкладку только в sessionStorage (живёт при refresh, умирает при полном закрытии)
   useEffect(() => {
