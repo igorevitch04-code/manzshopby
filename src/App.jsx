@@ -3998,19 +3998,72 @@ export default function App() {
       return;
     }
 
+    // Проверяем, что это похоже на CSV-ссылку
+    const lower = url.toLowerCase();
+    if (
+      !lower.includes("output=csv") &&
+      !lower.includes("format=csv") &&
+      !lower.includes("/export?format=csv")
+    ) {
+      Alert.alert(
+        "Неверная ссылка",
+        "Нужна ссылка именно на CSV.\n\nВ Google Таблице:\nФайл → Поделиться → Опубликовать в интернете →\nвыбери «Значения через запятую (.csv)» → Опубликовать\n\nСкопируй полученную ссылку (в ней должно быть output=csv или format=csv)."
+      );
+      return;
+    }
+
     setImporting(true);
     showToast("Загрузка таблицы…");
 
     try {
-      const fetchUrl = url.includes("?") ? `${url}&t=${Date.now()}` : `${url}?t=${Date.now()}`;
-      const res = await fetch(fetchUrl);
-      if (!res.ok) throw new Error("Не удалось скачать таблицу (проверь, что она опубликована как CSV)");
+      const cacheBust = `t=${Date.now()}`;
+      const baseUrl = url.includes("?") ? `${url}&${cacheBust}` : `${url}?${cacheBust}`;
 
-      const text = await res.text();
+      // Несколько способов скачать (из-за CORS в Telegram WebView)
+      const candidates = [
+        baseUrl,
+        `https://corsproxy.io/?${encodeURIComponent(baseUrl)}`,
+        `https://api.allorigins.win/raw?url=${encodeURIComponent(baseUrl)}`,
+      ];
+
+      let textCsv = null;
+      let lastError = null;
+
+      for (const candidate of candidates) {
+        try {
+          const res = await fetch(candidate, { cache: "no-store", mode: "cors" });
+          if (!res.ok) {
+            lastError = `HTTP ${res.status}`;
+            continue;
+          }
+          const body = await res.text();
+          // Google иногда отдаёт HTML вместо CSV
+          if (
+            !body ||
+            body.trim().startsWith("<!DOCTYPE") ||
+            body.trim().startsWith("<html") ||
+            body.includes("accounts.google.com")
+          ) {
+            lastError = "Получен HTML вместо CSV (таблица не опубликована или закрыта)";
+            continue;
+          }
+          textCsv = body;
+          break;
+        } catch (err) {
+          lastError = (err && err.message) || String(err);
+        }
+      }
+
+      if (!textCsv) {
+        throw new Error(
+          lastError ||
+            "Не удалось скачать таблицу. Проверь, что она опубликована как CSV и ссылка правильная."
+        );
+      }
 
       // Простой CSV-парсер (поддерживает кавычки)
       const rows = [];
-      const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+      const normalized = textCsv.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
       const lines = normalized.split("\n");
 
       for (const line of lines) {
@@ -4023,36 +4076,54 @@ export default function App() {
           if (ch === '"') {
             inQuotes = !inQuotes;
           } else if (ch === "," && !inQuotes) {
-            cols.push(current.trim());
+            cols.push(current.trim().replace(/^"|"$/g, ""));
             current = "";
           } else {
             current += ch;
           }
         }
-        cols.push(current.trim());
+        cols.push(current.trim().replace(/^"|"$/g, ""));
         rows.push(cols);
       }
 
       if (rows.length < 2) {
-        Alert.alert("Пусто", "В таблице нет данных (нужна строка заголовков + хотя бы 1 товар)");
+        Alert.alert(
+          "Пусто",
+          `В таблице почти нет данных (строк: ${rows.length}).\nНужна строка заголовков + хотя бы 1 товар.`
+        );
         return;
       }
 
-      const headers = rows[0].map((h) => String(h || "").toLowerCase().trim());
+      // Нормализуем заголовки (убираем BOM, регистр, пробелы)
+      const headers = rows[0].map((h) =>
+        String(h || "")
+          .replace(/^\uFEFF/, "")
+          .toLowerCase()
+          .trim()
+      );
+
+      const findCol = (...names) => {
+        for (const n of names) {
+          const i = headers.indexOf(n);
+          if (i !== -1) return i;
+        }
+        return -1;
+      };
+
       const idx = {
-        brand: headers.indexOf("brand"),
-        name: headers.indexOf("name"),
-        price: headers.indexOf("price"),
-        oldPrice: headers.indexOf("oldprice"),
-        description: headers.indexOf("description"),
-        sizes: headers.indexOf("sizes"),
-        image: headers.indexOf("image"),
+        brand: findCol("brand", "бренд"),
+        name: findCol("name", "model", "модель", "название"),
+        price: findCol("price", "цена"),
+        oldPrice: findCol("oldprice", "oldpriced", "old_price", "old price", "старая цена", "стараяцена"),
+        description: findCol("description", "escription", "desc", "описание"),
+        sizes: findCol("sizes", "size", "размеры", "размер"),
+        image: findCol("image", "photo", "img", "url", "фото", "картинка"),
       };
 
       if (idx.brand === -1 || idx.name === -1 || idx.price === -1) {
         Alert.alert(
           "Ошибка заголовков",
-          "В первой строке таблицы должны быть колонки: brand, name, price\n(опционально: oldPrice, description, sizes, image)"
+          `Не нашёл обязательные колонки.\n\nСейчас в первой строке: ${headers.join(", ") || "(пусто)"}\n\nНужно минимум: brand, name, price\n(можно на русском: бренд, название, цена)`
         );
         return;
       }
@@ -4067,6 +4138,7 @@ export default function App() {
 
       const newProducts = [];
       let skipped = 0;
+      let badPrice = 0;
 
       for (let i = 1; i < rows.length; i++) {
         const row = rows[i];
@@ -4081,7 +4153,10 @@ export default function App() {
         }
 
         const price = parseInt(String(row[idx.price] || "").replace(/\D/g, ""), 10) || 0;
-        if (!price) continue;
+        if (!price) {
+          badPrice++;
+          continue;
+        }
 
         const oldRaw =
           idx.oldPrice >= 0 ? String(row[idx.oldPrice] || "").replace(/\D/g, "") : "";
@@ -4091,7 +4166,7 @@ export default function App() {
           idx.description >= 0 ? (row[idx.description] || "").trim() : "";
         const sizesRaw = idx.sizes >= 0 ? row[idx.sizes] || "" : "";
         const sizes = String(sizesRaw)
-          .split(/[,;]/)
+          .split(/[,;|/]/)
           .map((s) => s.trim())
           .filter(Boolean);
 
@@ -4114,14 +4189,22 @@ export default function App() {
           hidden: false,
         });
 
-        existingKeys.add(key); // защита от дублей внутри одного импорта
+        existingKeys.add(key);
       }
 
       if (newProducts.length === 0) {
-        showToast(
-          skipped > 0
-            ? `Новых нет (пропущено уже существующих: ${skipped})`
-            : "Новых товаров не найдено"
+        const parts = [];
+        if (skipped) parts.push(`уже есть в каталоге: ${skipped}`);
+        if (badPrice) parts.push(`без цены / цена 0: ${badPrice}`);
+        const sample = rows[1] ? rows[1].slice(0, 6).join(" | ") : "(нет строк)";
+        Alert.alert(
+          "Новых товаров нет",
+          (parts.length
+            ? `Ничего не добавлено.\n${parts.join("\n")}`
+            : "В таблице не найдено подходящих строк.") +
+            `\n\nЗаголовки: ${headers.join(", ")}` +
+            `\nПервая строка: ${sample}` +
+            `\nВсего строк данных: ${Math.max(0, rows.length - 1)}`
         );
         return;
       }
@@ -4135,14 +4218,28 @@ export default function App() {
           `✅ Добавлено ${newProducts.length} новых` +
             (skipped ? ` (пропущено ${skipped})` : "")
         );
+        Alert.alert(
+          "Импорт готов",
+          `Добавлено новых товаров: ${newProducts.length}` +
+            (skipped ? `\nПропущено (уже были): ${skipped}` : "") +
+            `\n\nКаталог опубликован.`
+        );
       } else {
         showToast(
-          `⚠️ Добавлено локально ${newProducts.length}, но общая публикация не удалась — нажми «Опубликовать каталог»`
+          `⚠️ Добавлено локально ${newProducts.length}, нажми «Опубликовать каталог»`
+        );
+        Alert.alert(
+          "Импорт (локально)",
+          `Добавлено ${newProducts.length} товаров в этом устройстве.\n\nНажми «Опубликовать каталог для всех», чтобы увидеть их у других.`
         );
       }
     } catch (e) {
       console.error("Import error", e);
-      Alert.alert("Ошибка импорта", e.message || "Не удалось загрузить таблицу");
+      Alert.alert(
+        "Ошибка импорта",
+        (e && e.message) ||
+          "Не удалось загрузить таблицу.\nПроверь ссылку и что таблица опубликована как CSV."
+      );
     } finally {
       setImporting(false);
     }
