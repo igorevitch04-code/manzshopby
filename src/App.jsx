@@ -861,11 +861,16 @@ const compactOrder = (o) => ({
   phone: o.phone || "",
   address: (o.address || "").slice(0, 140),
   finalTotal: o.finalTotal,
+  usedBonus: Number(o.usedBonus) || 0,
   delivery: o.delivery || "courier",
   trackingNumber: o.trackingNumber || null,
   tgId: o.tgId || null,
   tgUsername: o.tgUsername || null,
   freeDelivery: !!o.freeDelivery,
+  pendingCashback: Number(o.pendingCashback) || 0,
+  cashbackCredited: !!o.cashbackCredited,
+  askReview: !!o.askReview,
+  reviewDone: !!o.reviewDone,
   items: (o.items || []).slice(0, 6).map((i) => ({
     id: i.id,
     name: i.name,
@@ -1208,6 +1213,151 @@ const netlifyOrdersPushOne = async (order) => {
   return false;
 };
 
+
+const getUsersApiUrls = () => {
+  const urls = [];
+  try {
+    if (typeof window !== "undefined" && window.location && window.location.origin) {
+      const origin = window.location.origin;
+      if (origin && !origin.startsWith("file:")) {
+        urls.push(`${origin}/api/users`);
+        urls.push(`${origin}/.netlify/functions/users`);
+      }
+    }
+  } catch (e) {}
+  return urls;
+};
+
+const registerBotUser = async (u) => {
+  if (!u || !u.id || String(u.id) === "guest") return false;
+  if (!/^\d+$/.test(String(u.id))) return false;
+  const body = JSON.stringify({
+    action: "register",
+    id: String(u.id),
+    username: u.username || "",
+    first_name: u.first_name || u.name || "",
+    last_name: u.last_name || "",
+  });
+  for (const url of getUsersApiUrls()) {
+    try {
+      const r = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+        cache: "no-store",
+      });
+      const data = await r.json().catch(() => ({}));
+      if (r.ok && data && data.ok) {
+        console.log("[Users] registered", u.id, "count", data.count);
+        return data;
+      }
+    } catch (e) {}
+  }
+  return false;
+};
+
+/**
+ * Telegram не даёт подставить /start за пользователя.
+ * Но можно:
+ * 1) requestWriteAccess — системный запрос «разрешить боту писать»
+ * 2) один раз предложить открыть чат с ботом (t.me/...?start=app)
+ */
+const ensureBotMessagingAccess = async (u) => {
+  try {
+    await registerBotUser(u);
+
+    const tgWeb =
+      typeof window !== "undefined" &&
+      window.Telegram &&
+      window.Telegram.WebApp
+        ? window.Telegram.WebApp
+        : null;
+    if (!tgWeb) return;
+
+    const storageKey = "krost_write_access_asked";
+    let alreadyAsked = false;
+    try {
+      alreadyAsked = localStorage.getItem(storageKey) === "1";
+    } catch (e) {}
+
+    // 1) Официальный запрос права писать пользователю (Bot API 6.9+)
+    if (typeof tgWeb.requestWriteAccess === "function" && !alreadyAsked) {
+      try {
+        localStorage.setItem(storageKey, "1");
+      } catch (e) {}
+      await new Promise((resolve) => {
+        try {
+          tgWeb.requestWriteAccess((granted) => {
+            console.log("[TG] requestWriteAccess", granted);
+            resolve(!!granted);
+          });
+        } catch (e) {
+          resolve(false);
+        }
+      });
+      return;
+    }
+
+    // 2) Fallback: один раз открыть бота со start-параметром
+    // (пользователь сам нажимает Start в чате)
+    const startKey = "krost_bot_start_opened";
+    let startOpened = false;
+    try {
+      startOpened = localStorage.getItem(startKey) === "1";
+    } catch (e) {}
+    if (!startOpened && typeof tgWeb.openTelegramLink === "function") {
+      try {
+        localStorage.setItem(startKey, "1");
+      } catch (e) {}
+      // Не форсим каждый раз — только если write access API нет
+      if (typeof tgWeb.requestWriteAccess !== "function") {
+        try {
+          tgWeb.openTelegramLink("https://t.me/manzshop_bot?start=fromapp");
+        } catch (e) {}
+      }
+    }
+  } catch (e) {
+    console.warn("ensureBotMessagingAccess", e);
+  }
+};
+
+const fetchBroadcastAudience = async () => {
+  for (const url of getUsersApiUrls()) {
+    try {
+      const r = await fetch(url, { method: "GET", cache: "no-store" });
+      const data = await r.json().catch(() => ({}));
+      if (r.ok && data && data.ok) return data;
+    } catch (e) {}
+  }
+  return { ok: false, count: 0, users: [] };
+};
+
+const sendBotBroadcast = async ({ text, photo, buttonText, buttonUrl }) => {
+  const body = JSON.stringify({
+    action: "broadcast",
+    text: text || "",
+    photo: photo || "",
+    buttonText: buttonText || "",
+    buttonUrl: buttonUrl || "",
+  });
+  for (const url of getUsersApiUrls()) {
+    try {
+      const r = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+        cache: "no-store",
+      });
+      const data = await r.json().catch(() => ({}));
+      if (r.ok && data && data.ok !== false) return data;
+      console.warn("[Broadcast] fail", url, data);
+    } catch (e) {
+      console.warn("[Broadcast] error", url, e);
+    }
+  }
+  return null;
+};
+
 const netlifyOrdersPatch = async (orderId, patch) => {
   const body = JSON.stringify({ patch: { id: orderId, ...patch } });
   for (const url of getOrdersApiUrls()) {
@@ -1520,6 +1670,11 @@ export default function App() {
   const [dataReady, setDataReady] = useState(false);
   // CRM form local state (на уровне App — чтобы Modal не размонтировался при re-render)
   const [localBroadcast, setLocalBroadcast] = useState("");
+  const [broadcastPhoto, setBroadcastPhoto] = useState("");
+  const [broadcastBtnText, setBroadcastBtnText] = useState("");
+  const [broadcastBtnUrl, setBroadcastBtnUrl] = useState("");
+  const [broadcastAudience, setBroadcastAudience] = useState(0);
+  const [broadcastSending, setBroadcastSending] = useState(false);
   const [productSearch, setProductSearch] = useState("");
   const [localPromo, setLocalPromo] = useState({ code: "", discount: "", maxUses: "", description: "" });
   const [localProduct, setLocalProduct] = useState(null);
@@ -1861,7 +2016,12 @@ export default function App() {
             return {
               ...local,
               status: newStatus,
-              askReview: r.askReview != null ? !!r.askReview : local.askReview,
+              askReview:
+                r.askReview != null
+                  ? !!r.askReview
+                  : r.status === "Забрать деньги" || r.status === "Деньги получены"
+                    ? true
+                    : local.askReview,
               // трек всегда с сервера (CRM), если пришёл
               trackingNumber:
                 r.trackingNumber != null && String(r.trackingNumber).trim() !== ""
@@ -1895,8 +2055,7 @@ export default function App() {
     }
   }, [reviewPrompt?.orderId, reviewPrompt?.product?.id]);
 
-  // Запрос отзыва: если есть завершённый заказ с askReview — показываем модалку
-  // Если нажали «Позже» — больше не показываем (сохраняем в localStorage)
+  // Запрос отзыва после завершения заказа
   useEffect(() => {
     if (reviewPrompt || orderModalVisible || showAdmin) return;
     if (!orderHistory.length || !products.length) return;
@@ -1909,16 +2068,30 @@ export default function App() {
     } catch (e) {}
 
     for (const order of orderHistory) {
-      if (!order.askReview || order.reviewDone) continue;
-      if (dismissed.includes(order.id)) continue;
-      // Берём первый товар из заказа, который пользователь ещё не оценивал
+      if (order.reviewDone) continue;
+      if (dismissed.includes(order.id) || dismissed.includes(String(order.id))) continue;
+
+      // Флаг с сервера ИЛИ статус завершения — достаточно для запроса отзыва
+      const shouldAsk =
+        !!order.askReview ||
+        order.status === "Забрать деньги" ||
+        order.status === "Деньги получены";
+      if (!shouldAsk) continue;
+
+      let foundProduct = false;
+      let allRated = true;
+
       for (const item of order.items || []) {
-        const product = products.find((p) => p.id === item.id);
+        const product = products.find(
+          (p) => String(p.id) === String(item.id)
+        );
         if (!product) continue;
+        foundProduct = true;
         const alreadyRated = (product.ratings || []).some(
           (r) => String(r.userId) === String(user.id)
         );
         if (!alreadyRated) {
+          allRated = false;
           setReviewPrompt({
             orderId: order.id,
             product,
@@ -1928,10 +2101,17 @@ export default function App() {
           return;
         }
       }
-      // Все товары уже оценены — помечаем заказ
-      setOrderHistory((prev) =>
-        prev.map((o) => (o.id === order.id ? { ...o, reviewDone: true, askReview: false } : o))
-      );
+
+      // Помечаем done только если товары найдены и все уже оценены
+      if (foundProduct && allRated) {
+        setOrderHistory((prev) =>
+          prev.map((o) =>
+            String(o.id) === String(order.id)
+              ? { ...o, reviewDone: true, askReview: false }
+              : o
+          )
+        );
+      }
     }
   }, [orderHistory, products, user.id, reviewPrompt, orderModalVisible, showAdmin]);
 
@@ -1940,6 +2120,23 @@ export default function App() {
       setUsers(prev => [...prev, user]);
     }
   }, [user]);
+
+  // Регистрация + запрос права боту писать (вместо авто-/start, его Telegram не даёт)
+  useEffect(() => {
+    if (!dataReady || !user?.id || String(user.id) === "guest") return;
+    const t = setTimeout(() => {
+      ensureBotMessagingAccess(user).catch(() => {});
+    }, 600);
+    return () => clearTimeout(t);
+  }, [dataReady, user?.id]);
+
+  // При открытии CRM — число получателей
+  useEffect(() => {
+    if (!showAdmin || !isAdmin) return;
+    fetchBroadcastAudience().then((d) => {
+      if (d && d.ok) setBroadcastAudience(Number(d.count) || 0);
+    });
+  }, [showAdmin, isAdmin]);
 
   const currentLevel = LEVELS.find(l => orders >= l.min && orders <= l.max) || LEVELS[0];
   const nextLevel = LEVELS[LEVELS.indexOf(currentLevel) + 1];
@@ -3710,14 +3907,52 @@ export default function App() {
     }
   }, [productDraft, isNewProduct]);
 
-  const handleSendBroadcast = () => {
-    if (!localBroadcast.trim()) {
-      Alert.alert("Ошибка", "Введите текст");
+  const handleSendBroadcast = async () => {
+    const text = (localBroadcast || "").trim();
+    const photo = (broadcastPhoto || "").trim();
+    const buttonText = (broadcastBtnText || "").trim();
+    const buttonUrl = (broadcastBtnUrl || "").trim();
+
+    if (!text && !photo) {
+      Alert.alert("Ошибка", "Введите текст или ссылку на фото");
       return;
     }
-    setBroadcastText(localBroadcast);
-    Alert.alert("Рассылка отправлена", `Сообщение: ${localBroadcast}\nПолучателей: ${users.length}`);
-    setLocalBroadcast("");
+    if (buttonText && !buttonUrl) {
+      Alert.alert("Ошибка", "Укажите ссылку для кнопки");
+      return;
+    }
+    if (buttonUrl && !/^https?:\/\//i.test(buttonUrl)) {
+      Alert.alert("Ошибка", "Ссылка кнопки должна начинаться с https://");
+      return;
+    }
+    if (broadcastSending) return;
+
+    setBroadcastSending(true);
+    showToast("📨 Отправляю рассылку…");
+    try {
+      const result = await sendBotBroadcast({ text, photo, buttonText, buttonUrl });
+      if (!result) {
+        Alert.alert("Ошибка", "Не удалось отправить. Проверьте деплой /api/users");
+        return;
+      }
+      const sent = Number(result.sent) || 0;
+      const failed = Number(result.failed) || 0;
+      const total = Number(result.total) || 0;
+      setBroadcastAudience(total);
+      Alert.alert(
+        "Рассылка",
+        `Отправлено: ${sent}\nОшибок: ${failed}\nВ базе: ${total}` +
+          (result.hint ? `\n\n${result.hint}` : "")
+      );
+      if (sent > 0) {
+        setLocalBroadcast("");
+        setBroadcastPhoto("");
+        setBroadcastBtnText("");
+        setBroadcastBtnUrl("");
+      }
+    } finally {
+      setBroadcastSending(false);
+    }
   };
 
   // Принудительно опубликовать каталог для всех аккаунтов/устройств
@@ -4585,6 +4820,9 @@ export default function App() {
                 })()}
 
                 <Text style={[styles.sectionTitle, theme === "dark" && styles.textDark]}>Рассылка</Text>
+                <Text style={[styles.crmMuted, theme === "dark" && styles.textDark, { marginBottom: 8 }]}>
+                  База: {broadcastAudience} чел. (кто открывал мини-апп). Нужен /start у @manzshop_bot, иначе Telegram не доставит.
+                </Text>
                 <TextInput
                   style={[styles.broadcastInput, theme === "dark" && styles.inputDark]}
                   placeholder="Текст сообщения"
@@ -4595,8 +4833,42 @@ export default function App() {
                   blurOnSubmit={false}
                   textAlignVertical="top"
                 />
-                <TouchableOpacity style={styles.broadcastBtn} onPress={handleSendBroadcast}>
-                  <Text style={styles.buttonText}>📨 Отправить рассылку ({users.length} получателей)</Text>
+                <TextInput
+                  style={[styles.editInput, theme === "dark" && styles.inputDark]}
+                  placeholder="URL фото (необязательно)"
+                  placeholderTextColor="#999"
+                  value={broadcastPhoto}
+                  onChangeText={setBroadcastPhoto}
+                  autoCapitalize="none"
+                  blurOnSubmit={false}
+                />
+                <TextInput
+                  style={[styles.editInput, theme === "dark" && styles.inputDark]}
+                  placeholder="Текст кнопки (необязательно)"
+                  placeholderTextColor="#999"
+                  value={broadcastBtnText}
+                  onChangeText={setBroadcastBtnText}
+                  blurOnSubmit={false}
+                />
+                <TextInput
+                  style={[styles.editInput, theme === "dark" && styles.inputDark]}
+                  placeholder="Ссылка кнопки https://..."
+                  placeholderTextColor="#999"
+                  value={broadcastBtnUrl}
+                  onChangeText={setBroadcastBtnUrl}
+                  autoCapitalize="none"
+                  blurOnSubmit={false}
+                />
+                <TouchableOpacity
+                  style={[styles.broadcastBtn, broadcastSending && { opacity: 0.6 }]}
+                  onPress={handleSendBroadcast}
+                  disabled={broadcastSending}
+                >
+                  <Text style={styles.buttonText}>
+                    {broadcastSending
+                      ? "Отправка…"
+                      : `📨 Отправить рассылку (${broadcastAudience})`}
+                  </Text>
                 </TouchableOpacity>
               </ScrollView>
             </View>
