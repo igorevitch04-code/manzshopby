@@ -116,7 +116,7 @@ const LOGO_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAARgAAAC1CAYAAACE
 
 // Быстрая картинка: серый placeholder + мгновенный показ (без fade)
 // highQuality=true — для страницы товара (w=700)
-const SmartImage = ({ uri, style, resizeMode = "cover", highQuality = false }) => {
+const SmartImage = ({ uri, style, resizeMode = "contain", highQuality = false }) => {
   const [error, setError] = useState(false);
   const bg = { backgroundColor: "#E8E8E6" };
   const w = highQuality ? 700 : 400;
@@ -1351,24 +1351,20 @@ export default function App() {
         setAdminOrders(cloudAdminOrders || []);
         setPromoCodes(cloudPromoCodes || []);
 
-        // Личный каталог (CloudStorage) + общий каталог (pantry) для всех устройств/пользователей
+        // Личный CloudStorage + ОБЩИЙ каталог (все устройства и пользователи)
         let list = cloudProducts && cloudProducts.length > 0 ? cloudProducts : DEFAULT_PRODUCTS;
         try {
-          const sharedProds = await sharedProductsLoad();
+          // несколько попыток — KV/pantry иногда отвечают с задержкой
+          let sharedProds = null;
+          for (let attempt = 0; attempt < 3 && !sharedProds; attempt++) {
+            sharedProds = await sharedProductsLoad();
+            if (!sharedProds || !sharedProds.length) {
+              sharedProds = null;
+              await new Promise((r) => setTimeout(r, 300 * (attempt + 1)));
+            }
+          }
           if (Array.isArray(sharedProds) && sharedProds.length > 0) {
-            // Мержим: shared имеет приоритет по id, локальные base64-картинки сохраняем
-            const map = new Map();
-            list.forEach((p) => map.set(String(p.id), p));
-            sharedProds.forEach((sp) => {
-              const id = String(sp.id);
-              const local = map.get(id);
-              if (local && local.image && String(local.image).startsWith("data:") && !sp.image) {
-                map.set(id, { ...sp, image: local.image });
-              } else {
-                map.set(id, { ...(local || {}), ...sp, image: sp.image || (local && local.image) || "" });
-              }
-            });
-            list = Array.from(map.values());
+            list = mergeProductLists(list, sharedProds);
           }
         } catch (e) {
           console.warn("shared products merge", e);
@@ -2245,47 +2241,26 @@ export default function App() {
   };
 
 
-  // Подтягиваем общий каталог только когда CRM закрыта (чтобы не дёргать форму админа)
+  // Подтягиваем общий каталог для ВСЕХ (и админа на другом устройстве)
   useEffect(() => {
-    if (!dataReady || showAdmin) return;
+    if (!dataReady) return;
     let stopped = false;
     const pullProducts = async () => {
+      if (showAdmin) return; // не дёргаем форму CRM
       try {
         const sharedProds = await sharedProductsLoad();
         if (stopped || !Array.isArray(sharedProds) || sharedProds.length === 0) return;
         setProducts((prev) => {
-          const map = new Map();
-          prev.forEach((p) => map.set(String(p.id), p));
-          let changed = false;
-          sharedProds.forEach((sp) => {
-            const id = String(sp.id);
-            const local = map.get(id);
-            if (!local) {
-              map.set(id, sp);
-              changed = true;
-            } else {
-              const image = (local.image && String(local.image).startsWith("data:"))
-                ? local.image
-                : (sp.image || local.image || "");
-              const merged = { ...local, ...sp, image };
-              if (
-                local.name !== merged.name ||
-                local.price !== merged.price ||
-                local.brand !== merged.brand ||
-                !!local.pinned !== !!merged.pinned ||
-                (local.image || "") !== (merged.image || "")
-              ) {
-                changed = true;
-              }
-              map.set(id, merged);
-            }
-          });
-          return changed ? Array.from(map.values()) : prev;
+          const merged = mergeProductLists(prev, sharedProds);
+          // не обновляем стейт, если состав id + цены/имена те же
+          const prevKey = prev.map((p) => `${p.id}:${p.price}:${p.name}:${p.pinned?1:0}`).join("|");
+          const nextKey = merged.map((p) => `${p.id}:${p.price}:${p.name}:${p.pinned?1:0}`).join("|");
+          return prevKey === nextKey ? prev : merged;
         });
       } catch (e) {}
     };
     pullProducts();
-    const t = setInterval(pullProducts, 30000);
+    const t = setInterval(pullProducts, 20000);
     return () => {
       stopped = true;
       clearInterval(t);
@@ -2443,16 +2418,24 @@ export default function App() {
     setEditingProduct(null);
     setProductDraft(null);
     setIsNewProduct(false);
-    // Публикуем каталог для всех пользователей (URL-картинки; base64 только локально)
+
     const hasDataImage = String(payload.image || "").startsWith("data:");
-    sharedProductsSave(nextProducts).then((ok) => {
-      if (!ok) console.warn("[Products] shared save failed — другие устройства могут не увидеть товар сразу");
-    });
-    if (hasDataImage) {
-      showToast("✅ Сохранено. Для других устройств укажите URL фото (не файл)");
-    } else {
-      showToast("✅ Товар сохранён");
-    }
+    // Публикуем в ОБЩЕЕ хранилище (все устройства + все пользователи)
+    (async () => {
+      let ok = false;
+      for (let attempt = 0; attempt < 3 && !ok; attempt++) {
+        ok = await sharedProductsSave(nextProducts);
+        if (!ok) await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+      }
+      if (!ok) {
+        console.warn("[Products] shared save failed");
+        showToast("⚠️ Товар локально. Общее сохранение не удалось — повторите");
+      } else if (hasDataImage) {
+        showToast("✅ Сохранено. Для всех устройств лучше URL фото, не файл");
+      } else {
+        showToast("✅ Товар виден на всех устройствах");
+      }
+    })();
   };
 
   const cancelProductDraft = () => {
