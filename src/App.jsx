@@ -363,95 +363,148 @@ const refApiAdd = async (key, amount) => {
 
 // ==============================
 // ОБЩЕЕ ХРАНИЛИЩЕ ЗАКАЗОВ (видно админу от всех клиентов)
-// CloudStorage у каждого свой — заказы дублируем в публичный JSON-blob
+// CloudStorage у каждого свой — используем getpantry.cloud (JSON basket)
 // ==============================
 const SHARED_ORDERS_KEY = "manzshop_orders_v1";
 const SHARED_BLOB_KEY = "manzshop_orders_blob_id";
+const SHARED_PANTRY_KEY = "manzshop_pantry_id_v1";
+// Если у вас уже есть pantry — можно вписать сюда вручную:
+const HARDCODED_PANTRY_ID = "";
 
-// Получить общий blob id (один на всех клиентов магазина)
-const getSharedBlobId = async () => {
-  // 1) из localStorage
-  try {
-    if (typeof localStorage !== "undefined") {
-      const local = localStorage.getItem("krost_orders_blob_id");
-      if (local) return local;
-    }
-  } catch (e) {}
-
-  // 2) из общего keyvalue
-  try {
-    const urls = withProxies(
-      `https://keyvalue.immanuel.co/api/KeyVal/GetValue/manzshopby/${SHARED_BLOB_KEY}`
-    );
-    for (const url of urls) {
-      try {
-        const r = await fetch(url, { cache: "no-store", mode: "cors" });
-        if (!r.ok) continue;
-        let text = (await r.text()) || "";
-        text = text.replace(/^"|"$/g, "").trim();
-        if (text && text !== "null" && text.length > 5) {
-          try {
-            if (typeof localStorage !== "undefined") {
-              localStorage.setItem("krost_orders_blob_id", text);
-            }
-          } catch (e) {}
-          return text;
-        }
-      } catch (e) {}
-    }
-  } catch (e) {}
+// --- helpers: общий pantry id ---
+const kvGetString = async (key) => {
+  const urls = withProxies(
+    `https://keyvalue.immanuel.co/api/KeyVal/GetValue/manzshopby/${key}`
+  );
+  for (const url of urls) {
+    try {
+      const r = await fetch(url, { cache: "no-store", mode: "cors" });
+      if (!r.ok) continue;
+      let text = (await r.text()) || "";
+      text = text.replace(/^"|"$/g, "").trim();
+      if (text && text !== "null" && text.length > 3) return text;
+    } catch (e) {}
+  }
   return null;
 };
 
-const setSharedBlobId = async (id) => {
-  if (!id) return;
+const kvSetString = async (key, value) => {
   try {
-    if (typeof localStorage !== "undefined") {
-      localStorage.setItem("krost_orders_blob_id", id);
-    }
-  } catch (e) {}
-  try {
-    const url = `https://keyvalue.immanuel.co/api/KeyVal/UpdateValue/manzshopby/${SHARED_BLOB_KEY}/${encodeURIComponent(
-      id
+    const url = `https://keyvalue.immanuel.co/api/KeyVal/UpdateValue/manzshopby/${key}/${encodeURIComponent(
+      String(value)
     )}`;
     await fetch(url, { method: "POST", mode: "cors", cache: "no-store" });
   } catch (e) {}
 };
 
+const ensurePantryId = async () => {
+  if (HARDCODED_PANTRY_ID) return HARDCODED_PANTRY_ID;
+
+  try {
+    if (typeof localStorage !== "undefined") {
+      const local = localStorage.getItem("krost_pantry_id");
+      if (local) return local;
+    }
+  } catch (e) {}
+
+  // общий id из keyvalue (виден всем клиентам)
+  const remote = await kvGetString(SHARED_PANTRY_KEY);
+  if (remote) {
+    try {
+      if (typeof localStorage !== "undefined") localStorage.setItem("krost_pantry_id", remote);
+    } catch (e) {}
+    return remote;
+  }
+
+  // создаём pantry
+  try {
+    const createUrls = [
+      "https://getpantry.cloud/apiv1/pantry",
+      `https://corsproxy.io/?${encodeURIComponent("https://getpantry.cloud/apiv1/pantry")}`,
+    ];
+    for (const createUrl of createUrls) {
+      try {
+        const r = await fetch(createUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: "manzshop_orders",
+            description: "Shared orders for manzshop mini app",
+          }),
+        });
+        if (r.ok) {
+          const data = await r.json();
+          const id = data?.pantryId || data?.id || null;
+          if (id) {
+            try {
+              if (typeof localStorage !== "undefined") localStorage.setItem("krost_pantry_id", id);
+            } catch (e) {}
+            await kvSetString(SHARED_PANTRY_KEY, id);
+            return id;
+          }
+        }
+      } catch (e) {}
+    }
+  } catch (e) {
+    console.warn("ensurePantryId create", e);
+  }
+
+  // если create не прошёл — ещё раз пробуем прочитать (вдруг другой клиент уже создал)
+  const again = await kvGetString(SHARED_PANTRY_KEY);
+  if (again) return again;
+  return null;
+};
+
+const compactOrder = (o) => ({
+  id: o.id,
+  date: o.date,
+  status: o.status,
+  fullName: o.fullName,
+  phone: o.phone,
+  address: o.address,
+  finalTotal: o.finalTotal,
+  delivery: o.delivery,
+  trackingNumber: o.trackingNumber || null,
+  tgId: o.tgId || null,
+  tgUsername: o.tgUsername || null,
+  freeDelivery: !!o.freeDelivery,
+  items: (o.items || []).map((i) => ({
+    id: i.id,
+    name: i.name,
+    brand: i.brand,
+    size: i.size,
+    price: i.price,
+  })),
+});
+
 const sharedOrdersLoad = async () => {
   try {
-    // 1) jsonblob (основное хранилище)
-    const blobId = await getSharedBlobId();
-    if (blobId) {
-      const urls = withProxies(`https://jsonblob.com/api/jsonBlob/${blobId}`);
+    const pantryId = await ensurePantryId();
+    if (pantryId) {
+      // GET basket
+      const urls = [
+        `https://getpantry.cloud/apiv1/pantry/${pantryId}/basket/orders`,
+        `https://corsproxy.io/?${encodeURIComponent(
+          `https://getpantry.cloud/apiv1/pantry/${pantryId}/basket/orders`
+        )}`,
+      ];
       for (const url of urls) {
-        const j = await safeFetchJson(url, {
-          headers: { Accept: "application/json", "Content-Type": "application/json" },
-        });
-        if (Array.isArray(j)) return j;
-        if (j && Array.isArray(j.orders)) return j.orders;
+        try {
+          const r = await fetch(url, { cache: "no-store", mode: "cors" });
+          if (!r.ok) continue;
+          const data = await r.json();
+          if (Array.isArray(data)) return data;
+          if (data && Array.isArray(data.orders)) return data.orders;
+        } catch (e) {}
       }
     }
 
-    // 2) keyvalue fallback
-    const kvUrls = withProxies(
-      `https://keyvalue.immanuel.co/api/KeyVal/GetValue/manzshopby/${SHARED_ORDERS_KEY}`
-    );
-    for (const url of kvUrls) {
+    // fallback keyvalue
+    const raw = await kvGetString(SHARED_ORDERS_KEY);
+    if (raw) {
       try {
-        const r = await fetch(url, { cache: "no-store", mode: "cors" });
-        if (!r.ok) continue;
-        const text = await r.text();
-        if (!text || text === "null") continue;
-        let parsed = text;
-        try {
-          parsed = JSON.parse(text);
-        } catch (e) {}
-        if (typeof parsed === "string") {
-          try {
-            parsed = JSON.parse(parsed);
-          } catch (e) {}
-        }
+        let parsed = JSON.parse(raw);
+        if (typeof parsed === "string") parsed = JSON.parse(parsed);
         if (Array.isArray(parsed)) return parsed;
         if (parsed && Array.isArray(parsed.orders)) return parsed.orders;
       } catch (e) {}
@@ -463,84 +516,36 @@ const sharedOrdersLoad = async () => {
 };
 
 const sharedOrdersSave = async (orders) => {
-  const list = Array.isArray(orders) ? orders.slice(0, 80) : [];
-  // компактный вид — меньше шанс упереться в лимиты
-  const compact = list.map((o) => ({
-    id: o.id,
-    date: o.date,
-    status: o.status,
-    fullName: o.fullName,
-    phone: o.phone,
-    address: o.address,
-    finalTotal: o.finalTotal,
-    delivery: o.delivery,
-    trackingNumber: o.trackingNumber || null,
-    tgId: o.tgId || null,
-    tgUsername: o.tgUsername || null,
-    freeDelivery: !!o.freeDelivery,
-    items: (o.items || []).map((i) => ({
-      id: i.id,
-      name: i.name,
-      brand: i.brand,
-      size: i.size,
-      price: i.price,
-    })),
-  }));
-  const body = JSON.stringify(compact);
+  const list = (Array.isArray(orders) ? orders : []).slice(0, 60).map(compactOrder);
+  const payload = { orders: list };
 
-  // 1) jsonblob
+  // 1) getpantry (прямой + через corsproxy)
   try {
-    let blobId = await getSharedBlobId();
-
-    if (blobId) {
-      const urls = [
-        `https://jsonblob.com/api/jsonBlob/${blobId}`,
-        `https://corsproxy.io/?${encodeURIComponent(`https://jsonblob.com/api/jsonBlob/${blobId}`)}`,
-      ];
+    const pantryId = await ensurePantryId();
+    if (pantryId) {
+      const base = `https://getpantry.cloud/apiv1/pantry/${pantryId}/basket/orders`;
+      const urls = [base, `https://corsproxy.io/?${encodeURIComponent(base)}`];
       for (const url of urls) {
-        try {
-          const r = await fetch(url, {
-            method: "PUT",
-            headers: { "Content-Type": "application/json", Accept: "application/json" },
-            body,
-          });
-          if (r.ok) return true;
-        } catch (e) {}
-      }
-    }
-
-    // создать blob и опубликовать id для всех
-    try {
-      const r = await fetch("https://jsonblob.com/api/jsonBlob", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body,
-      });
-      if (r.ok) {
-        const loc =
-          r.headers.get("Location") ||
-          r.headers.get("location") ||
-          r.headers.get("X-jsonblob") ||
-          r.headers.get("x-jsonblob") ||
-          "";
-        const id = String(loc).split("/").filter(Boolean).pop();
-        if (id) {
-          await setSharedBlobId(id);
-          return true;
+        for (const method of ["PUT", "POST"]) {
+          try {
+            const r = await fetch(url, {
+              method,
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(payload),
+            });
+            if (r.ok) return true;
+          } catch (e) {}
         }
       }
-    } catch (e) {}
+    }
   } catch (e) {
-    console.warn("sharedOrdersSave jsonblob", e);
+    console.warn("sharedOrdersSave pantry", e);
   }
 
-  // 2) keyvalue fallback
+  // 2) keyvalue fallback (может обрезать очень длинные данные)
   try {
-    const url = `https://keyvalue.immanuel.co/api/KeyVal/UpdateValue/manzshopby/${SHARED_ORDERS_KEY}/${encodeURIComponent(
-      body
-    )}`;
-    const r = await fetch(url, { method: "POST", mode: "cors", cache: "no-store" });
-    if (r.ok) return true;
+    await kvSetString(SHARED_ORDERS_KEY, JSON.stringify(list));
+    return true;
   } catch (e) {
     console.warn("sharedOrdersSave kv", e);
   }
@@ -551,9 +556,10 @@ const sharedOrdersPush = async (order) => {
   try {
     const current = await sharedOrdersLoad();
     const without = current.filter((o) => String(o.id) !== String(order.id));
-    const next = [order, ...without].slice(0, 80);
-    await sharedOrdersSave(next);
-    return next;
+    const next = [compactOrder(order), ...without].slice(0, 60);
+    const ok = await sharedOrdersSave(next);
+    console.log("[Orders] shared push", ok ? "OK" : "FAIL", order.id);
+    return ok ? next : null;
   } catch (e) {
     console.warn("sharedOrdersPush", e);
     return null;
@@ -1295,7 +1301,12 @@ export default function App() {
     setOrderHistory(prev => [order, ...prev]);
     setAdminOrders(prev => [order, ...prev]);
     // Дублируем в общее хранилище — чтобы админ видел заказы всех клиентов
-    sharedOrdersPush(order).catch((e) => console.warn("shared push", e));
+    (async () => {
+      const result = await sharedOrdersPush(order);
+      if (!result) {
+        console.warn("[Orders] Не удалось сохранить заказ в общее хранилище");
+      }
+    })();
     // Увеличиваем счётчик использований промокода
     if (promoCode) {
       const codeUp = promoCode.toUpperCase();
@@ -1523,28 +1534,38 @@ export default function App() {
   };
 
   // Подтянуть заказы всех клиентов из общего хранилища (когда открыта CRM)
-  const syncSharedOrders = async () => {
+  const syncSharedOrders = async (showFeedback = false) => {
     try {
       const remote = await sharedOrdersLoad();
-      if (!Array.isArray(remote) || remote.length === 0) return;
+      if (!Array.isArray(remote)) {
+        if (showFeedback) showToast("Не удалось загрузить общие заказы");
+        return 0;
+      }
+      if (remote.length === 0) {
+        if (showFeedback) showToast("Общих заказов пока нет");
+        return 0;
+      }
+      let added = 0;
       setAdminOrders((prev) => {
         const map = new Map();
-        // Сначала локальные
         prev.forEach((o) => map.set(String(o.id), o));
-        // Потом удалённые (не перезаписываем более новые локальные статусы без нужды)
         remote.forEach((o) => {
           const id = String(o.id);
           if (!map.has(id)) {
+            added += 1;
             map.set(id, o);
           } else {
-            // мержим: берём более полный объект
             const local = map.get(id);
+            // remote дополняет локальные данные
             map.set(id, {
-              ...o,
               ...local,
-              // если у remote есть трек/статус, а локально пусто — подтягиваем
-              status: local.status || o.status,
-              trackingNumber: local.trackingNumber || o.trackingNumber || null,
+              ...o,
+              status: o.status || local.status,
+              trackingNumber: o.trackingNumber || local.trackingNumber || null,
+              phone: o.phone || local.phone,
+              fullName: o.fullName || local.fullName,
+              address: o.address || local.address,
+              items: (o.items && o.items.length ? o.items : local.items) || [],
             });
           }
         });
@@ -1554,8 +1575,14 @@ export default function App() {
           return db - da;
         });
       });
+      if (showFeedback) {
+        showToast(added > 0 ? `Загружено новых заказов: ${added}` : `Синхронизировано: ${remote.length}`);
+      }
+      return remote.length;
     } catch (e) {
       console.warn("syncSharedOrders", e);
+      if (showFeedback) showToast("Ошибка синхронизации заказов");
+      return 0;
     }
   };
 
@@ -2614,7 +2641,18 @@ export default function App() {
             </View>
 
             {/* ORDERS TABLE */}
-            <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Управление заказами</Text>
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+              <Text style={[styles.sectionTitle, isDark && styles.textDark, { marginBottom: 0 }]}>
+                Управление заказами
+              </Text>
+              <TouchableOpacity
+                style={[styles.productAdminBtn, { flex: 0, paddingHorizontal: 12, paddingVertical: 8 }]}
+                onPress={() => syncSharedOrders(true)}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.productAdminBtnText}>Обновить</Text>
+              </TouchableOpacity>
+            </View>
             {adminOrders.length === 0 ? (
               <Text style={[styles.empty, isDark && styles.textDark]}>Заказов пока нет</Text>
             ) : (
