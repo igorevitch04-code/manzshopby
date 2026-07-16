@@ -31,7 +31,7 @@ const getTelegramUser = () => {
     } catch (e) {}
     return null;
   };
-
+ 
   try {
     const w = typeof window !== "undefined" ? window : null;
     const tgWeb = w && w.Telegram && w.Telegram.WebApp;
