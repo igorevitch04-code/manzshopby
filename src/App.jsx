@@ -1034,11 +1034,52 @@ export default function App() {
   const addRating = (productId, rating, comment) => {
     setProducts(prev => prev.map(p => {
       if (p.id === productId) {
-        const newRatings = [...p.ratings, { userId: user.id, rating, comment, date: new Date().toISOString() }];
-        const avg = newRatings.reduce((s, r) => s + r.rating, 0) / newRatings.length;
+        // Отзыв создаётся как pending — виден только после одобрения админом
+        const newRatings = [...p.ratings, {
+          userId: user.id,
+          userName: user.name || "Пользователь",
+          rating,
+          comment,
+          date: new Date().toISOString(),
+          approved: false,
+          adminReply: null,
+        }];
+        // Средний рейтинг считаем только по одобренным
+        const approved = newRatings.filter(r => r.approved !== false);
+        const avg = approved.length > 0
+          ? approved.reduce((s, r) => s + r.rating, 0) / approved.length
+          : 0;
         return { ...p, ratings: newRatings, averageRating: avg };
       }
       return p;
+    }));
+  };
+
+  // Одобрить / отклонить отзыв (админ)
+  const moderateReview = (productId, reviewIndex, approve) => {
+    setProducts(prev => prev.map(p => {
+      if (p.id !== productId) return p;
+      const newRatings = p.ratings.map((r, i) => {
+        if (i !== reviewIndex) return r;
+        if (approve) return { ...r, approved: true };
+        return null; // отклонить = удалить
+      }).filter(Boolean);
+      const approved = newRatings.filter(r => r.approved !== false);
+      const avg = approved.length > 0
+        ? approved.reduce((s, r) => s + r.rating, 0) / approved.length
+        : 0;
+      return { ...p, ratings: newRatings, averageRating: avg };
+    }));
+  };
+
+  // Ответ админа на отзыв
+  const replyToReview = (productId, reviewIndex, replyText) => {
+    setProducts(prev => prev.map(p => {
+      if (p.id !== productId) return p;
+      const newRatings = p.ratings.map((r, i) =>
+        i === reviewIndex ? { ...r, adminReply: replyText } : r
+      );
+      return { ...p, ratings: newRatings };
     }));
   };
 
@@ -1641,9 +1682,14 @@ export default function App() {
         {selectedProduct.description && (
           <Text style={[styles.descriptionText, isDark && styles.textDark]}>{selectedProduct.description}</Text>
         )}
-        {selectedProduct.averageRating > 0 && (
-          <Text style={[styles.ratingDisplay, isDark && styles.textDark]}>★ {selectedProduct.averageRating.toFixed(1)} ({selectedProduct.ratings.length} отзывов)</Text>
-        )}
+        {(() => {
+          const approvedReviews = (selectedProduct.ratings || []).filter(r => r.approved !== false);
+          return approvedReviews.length > 0 ? (
+            <Text style={[styles.ratingDisplay, isDark && styles.textDark]}>
+              ★ {selectedProduct.averageRating.toFixed(1)} ({approvedReviews.length} отзывов)
+            </Text>
+          ) : null;
+        })()}
 
         <View style={styles.sizeBox}>
           <Text style={[styles.sizeTitle, isDark && styles.textDark]}>Выберите размер</Text>
@@ -1665,15 +1711,25 @@ export default function App() {
         </TouchableOpacity>
 
         <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Отзывы</Text>
-        {selectedProduct.ratings.length > 0 ? (
-          selectedProduct.ratings.slice(0, 5).map((r, idx) => (
-            <View key={idx} style={[styles.reviewItem, isDark && styles.reviewItemDark]}>
-              <Text style={[styles.reviewRating, isDark && styles.textDark]}>{"★".repeat(r.rating)}</Text>
-              <Text style={[styles.reviewComment, isDark && styles.textDark]}>{r.comment}</Text>
-              <Text style={[styles.reviewDate, isDark && styles.textDark]}>{new Date(r.date).toLocaleDateString()}</Text>
-            </View>
-          ))
-        ) : <Text style={[styles.noReviews, isDark && styles.textDark]}>Пока нет отзывов</Text>}
+        {(() => {
+          const approvedReviews = (selectedProduct.ratings || []).filter(r => r.approved !== false);
+          return approvedReviews.length > 0 ? (
+            approvedReviews.slice(0, 5).map((r, idx) => (
+              <View key={idx} style={[styles.reviewItem, isDark && styles.reviewItemDark]}>
+                <Text style={[styles.reviewRating, isDark && styles.textDark]}>{"★".repeat(r.rating)}</Text>
+                <Text style={[styles.reviewComment, isDark && styles.textDark]}>{r.comment}</Text>
+                {r.adminReply ? (
+                  <Text style={[styles.reviewComment, isDark && styles.textDark, { marginTop: 4, fontStyle: "italic", color: "#555" }]}>
+                    Ответ магазина: {r.adminReply}
+                  </Text>
+                ) : null}
+                <Text style={[styles.reviewDate, isDark && styles.textDark]}>{new Date(r.date).toLocaleDateString()}</Text>
+              </View>
+            ))
+          ) : (
+            <Text style={[styles.noReviews, isDark && styles.textDark]}>Пока нет отзывов</Text>
+          );
+        })()}
 
         {hasPurchased && (
           <View style={[styles.reviewForm, isDark && styles.reviewFormDark]}>
@@ -1690,7 +1746,7 @@ export default function App() {
                 </TouchableOpacity>
               ))}
             </View>
-            <TextInput style={[styles.reviewInput, isDark && styles.inputDark]} placeholder="Ваш комментарий..." placeholderTextColor={isDark ? "#999" : "#888"} value={comment} onChangeText={setComment} />
+            <TextInput style={[styles.reviewInput, isDark && styles.inputDark]} placeholder="Ваш комментарий..." placeholderTextColor={isDark ? "#999" : "#888"} value={comment} onChangeText={setComment} blurOnSubmit={false} />
             <TouchableOpacity style={styles.submitReview} onPress={submitRating}>
               <Text style={styles.buttonText}>Отправить</Text>
             </TouchableOpacity>
@@ -2117,8 +2173,7 @@ export default function App() {
                     <Text style={[styles.crmCell, styles.crmHead, { width: 70, textAlign: "center" }]}>#</Text>
                     <Text style={[styles.crmCell, styles.crmHead, { width: 120, textAlign: "center" }]}>Дата / Время</Text>
                     <Text style={[styles.crmCell, styles.crmHead, { width: 180, textAlign: "center" }]}>Статус</Text>
-                    <Text style={[styles.crmCell, styles.crmHead, { width: 130, textAlign: "center" }]}>ФИО</Text>
-                    <Text style={[styles.crmCell, styles.crmHead, { width: 120, textAlign: "center" }]}>Телефон</Text>
+                    <Text style={[styles.crmCell, styles.crmHead, { width: 200, textAlign: "center" }]}>Данные</Text>
                     <Text style={[styles.crmCell, styles.crmHead, { width: 140, textAlign: "center" }]}>Telegram</Text>
                     <Text style={[styles.crmCell, styles.crmHead, { width: 140, textAlign: "center" }]}>Трек-номер</Text>
                     <Text style={[styles.crmCell, styles.crmHead, { width: 180, textAlign: "center" }]}>Товар</Text>
@@ -2182,12 +2237,17 @@ export default function App() {
                             </View>
                           )}
                         </View>
-                        <Text style={[styles.crmCell, isDark && styles.textDark, { width: 130 }]} numberOfLines={2}>
-                          {order.fullName || "—"}
-                        </Text>
-                        <Text style={[styles.crmCell, isDark && styles.textDark, { width: 120, fontSize: 12 }]} numberOfLines={1}>
-                          {order.phone || "—"}
-                        </Text>
+                        <View style={[styles.crmCell, { width: 200 }]}>
+                          <Text style={[isDark && styles.textDark, { fontSize: 12, fontWeight: "700" }]} numberOfLines={1}>
+                            {order.fullName || "—"}
+                          </Text>
+                          <Text style={[isDark && styles.textDark, { fontSize: 11, color: "#666", marginTop: 2 }]} numberOfLines={2}>
+                            {order.address || "—"}
+                          </Text>
+                          <Text style={[isDark && styles.textDark, { fontSize: 11, marginTop: 2 }]} numberOfLines={1}>
+                            {order.phone || "—"}
+                          </Text>
+                        </View>
                         <View style={[styles.crmCell, { width: 140 }]}>
                           {tgLink ? (
                             <TouchableOpacity
@@ -2440,6 +2500,54 @@ export default function App() {
                 </View>
               </View>
             ))}
+
+            {/* Модерация отзывов */}
+            <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Модерация отзывов</Text>
+            {(() => {
+              const pending = [];
+              products.forEach((p) => {
+                (p.ratings || []).forEach((r, idx) => {
+                  if (r.approved === false) {
+                    pending.push({ product: p, review: r, index: idx });
+                  }
+                });
+              });
+              if (pending.length === 0) {
+                return (
+                  <Text style={[styles.empty, isDark && styles.textDark]}>Нет отзывов на проверке</Text>
+                );
+              }
+              return pending.map(({ product, review, index }) => (
+                <View key={`${product.id}-${index}`} style={[styles.productEdit, isDark && styles.productEditDark]}>
+                  <Text style={[styles.productName, isDark && styles.textDark]}>
+                    {product.brand} {product.name}
+                  </Text>
+                  <Text style={[styles.reviewRating, isDark && styles.textDark]}>
+                    {"★".repeat(review.rating)}{"☆".repeat(5 - review.rating)}
+                  </Text>
+                  <Text style={[styles.reviewComment, isDark && styles.textDark]}>
+                    {review.comment || "(без текста)"}
+                  </Text>
+                  <Text style={[styles.reviewDate, isDark && styles.textDark]}>
+                    {review.userName || "Пользователь"} · {new Date(review.date).toLocaleDateString("ru-RU")}
+                  </Text>
+                  <View style={{ flexDirection: "row", marginTop: 8, gap: 8 }}>
+                    <TouchableOpacity
+                      style={[styles.saveBtn, { flex: 1, backgroundColor: "#22c55e" }]}
+                      onPress={() => moderateReview(product.id, index, true)}
+                    >
+                      <Text style={styles.buttonText}>✓ Одобрить</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.saveBtn, { flex: 1, backgroundColor: "#ef4444" }]}
+                      onPress={() => moderateReview(product.id, index, false)}
+                    >
+                      <Text style={styles.buttonText}>✕ Отклонить</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ));
+            })()}
 
             {/* Broadcast */}
             <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Рассылка</Text>
