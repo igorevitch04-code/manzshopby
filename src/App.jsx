@@ -484,6 +484,8 @@ export default function App() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [restoredProductId] = useState(getInitialProductId);
   const [orderModalVisible, setOrderModalVisible] = useState(false);
+  // Запрос отзыва после завершения заказа
+  const [reviewPrompt, setReviewPrompt] = useState(null); // { orderId, product, rating, comment }
   const [useBonus, setUseBonus] = useState(false);
   const [promoCode, setPromoCode] = useState("");
   const [minPrice, setMinPrice] = useState("");
@@ -713,6 +715,37 @@ export default function App() {
       }
     }
   }, [products, restoredProductId]);
+
+  // Запрос отзыва: если есть завершённый заказ с askReview — показываем модалку
+  useEffect(() => {
+    if (reviewPrompt || orderModalVisible || showAdmin) return;
+    if (!orderHistory.length || !products.length) return;
+
+    for (const order of orderHistory) {
+      if (!order.askReview || order.reviewDone) continue;
+      // Берём первый товар из заказа, который пользователь ещё не оценивал
+      for (const item of order.items || []) {
+        const product = products.find((p) => p.id === item.id);
+        if (!product) continue;
+        const alreadyRated = (product.ratings || []).some(
+          (r) => String(r.userId) === String(user.id)
+        );
+        if (!alreadyRated) {
+          setReviewPrompt({
+            orderId: order.id,
+            product,
+            rating: 0,
+            comment: "",
+          });
+          return;
+        }
+      }
+      // Все товары уже оценены — помечаем заказ
+      setOrderHistory((prev) =>
+        prev.map((o) => (o.id === order.id ? { ...o, reviewDone: true, askReview: false } : o))
+      );
+    }
+  }, [orderHistory, products, user.id, reviewPrompt, orderModalVisible, showAdmin]);
 
   useEffect(() => {
     if (user.id !== "guest" && !users.some(u => u.id === user.id)) {
@@ -1394,8 +1427,22 @@ export default function App() {
   };
 
   const changeStatus = (orderId, newStatus) => {
-    setAdminOrders((prev) => prev.map((o) => (o.id === orderId ? { ...o, status: newStatus } : o)));
-    setOrderHistory((prev) => prev.map((o) => (o.id === orderId ? { ...o, status: newStatus } : o)));
+    // При завершении заказа просим клиента оставить отзыв
+    const completed = newStatus === "Забрать деньги" || newStatus === "Деньги получены";
+    setAdminOrders((prev) =>
+      prev.map((o) =>
+        o.id === orderId
+          ? { ...o, status: newStatus, ...(completed ? { askReview: true } : {}) }
+          : o
+      )
+    );
+    setOrderHistory((prev) =>
+      prev.map((o) =>
+        o.id === orderId
+          ? { ...o, status: newStatus, ...(completed ? { askReview: true } : {}) }
+          : o
+      )
+    );
   };
 
   const updateTracking = (orderId, trackingNumber) => {
@@ -1676,7 +1723,7 @@ export default function App() {
           </TouchableOpacity>
 
           <TouchableOpacity style={styles.headerBtn} onPress={() => shareProduct(selectedProduct)}>
-            <Text style={styles.headerBtnText}>📤</Text>
+            <Text style={styles.headerBtnText}>↗</Text>
           </TouchableOpacity>
         </View>
 
@@ -2621,6 +2668,99 @@ export default function App() {
     );
   };
 
+  // ---- Review Prompt (после завершения заказа) ----
+  const ReviewPromptModal = () => {
+    const { theme } = useTheme();
+    const isDark = theme === "dark";
+    if (!reviewPrompt) return null;
+
+    const { product, rating, comment, orderId } = reviewPrompt;
+
+    const setPromptRating = (r) => setReviewPrompt((p) => (p ? { ...p, rating: r } : p));
+    const setPromptComment = (t) => setReviewPrompt((p) => (p ? { ...p, comment: t } : p));
+
+    const submit = () => {
+      if (!rating) {
+        Alert.alert("Оценка", "Поставьте оценку от 1 до 5");
+        return;
+      }
+      addRating(product.id, rating, comment || "");
+      // Помечаем заказ как обработанный по отзыву
+      setOrderHistory((prev) =>
+        prev.map((o) => (o.id === orderId ? { ...o, reviewDone: true, askReview: false } : o))
+      );
+      setAdminOrders((prev) =>
+        prev.map((o) => (o.id === orderId ? { ...o, reviewDone: true, askReview: false } : o))
+      );
+      setReviewPrompt(null);
+      showToast("Спасибо за отзыв!");
+    };
+
+    const skip = () => {
+      setOrderHistory((prev) =>
+        prev.map((o) => (o.id === orderId ? { ...o, reviewDone: true, askReview: false } : o))
+      );
+      setAdminOrders((prev) =>
+        prev.map((o) => (o.id === orderId ? { ...o, reviewDone: true, askReview: false } : o))
+      );
+      setReviewPrompt(null);
+    };
+
+    return (
+      <Modal transparent visible={!!reviewPrompt} animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalView, isDark && styles.modalViewDark]}>
+            <Text style={[styles.modalTitle, isDark && styles.textDark]}>Оцените заказ</Text>
+            <Text style={[styles.brand, isDark && styles.textDark, { textAlign: "center", marginBottom: 8 }]}>
+              {product.brand} {product.name}
+            </Text>
+            {!!product.image && (
+              <SmartImage
+                uri={product.image}
+                style={{ width: 100, height: 100, borderRadius: 16, alignSelf: "center", marginBottom: 12 }}
+              />
+            )}
+            <View style={[styles.stars, { justifyContent: "center" }]}>
+              {[1, 2, 3, 4, 5].map((s) => (
+                <TouchableOpacity key={s} onPress={() => setPromptRating(s)}>
+                  <Text
+                    style={[
+                      styles.star,
+                      rating >= s
+                        ? isDark
+                          ? styles.starActiveDark
+                          : styles.starActive
+                        : styles.starInactive,
+                    ]}
+                  >
+                    {rating >= s ? "★" : "☆"}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <TextInput
+              style={[styles.reviewInput, isDark && styles.inputDark]}
+              placeholder="Комментарий (необязательно)"
+              placeholderTextColor={isDark ? "#999" : "#888"}
+              value={comment}
+              onChangeText={setPromptComment}
+              multiline
+              blurOnSubmit={false}
+            />
+            <View style={styles.modalButtons}>
+              <TouchableOpacity style={styles.modalCancel} onPress={skip}>
+                <Text>Позже</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.modalConfirm} onPress={submit}>
+                <Text style={{ color: "#fff", fontWeight: "700" }}>Отправить</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    );
+  };
+
   // ---- OrderModal ----
   const OrderModal = () => {
     const [fullName, setFullName] = useState("");
@@ -2860,6 +3000,7 @@ export default function App() {
         </View>
         <Menu />
         <OrderModal />
+        <ReviewPromptModal />
         <AdminPanel />
         <Toast message={toastMessage} visible={toastVisible} onHide={hideToast} />
       </View>
