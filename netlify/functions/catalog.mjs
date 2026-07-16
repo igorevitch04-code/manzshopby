@@ -1,10 +1,9 @@
 /**
- * Общий каталог товаров — БЕЗ npm-пакета @netlify/blobs
- * Использует только context.blobs (встроен в Netlify Functions)
+ * Каталог товаров без Netlify Blobs.
+ * Хранение: jsonblob.com + указатель id в keyvalue (всё с сервера, без CORS).
  *
- * GET  https://manzshop.netlify.app/api/catalog
- * POST https://manzshop.netlify.app/api/catalog
- * body: { "products": [ ... ] }
+ * GET  /api/catalog
+ * POST /api/catalog  body: { products: [...] }
  */
 
 const corsHeaders = {
@@ -14,6 +13,9 @@ const corsHeaders = {
   "Content-Type": "application/json; charset=utf-8",
   "Cache-Control": "no-store",
 };
+
+const KV_APP = "manzshopby";
+const POINTER_KEY = "catalog_blob_id_v1";
 
 const json = (status, data) =>
   new Response(JSON.stringify(data), { status, headers: corsHeaders });
@@ -41,35 +43,113 @@ const normalizeProducts = (list) =>
     };
   });
 
-export default async (req, context) => {
+// --- keyvalue pointer ---
+async function kvGet(key) {
+  const url = `https://keyvalue.immanuel.co/api/KeyVal/GetValue/${KV_APP}/${encodeURIComponent(key)}`;
+  try {
+    const r = await fetch(url, { cache: "no-store" });
+    if (!r.ok) return null;
+    let t = (await r.text()) || "";
+    t = t.replace(/^"|"$/g, "").trim();
+    if (!t || t === "null" || t === "undefined") return null;
+    return t;
+  } catch (e) {
+    console.warn("kvGet", e);
+    return null;
+  }
+}
+
+async function kvSet(key, value) {
+  const url =
+    `https://keyvalue.immanuel.co/api/KeyVal/UpdateValue/${KV_APP}/` +
+    `${encodeURIComponent(key)}/${encodeURIComponent(String(value))}`;
+  try {
+    const r = await fetch(url, { method: "GET", cache: "no-store" });
+    return r.ok;
+  } catch (e) {
+    console.warn("kvSet", e);
+    return false;
+  }
+}
+
+// --- jsonblob ---
+async function blobRead(id) {
+  if (!id) return null;
+  try {
+    const r = await fetch(`https://jsonblob.com/api/jsonBlob/${id}`, {
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+    });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch (e) {
+    console.warn("blobRead", e);
+    return null;
+  }
+}
+
+async function blobWrite(id, payload) {
+  const body = JSON.stringify(payload);
+  if (id) {
+    try {
+      const r = await fetch(`https://jsonblob.com/api/jsonBlob/${id}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body,
+      });
+      if (r.ok || r.status === 200 || r.status === 201) return id;
+    } catch (e) {
+      console.warn("blob PUT", e);
+    }
+  }
+  try {
+    const r = await fetch("https://jsonblob.com/api/jsonBlob", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body,
+    });
+    if (r.ok || r.status === 201) {
+      const x =
+        r.headers.get("X-jsonblob") ||
+        r.headers.get("x-jsonblob") ||
+        r.headers.get("X-Jsonblob");
+      if (x) return String(x).trim();
+      const loc = r.headers.get("Location") || r.headers.get("location") || "";
+      const parts = loc.split("/").filter(Boolean);
+      if (parts.length) return parts[parts.length - 1];
+    }
+  } catch (e) {
+    console.warn("blob POST", e);
+  }
+  return null;
+}
+
+export default async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("", { status: 204, headers: corsHeaders });
   }
 
   try {
-    if (!context || !context.blobs || typeof context.blobs.getStore !== "function") {
-      return json(500, {
-        ok: false,
-        error: "blobs_unavailable",
-        hint: "context.blobs недоступен на этой платформе/плане",
-        products: [],
-      });
-    }
-
-    const store = context.blobs.getStore("manzshop-catalog");
-
     if (req.method === "GET") {
-      let data = null;
-      try {
-        data = await store.get("products", { type: "json" });
-      } catch (e) {
-        data = null;
-      }
-      const products = data && Array.isArray(data.products) ? data.products : [];
+      const blobId = await kvGet(POINTER_KEY);
+      const data = blobId ? await blobRead(blobId) : null;
+      const products =
+        data && Array.isArray(data.products)
+          ? data.products
+          : Array.isArray(data)
+            ? data
+            : [];
       return json(200, {
         ok: true,
         products,
         updatedAt: (data && data.updatedAt) || null,
+        storage: blobId ? "jsonblob" : "empty",
       });
     }
 
@@ -84,18 +164,27 @@ export default async (req, context) => {
       const payload = {
         products,
         updatedAt: new Date().toISOString(),
+        v: 1,
       };
-      if (typeof store.setJSON === "function") {
-        await store.setJSON("products", payload);
-      } else {
-        await store.set("products", JSON.stringify(payload), {
-          contentType: "application/json",
+
+      let blobId = await kvGet(POINTER_KEY);
+      const written = await blobWrite(blobId, payload);
+      if (!written) {
+        return json(500, {
+          ok: false,
+          error: "blob_write_failed",
+          products: [],
         });
       }
+      if (written !== blobId) {
+        await kvSet(POINTER_KEY, written);
+      }
+
       return json(200, {
         ok: true,
         count: products.length,
         updatedAt: payload.updatedAt,
+        storage: "jsonblob",
       });
     }
 
