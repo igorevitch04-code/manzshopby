@@ -717,12 +717,21 @@ export default function App() {
   }, [products, restoredProductId]);
 
   // Запрос отзыва: если есть завершённый заказ с askReview — показываем модалку
+  // Если нажали «Позже» — больше не показываем (сохраняем в localStorage)
   useEffect(() => {
     if (reviewPrompt || orderModalVisible || showAdmin) return;
     if (!orderHistory.length || !products.length) return;
 
+    let dismissed = [];
+    try {
+      if (typeof localStorage !== "undefined") {
+        dismissed = JSON.parse(localStorage.getItem("krost_dismissed_reviews") || "[]");
+      }
+    } catch (e) {}
+
     for (const order of orderHistory) {
       if (!order.askReview || order.reviewDone) continue;
+      if (dismissed.includes(order.id)) continue;
       // Берём первый товар из заказа, который пользователь ещё не оценивал
       for (const item of order.items || []) {
         const product = products.find((p) => p.id === item.id);
@@ -1580,36 +1589,36 @@ export default function App() {
     const [localMin, setLocalMin] = useState(minPrice);
     const [localMax, setLocalMax] = useState(maxPrice);
     const [localBrand, setLocalBrand] = useState(selectedBrand);
+    const [sortBy, setSortBy] = useState(null); // null | "asc" | "desc"
+    const [filtersOpen, setFiltersOpen] = useState(false);
     const [localPage, setLocalPage] = useState(1);
     const [localLoading, setLocalLoading] = useState(false);
 
-    // Фильтруем локально — родитель не перерисовывается на каждую букву
-    const localFiltered = products.filter(p => {
+    // Фильтруем и сортируем локально
+    let localFiltered = products.filter(p => {
       const q = localSearch.toLowerCase();
       const matchName = p.name.toLowerCase().includes(q) || p.brand.toLowerCase().includes(q);
       const matchBrand = localBrand ? p.brand === localBrand : true;
       const matchPrice = (localMin === "" || p.price >= parseInt(localMin)) && (localMax === "" || p.price <= parseInt(localMax));
       return matchName && matchBrand && matchPrice;
     });
+    if (sortBy === "asc") {
+      localFiltered = [...localFiltered].sort((a, b) => a.price - b.price);
+    } else if (sortBy === "desc") {
+      localFiltered = [...localFiltered].sort((a, b) => b.price - a.price);
+    }
+
     const LOCAL_PAGE_SIZE = 4;
     const localPaginated = localFiltered.slice(0, localPage * LOCAL_PAGE_SIZE);
     const localHasMore = localPaginated.length < localFiltered.length;
 
+    const activeFiltersCount =
+      (localBrand ? 1 : 0) +
+      (sortBy ? 1 : 0) +
+      (localMin !== "" || localMax !== "" ? 1 : 0);
+
     const handleSearchChange = (text) => {
       setLocalSearch(text);
-      setLocalPage(1);
-    };
-    const handleBrand = (b) => {
-      setLocalBrand(b);
-      setLocalPage(1);
-      setSelectedBrand(b); // синхронизируем с родителем
-    };
-    const handleMin = (t) => {
-      setLocalMin(t);
-      setLocalPage(1);
-    };
-    const handleMax = (t) => {
-      setLocalMax(t);
       setLocalPage(1);
     };
     const handleLoadMore = () => {
@@ -1619,6 +1628,21 @@ export default function App() {
         setLocalPage(prev => prev + 1);
         setLocalLoading(false);
       }, 400);
+    };
+    const resetFilters = () => {
+      setLocalBrand(null);
+      setSelectedBrand(null);
+      setLocalMin("");
+      setLocalMax("");
+      setSortBy(null);
+      setLocalPage(1);
+    };
+    const applyFilters = () => {
+      setSelectedBrand(localBrand);
+      setMinPrice(localMin);
+      setMaxPrice(localMax);
+      setLocalPage(1);
+      setFiltersOpen(false);
     };
 
     return (
@@ -1635,36 +1659,104 @@ export default function App() {
           autoCapitalize="none"
           returnKeyType="search"
         />
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterScroll} contentContainerStyle={styles.filterContent} keyboardShouldPersistTaps="handled">
-          <TouchableOpacity style={[styles.filterChip, localBrand === null && styles.filterChipActive]} onPress={() => handleBrand(null)}>
-            <Text style={localBrand === null && styles.filterChipTextActive}>Все</Text>
-          </TouchableOpacity>
-          {brands.map(b => (
-            <TouchableOpacity key={b} style={[styles.filterChip, localBrand === b && styles.filterChipActive]} onPress={() => handleBrand(b)}>
-              <Text style={localBrand === b && styles.filterChipTextActive}>{b}</Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-        <View style={styles.priceFilter}>
-          <TextInput
-            style={[styles.priceInput, isDark && styles.inputDark]}
-            placeholder="Цена от"
-            placeholderTextColor={isDark ? "#999" : "#888"}
-            value={localMin}
-            onChangeText={handleMin}
-            keyboardType="numeric"
-            blurOnSubmit={false}
-          />
-          <TextInput
-            style={[styles.priceInput, isDark && styles.inputDark]}
-            placeholder="до"
-            placeholderTextColor={isDark ? "#999" : "#888"}
-            value={localMax}
-            onChangeText={handleMax}
-            keyboardType="numeric"
-            blurOnSubmit={false}
-          />
-        </View>
+
+        {/* Кнопка Фильтры */}
+        <TouchableOpacity
+          style={[
+            styles.filterChip,
+            styles.filterChipActive,
+            { alignSelf: "flex-start", marginBottom: 12, paddingHorizontal: 18 },
+          ]}
+          onPress={() => setFiltersOpen(true)}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.filterChipTextActive}>
+            Фильтры{activeFiltersCount > 0 ? ` · ${activeFiltersCount}` : ""}
+          </Text>
+        </TouchableOpacity>
+
+        {/* Модалка фильтров */}
+        <Modal visible={filtersOpen} transparent animationType="fade" onRequestClose={() => setFiltersOpen(false)}>
+          <View style={styles.modalOverlay}>
+            <View style={[styles.modalView, isDark && styles.modalViewDark, { maxHeight: "85%" }]}>
+              <Text style={[styles.modalTitle, isDark && styles.textDark]}>Фильтры</Text>
+
+              <Text style={[styles.sizeTitle, isDark && styles.textDark, { marginBottom: 8 }]}>Сортировка</Text>
+              <View style={{ flexDirection: "row", flexWrap: "wrap", marginBottom: 16 }}>
+                {[
+                  { key: null, label: "По умолчанию" },
+                  { key: "asc", label: "Цена ↑" },
+                  { key: "desc", label: "Цена ↓" },
+                ].map((opt) => (
+                  <TouchableOpacity
+                    key={String(opt.key)}
+                    style={[
+                      styles.filterChip,
+                      sortBy === opt.key && styles.filterChipActive,
+                      { marginBottom: 6 },
+                    ]}
+                    onPress={() => setSortBy(opt.key)}
+                  >
+                    <Text style={sortBy === opt.key ? styles.filterChipTextActive : null}>
+                      {opt.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              <Text style={[styles.sizeTitle, isDark && styles.textDark, { marginBottom: 8 }]}>Бренд</Text>
+              <View style={{ flexDirection: "row", flexWrap: "wrap", marginBottom: 16 }}>
+                <TouchableOpacity
+                  style={[styles.filterChip, localBrand === null && styles.filterChipActive, { marginBottom: 6 }]}
+                  onPress={() => setLocalBrand(null)}
+                >
+                  <Text style={localBrand === null ? styles.filterChipTextActive : null}>Все</Text>
+                </TouchableOpacity>
+                {brands.map((b) => (
+                  <TouchableOpacity
+                    key={b}
+                    style={[styles.filterChip, localBrand === b && styles.filterChipActive, { marginBottom: 6 }]}
+                    onPress={() => setLocalBrand(b)}
+                  >
+                    <Text style={localBrand === b ? styles.filterChipTextActive : null}>{b}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              <Text style={[styles.sizeTitle, isDark && styles.textDark, { marginBottom: 8 }]}>Цена</Text>
+              <View style={styles.priceFilter}>
+                <TextInput
+                  style={[styles.priceInput, isDark && styles.inputDark]}
+                  placeholder="от"
+                  placeholderTextColor={isDark ? "#999" : "#888"}
+                  value={localMin}
+                  onChangeText={setLocalMin}
+                  keyboardType="numeric"
+                  blurOnSubmit={false}
+                />
+                <TextInput
+                  style={[styles.priceInput, isDark && styles.inputDark]}
+                  placeholder="до"
+                  placeholderTextColor={isDark ? "#999" : "#888"}
+                  value={localMax}
+                  onChangeText={setLocalMax}
+                  keyboardType="numeric"
+                  blurOnSubmit={false}
+                />
+              </View>
+
+              <View style={styles.modalButtons}>
+                <TouchableOpacity style={styles.modalCancel} onPress={resetFilters}>
+                  <Text>Сбросить</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.modalConfirm} onPress={applyFilters}>
+                  <Text style={{ color: "#fff", fontWeight: "700" }}>Применить</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
         <FlatList
           data={localPaginated}
           renderItem={({ item }) => <ProductCard item={item} />}
@@ -2697,6 +2789,15 @@ export default function App() {
     };
 
     const skip = () => {
+      // Больше не показывать этот запрос
+      try {
+        if (typeof localStorage !== "undefined") {
+          const prev = JSON.parse(localStorage.getItem("krost_dismissed_reviews") || "[]");
+          if (!prev.includes(orderId)) {
+            localStorage.setItem("krost_dismissed_reviews", JSON.stringify([...prev, orderId]));
+          }
+        }
+      } catch (e) {}
       setOrderHistory((prev) =>
         prev.map((o) => (o.id === orderId ? { ...o, reviewDone: true, askReview: false } : o))
       );
