@@ -1184,38 +1184,45 @@ const sharedProductsSave = async (products) => {
 };
 
 // Слить локальный каталог с общим (общий приоритетнее)
-const mergeProductLists = (localList, sharedList) => {
-  const map = new Map();
-  (localList || []).forEach((p) => map.set(String(p.id), p));
-  (sharedList || []).forEach((sp) => {
-    if (!sp || sp.id == null) return;
-    const id = String(sp.id);
-    const local = map.get(id);
-    if (local && local.image && String(local.image).startsWith("data:") && !sp.image) {
-      map.set(id, {
-        ...sp,
-        image: local.image,
-        ratings: local.ratings || sp.ratings || [],
-      });
-    } else {
-      map.set(id, {
-        ...(local || {}),
+// Сервер — источник правды: чего нет на сервере, того нет в каталоге (удаления синхронизируются)
+const applyServerCatalog = (localList, serverList) => {
+  if (!Array.isArray(serverList)) return localList || [];
+  const localMap = new Map();
+  (localList || []).forEach((p) => {
+    if (p && p.id != null) localMap.set(String(p.id), p);
+  });
+  const result = serverList
+    .filter((sp) => sp && sp.id != null)
+    .map((sp) => {
+      const id = String(sp.id);
+      const local = localMap.get(id);
+      if (local && local.image && String(local.image).startsWith("data:") && !sp.image) {
+        return {
+          ...sp,
+          image: local.image,
+          ratings: local.ratings || sp.ratings || [],
+        };
+      }
+      return {
         ...sp,
         image: sp.image || (local && local.image) || "",
         ratings:
           (local && local.ratings && local.ratings.length
             ? local.ratings
             : sp.ratings) || [],
-      });
-    }
-  });
-  return Array.from(map.values()).sort((a, b) => {
+      };
+    });
+  result.sort((a, b) => {
     if (!!b.pinned !== !!a.pinned) return (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0);
     const ta = a.createdAt ? new Date(a.createdAt).getTime() : 0;
     const tb = b.createdAt ? new Date(b.createdAt).getTime() : 0;
     return tb - ta;
   });
+  return result;
 };
+
+// обратная совместимость имени
+const mergeProductLists = (localList, sharedList) => applyServerCatalog(localList, sharedList);
 
 // ==============================
 // КОМПОНЕНТ TOAST
@@ -1464,15 +1471,11 @@ export default function App() {
             await new Promise((r) => setTimeout(r, 350 * (attempt + 1)));
           }
           if (Array.isArray(sharedProds) && sharedProds.length > 0) {
-            // сервер — главный источник
-            list = mergeProductLists(DEFAULT_PRODUCTS, sharedProds);
-            // локальные base64 подмешиваем если есть
-            if (cloudProducts && cloudProducts.length) {
-              list = mergeProductLists(cloudProducts, list);
-              list = mergeProductLists(list, sharedProds);
-            }
+            // сервер — главный источник (в т.ч. удаления)
+            const base = cloudProducts && cloudProducts.length ? cloudProducts : DEFAULT_PRODUCTS;
+            list = applyServerCatalog(base, sharedProds);
           } else if (Array.isArray(sharedProds) && sharedProds.length === 0) {
-            // сервер пуст — оставляем local/default, потом админ опубликует
+            // сервер ответил пустым — ещё не публиковали
             console.log("[Products] server catalog empty");
           } else {
             console.warn("[Products] server unavailable, using local/default");
@@ -2360,12 +2363,23 @@ export default function App() {
       if (showAdmin) return; // не дёргаем форму CRM
       try {
         const sharedProds = await sharedProductsLoad();
-        if (stopped || !Array.isArray(sharedProds) || sharedProds.length === 0) return;
+        // null = сервер недоступен — не трогаем локальный каталог
+        if (stopped || sharedProds === null || !Array.isArray(sharedProds)) return;
+        // даже пустой массив с сервера = источник правды (все удалены)
+        // но полностью пустой каталог опасен при первом запуске — применяем только если на сервере уже что-то было
+        // или локально есть товары, которых нет на сервере (удаление)
         setProducts((prev) => {
-          const merged = mergeProductLists(prev, sharedProds);
-          // не обновляем стейт, если состав id + цены/имена те же
-          const prevKey = prev.map((p) => `${p.id}:${p.price}:${p.name}:${p.pinned?1:0}`).join("|");
-          const nextKey = merged.map((p) => `${p.id}:${p.price}:${p.name}:${p.pinned?1:0}`).join("|");
+          if (sharedProds.length === 0) {
+            // не затираем дефолтный каталог, если сервер ещё ни разу не публиковали
+            // если локально только DEFAULT — оставляем; если были свои id — чистим до []
+            const defaultIds = new Set(DEFAULT_PRODUCTS.map((p) => String(p.id)));
+            const hasCustom = prev.some((p) => !defaultIds.has(String(p.id)));
+            if (!hasCustom) return prev;
+            return [];
+          }
+          const merged = applyServerCatalog(prev, sharedProds);
+          const prevKey = prev.map((p) => `${p.id}:${p.price}:${p.name}:${p.pinned ? 1 : 0}`).join("|");
+          const nextKey = merged.map((p) => `${p.id}:${p.price}:${p.name}:${p.pinned ? 1 : 0}`).join("|");
           return prevKey === nextKey ? prev : merged;
         });
       } catch (e) {}
@@ -2391,11 +2405,16 @@ export default function App() {
     if (!confirmAction("Удалить этот товар?")) return;
     setProducts((prev) => {
       const next = prev.filter((p) => p.id !== id);
-      sharedProductsSave(next).catch(() => {});
+      // сразу публикуем каталог без удалённого — у всех исчезнет после pull
+      sharedProductsSave(next).then((ok) => {
+        if (ok) showToast("🗑 Удалено у всех");
+        else showToast("⚠️ Удалено локально, сервер не обновился");
+      });
       return next;
     });
     setEditingProduct((cur) => (cur === id ? null : cur));
     setProductDraft((d) => (d && d.id === id ? null : d));
+    setLocalProduct((d) => (d && d.id === id ? null : d));
   };
 
   // Закрепить / открепить товар (закреплённые всегда сверху в каталоге)
