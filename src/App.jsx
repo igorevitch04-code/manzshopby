@@ -427,7 +427,6 @@ const DEFAULT_PRODUCTS = [
 
 // Сразу при загрузке файла начинаем тянуть картинки
 if (typeof window !== "undefined") {
-  setTimeout(() => preloadImages(DEFAULT_PRODUCTS), 0);
 }
 
 const LEVELS = [
@@ -1461,7 +1460,7 @@ export default function App() {
   const [minPrice, setMinPrice] = useState("");
   const [maxPrice, setMaxPrice] = useState("");
   const [orderHistory, setOrderHistory] = useState([]);
-  const [products, setProducts] = useState(DEFAULT_PRODUCTS);
+  const [products, setProducts] = useState([]); // только сервер/облако — без цветных демо-карточек
   const [dataReady, setDataReady] = useState(false);
   // CRM form local state (на уровне App — чтобы Modal не размонтировался при re-render)
   const [localBroadcast, setLocalBroadcast] = useState("");
@@ -1469,9 +1468,9 @@ export default function App() {
   const [localPromo, setLocalPromo] = useState({ code: "", discount: "", maxUses: "", description: "" });
   const [localProduct, setLocalProduct] = useState(null);
   const [localIsNew, setLocalIsNew] = useState(false);
+  const [openStatusId, setOpenStatusId] = useState(null);
   // Сразу предзагружаем картинки, чтобы не было пустых карточек
   useEffect(() => {
-    preloadImages(DEFAULT_PRODUCTS);
   }, []);
   const [adminOrders, setAdminOrders] = useState([]);
   const [showAdmin, setShowAdmin] = useState(false);
@@ -1567,36 +1566,28 @@ export default function App() {
         setAdminOrders(cloudAdminOrders || []);
         setPromoCodes(cloudPromoCodes || []);
 
-        // ОБЩИЙ каталог с сервера (Netlify) — источник правды для всех
-        let list = cloudProducts && cloudProducts.length > 0 ? cloudProducts : DEFAULT_PRODUCTS;
+        // Каталог: сервер → облако. Демо DEFAULT_PRODUCTS больше не подмешиваем.
+        let list = Array.isArray(cloudProducts) ? cloudProducts : [];
         try {
           let sharedProds = null;
           for (let attempt = 0; attempt < 3; attempt++) {
             sharedProds = await sharedProductsLoad();
-            // null = API недоступен; [] или [...]= ответ сервера
             if (sharedProds !== null) break;
             await new Promise((r) => setTimeout(r, 350 * (attempt + 1)));
           }
           if (Array.isArray(sharedProds) && sharedProds.length > 0) {
-            // сервер — главный источник (в т.ч. удаления)
-            const base = cloudProducts && cloudProducts.length ? cloudProducts : DEFAULT_PRODUCTS;
-            list = applyServerCatalog(base, sharedProds);
+            list = applyServerCatalog(list, sharedProds);
           } else if (Array.isArray(sharedProds) && sharedProds.length === 0) {
-            // сервер ответил пустым — ещё не публиковали
+            // сервер пуст — показываем только локальное облако (без демо)
             console.log("[Products] server catalog empty");
           } else {
-            console.warn("[Products] server unavailable, using local/default");
+            console.warn("[Products] server unavailable, using cloud only");
           }
         } catch (e) {
           console.warn("shared products merge", e);
         }
-        const fixed = list.map((p) => {
-          const def = DEFAULT_PRODUCTS.find((d) => d.id === p.id);
-          if (p.image && !String(p.image).includes("via.placeholder") && String(p.image).length > 10) return p;
-          return def ? { ...p, image: def.image } : p;
-        });
-        setProducts(fixed);
-        preloadImages(fixed);
+        setProducts(list);
+        preloadImages(list);
 
         // Общие заказы (другие пользователи / другое устройство)
         try {
@@ -2517,12 +2508,8 @@ export default function App() {
         // или локально есть товары, которых нет на сервере (удаление)
         setProducts((prev) => {
           if (sharedProds.length === 0) {
-            // не затираем дефолтный каталог, если сервер ещё ни разу не публиковали
-            // если локально только DEFAULT — оставляем; если были свои id — чистим до []
-            const defaultIds = new Set(DEFAULT_PRODUCTS.map((p) => String(p.id)));
-            const hasCustom = prev.some((p) => !defaultIds.has(String(p.id)));
-            if (!hasCustom) return prev;
-            return [];
+            // сервер явно пуст после публикации — очищаем каталог
+            return prev.length ? [] : prev;
           }
           const merged = applyServerCatalog(prev, sharedProds);
           const prevKey = prev.map((p) => `${p.id}:${p.price}:${p.name}:${p.pinned ? 1 : 0}`).join("|");
@@ -3991,67 +3978,140 @@ export default function App() {
                   </TouchableOpacity>
                 </View>
 
-                <Text style={[styles.sectionTitle, theme === "dark" && styles.textDark]}>Заказы (статусы)</Text>
-                <Text style={[styles.crmMuted, theme === "dark" && styles.textDark, { marginBottom: 8 }]}>
-                  Меняйте статус — клиент увидит его в профиле. При «Деньги получены» начислятся бонусы и запросится отзыв.
-                </Text>
-                <TouchableOpacity
-                  style={[styles.productAdminBtn, { alignSelf: "flex-start", marginBottom: 10, paddingHorizontal: 12 }]}
-                  onPress={() => syncSharedOrders(true)}
-                  activeOpacity={0.8}
-                >
-                  <Text style={styles.productAdminBtnText}>Обновить заказы</Text>
-                </TouchableOpacity>
+                <Text style={[styles.sectionTitle, theme === "dark" && styles.textDark]}>Заказы</Text>
+                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8, flexWrap: "wrap", gap: 8 }}>
+                  <Text style={[styles.crmMuted, theme === "dark" && styles.textDark, { flex: 1 }]}>
+                    Статус видит клиент в профиле. «Деньги получены» — бонусы и отзыв.
+                  </Text>
+                  <TouchableOpacity
+                    style={[styles.productAdminBtn, { paddingHorizontal: 12, paddingVertical: 8 }]}
+                    onPress={() => syncSharedOrders(true)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.productAdminBtnText}>Обновить</Text>
+                  </TouchableOpacity>
+                </View>
+
                 {adminOrders.length === 0 ? (
                   <Text style={[styles.empty, theme === "dark" && styles.textDark, { marginBottom: 16 }]}>
-                    Заказов пока нет. Оформите заказ с другого аккаунта и нажмите «Обновить заказы».
+                    Заказов пока нет
                   </Text>
                 ) : (
-                  adminOrders.slice(0, 30).map((order) => (
-                    <View
-                      key={order.id}
-                      style={[styles.productEdit, theme === "dark" && styles.productEditDark]}
-                    >
-                      <Text style={[styles.productName, theme === "dark" && styles.textDark]}>
-                        #{order.id} · {order.fullName || "—"} · {order.phone || "—"}
-                      </Text>
-                      <Text style={[styles.crmMuted, theme === "dark" && styles.textDark]}>
-                        {(order.items || []).map((i) => `${i.brand || ""} ${i.name}${i.size ? ` (${i.size})` : ""}`).join(", ").slice(0, 120)}
-                      </Text>
-                      <Text style={[styles.crmMuted, theme === "dark" && styles.textDark]}>
-                        {order.finalTotal} BYN · TG: {order.tgUsername ? `@${order.tgUsername}` : order.tgId || "—"}
-                      </Text>
-                      <Text style={[styles.productName, theme === "dark" && styles.textDark, { marginTop: 6, fontSize: 14 }]}>
-                        Статус: {order.status || "Новый"}
-                      </Text>
-                      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
-                        {ORDER_STATUSES.map((st) => (
-                          <TouchableOpacity
-                            key={st}
-                            style={[
-                              styles.productAdminBtn,
-                              order.status === st && styles.productAdminBtnActive,
-                              { paddingHorizontal: 8, paddingVertical: 6 },
-                            ]}
-                            onPress={() => changeStatus(order.id, st)}
-                            activeOpacity={0.8}
-                          >
-                            <Text style={[styles.productAdminBtnText, { fontSize: 11 }]}>{st}</Text>
-                          </TouchableOpacity>
-                        ))}
+                  <ScrollView horizontal showsHorizontalScrollIndicator nestedScrollEnabled style={{ marginBottom: 16 }}>
+                    <View style={styles.crmTable}>
+                      {/* header */}
+                      <View style={[styles.crmTableRow, styles.crmTableHeader]}>
+                        <Text style={[styles.crmTh, { width: 72 }]}>#</Text>
+                        <Text style={[styles.crmTh, { width: 120 }]}>Дата</Text>
+                        <Text style={[styles.crmTh, { width: 140 }]}>Статус</Text>
+                        <Text style={[styles.crmTh, { width: 220 }]}>Клиент</Text>
+                        <Text style={[styles.crmTh, { width: 200 }]}>Товар</Text>
+                        <Text style={[styles.crmTh, { width: 90 }]}>Сумма</Text>
                       </View>
-                      {(order.delivery === "europost" || order.status === "Доставляется") && (
-                        <TextInput
-                          style={[styles.editInput, theme === "dark" && styles.inputDark, { marginTop: 8 }]}
-                          placeholder="Трек-номер"
-                          placeholderTextColor="#999"
-                          defaultValue={order.trackingNumber || ""}
-                          onEndEditing={(e) => updateTracking(order.id, e.nativeEvent.text)}
-                          blurOnSubmit
-                        />
-                      )}
+                      {adminOrders.slice(0, 50).map((order, idx) => {
+                        const itemsLabel = (order.items || [])
+                          .map((i) => `${i.brand || ""} ${i.name}${i.size ? ` (${i.size})` : ""}`.trim())
+                          .join(", ");
+                        const dateLabel = order.date
+                          ? new Date(order.date).toLocaleString("ru-RU", {
+                              day: "2-digit",
+                              month: "2-digit",
+                              year: "2-digit",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })
+                          : "—";
+                        const isOpen = openStatusId === order.id;
+                        return (
+                          <View key={order.id}>
+                            <View
+                              style={[
+                                styles.crmTableRow,
+                                idx % 2 === 1 && styles.crmTableRowAlt,
+                                theme === "dark" && { borderBottomColor: "#333" },
+                              ]}
+                            >
+                              <Text style={[styles.crmTd, { width: 72, fontWeight: "700" }]} numberOfLines={1}>
+                                {order.id}
+                              </Text>
+                              <Text style={[styles.crmTd, { width: 120 }]} numberOfLines={2}>
+                                {dateLabel}
+                              </Text>
+                              <View style={{ width: 140, paddingVertical: 6, paddingHorizontal: 4 }}>
+                                <TouchableOpacity
+                                  style={styles.crmStatusBtn}
+                                  onPress={() => setOpenStatusId(isOpen ? null : order.id)}
+                                  activeOpacity={0.85}
+                                >
+                                  <Text style={styles.crmStatusBtnText} numberOfLines={1}>
+                                    {order.status || "Новый"} ▾
+                                  </Text>
+                                </TouchableOpacity>
+                              </View>
+                              <View style={{ width: 220, paddingVertical: 6, paddingHorizontal: 6 }}>
+                                <Text style={styles.crmTdStrong} numberOfLines={1}>
+                                  {order.fullName || "—"}
+                                </Text>
+                                <Text style={styles.crmTdMuted} numberOfLines={1}>
+                                  {order.phone || "—"}
+                                </Text>
+                                <Text style={styles.crmTdMuted} numberOfLines={1}>
+                                  {order.tgUsername ? `@${order.tgUsername}` : order.tgId ? `id:${order.tgId}` : "—"}
+                                </Text>
+                                <Text style={styles.crmTdMuted} numberOfLines={2}>
+                                  {order.address || "—"}
+                                </Text>
+                              </View>
+                              <Text style={[styles.crmTd, { width: 200 }]} numberOfLines={3}>
+                                {itemsLabel || "—"}
+                              </Text>
+                              <Text style={[styles.crmTd, { width: 90, fontWeight: "700" }]}>
+                                {order.finalTotal != null ? `${order.finalTotal}` : "—"}
+                              </Text>
+                            </View>
+                            {isOpen && (
+                              <View style={styles.crmStatusMenu}>
+                                {ORDER_STATUSES.map((st) => (
+                                  <TouchableOpacity
+                                    key={st}
+                                    style={[
+                                      styles.crmStatusMenuItem,
+                                      order.status === st && styles.crmStatusMenuItemActive,
+                                    ]}
+                                    onPress={() => {
+                                      changeStatus(order.id, st);
+                                      setOpenStatusId(null);
+                                    }}
+                                  >
+                                    <Text
+                                      style={[
+                                        styles.crmStatusMenuText,
+                                        order.status === st && styles.crmStatusMenuTextActive,
+                                      ]}
+                                    >
+                                      {st}
+                                    </Text>
+                                  </TouchableOpacity>
+                                ))}
+                                {(order.delivery === "europost" ||
+                                  order.status === "Доставляется" ||
+                                  order.trackingNumber) && (
+                                  <TextInput
+                                    style={[styles.editInput, { marginTop: 8, marginBottom: 4 }]}
+                                    placeholder="Трек-номер"
+                                    placeholderTextColor="#999"
+                                    defaultValue={order.trackingNumber || ""}
+                                    onEndEditing={(e) => updateTracking(order.id, e.nativeEvent.text)}
+                                    blurOnSubmit
+                                  />
+                                )}
+                              </View>
+                            )}
+                          </View>
+                        );
+                      })}
                     </View>
-                  ))
+                  </ScrollView>
                 )}
 
                 <Text style={[styles.sectionTitle, theme === "dark" && styles.textDark]}>Промокоды</Text>
@@ -4927,6 +4987,88 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     marginTop: 10,
     gap: 6,
+  },
+  crmTable: {
+    borderWidth: 1,
+    borderColor: "#E5E5E5",
+    borderRadius: 12,
+    overflow: "hidden",
+    backgroundColor: "#fff",
+    minWidth: 840,
+  },
+  crmTableRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    borderBottomWidth: 1,
+    borderBottomColor: "#EEE",
+    paddingVertical: 4,
+    paddingHorizontal: 4,
+  },
+  crmTableRowAlt: {
+    backgroundColor: "#FAFAFA",
+  },
+  crmTableHeader: {
+    backgroundColor: "#111",
+    borderBottomWidth: 0,
+    paddingVertical: 10,
+    alignItems: "center",
+  },
+  crmTh: {
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: "700",
+    paddingHorizontal: 6,
+  },
+  crmTd: {
+    fontSize: 12,
+    color: "#222",
+    paddingHorizontal: 6,
+    paddingVertical: 8,
+  },
+  crmTdStrong: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#111",
+  },
+  crmTdMuted: {
+    fontSize: 11,
+    color: "#666",
+    marginTop: 1,
+  },
+  crmStatusBtn: {
+    backgroundColor: "#111",
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 8,
+  },
+  crmStatusBtnText: {
+    color: "#fff",
+    fontSize: 11,
+    fontWeight: "600",
+  },
+  crmStatusMenu: {
+    backgroundColor: "#F5F5F5",
+    padding: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: "#E5E5E5",
+  },
+  crmStatusMenuItem: {
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    marginBottom: 4,
+    backgroundColor: "#fff",
+  },
+  crmStatusMenuItemActive: {
+    backgroundColor: "#111",
+  },
+  crmStatusMenuText: {
+    fontSize: 13,
+    color: "#222",
+  },
+  crmStatusMenuTextActive: {
+    color: "#fff",
+    fontWeight: "700",
   },
   productAdminBtn: {
     flex: 1,
