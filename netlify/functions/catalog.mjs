@@ -35,20 +35,28 @@ const normalizeProducts = (list) =>
       sales: Number(p.sales) || 0,
       averageRating: Number(p.averageRating) || 0,
       pinned: !!p.pinned,
+      hidden: !!p.hidden,
       createdAt: p.createdAt || null,
       ratings: Array.isArray(p.ratings) ? p.ratings.slice(-40) : [],
     };
   });
 
-async function tgGetPointer() {
+async function tgGetDesc() {
   try {
     const r = await fetch(
       `https://api.telegram.org/bot${BOT_TOKEN}/getMyShortDescription`,
       { cache: "no-store" }
     );
     const data = await r.json();
-    const desc =
-      (data && data.result && data.result.short_description) || "";
+    return (data && data.result && data.result.short_description) || "";
+  } catch (e) {
+    return "";
+  }
+}
+
+async function tgGetPointer() {
+  try {
+    const desc = await tgGetDesc();
     const m = String(desc).match(/mz:([A-Za-z0-9_-]+)/);
     return m ? m[1] : null;
   } catch (e) {
@@ -58,8 +66,12 @@ async function tgGetPointer() {
 }
 
 async function tgSetPointer(blobId) {
-  const text = `mz:${blobId}`;
   try {
+    const desc = await tgGetDesc();
+    const ord = String(desc).match(/ord:([A-Za-z0-9_-]+)/);
+    const parts = [`mz:${blobId}`];
+    if (ord) parts.push(`ord:${ord[1]}`);
+    const text = parts.join(";");
     const body = `short_description=${encodeURIComponent(text)}`;
     const r = await fetch(
       `https://api.telegram.org/bot${BOT_TOKEN}/setMyShortDescription`,
