@@ -163,24 +163,56 @@ const getBrands = (products) => [...new Set(products.map(p => p.brand))];
 const ADMIN_IDS = [778715828, 987654321];
 // Чтобы заказы друзей приходили вам в Telegram — вставьте токен бота от @BotFather
 // (бот должен быть запущен, вы хотя бы раз написали ему /start)
-const BOT_TOKEN = "8912775566:AAHEExxwO5Ub39DU0tDT97Hlppw1IfLwjvU"; // например: "123456:ABC-DEF..."
+const BOT_TOKEN = "8912775566:AAHEExxwO5Ub39DU0tDT97Hlppw1IfLwjvU"; // например: "123456:ABC-DEF..." — ОБЯЗАТЕЛЬНО вставьте токен
 const ADMIN_NOTIFY_CHAT_ID = ADMIN_IDS[0]; // куда слать уведомления о новых заказах
+
+const compactOrderForBot = (o) => ({
+  id: o.id,
+  date: o.date || new Date().toISOString(),
+  status: o.status || "Новый",
+  fullName: o.fullName || "",
+  phone: o.phone || "",
+  address: o.address || "",
+  finalTotal: o.finalTotal,
+  delivery: o.delivery || "courier",
+  trackingNumber: o.trackingNumber || null,
+  tgId: o.tgId || null,
+  tgUsername: o.tgUsername || null,
+  freeDelivery: !!o.freeDelivery,
+  pendingCashback: o.pendingCashback || 0,
+  cashbackCredited: !!o.cashbackCredited,
+  items: (o.items || []).map((i) => ({
+    id: i.id,
+    name: i.name,
+    brand: i.brand,
+    size: i.size,
+    price: i.price,
+  })),
+});
 
 const notifyAdminNewOrder = async (order) => {
   if (!BOT_TOKEN) return false;
   try {
-    const items = (order.items || [])
-      .map((i) => `• ${i.brand || ""} ${i.name}${i.size ? ` (${i.size})` : ""} — ${i.price}`)
-      .join("\n");
+    const deliveryLabel = order.delivery === "europost" ? "Европочта" : "Курьер";
+    const itemsShort = (order.items || [])
+      .map((i) => `${i.brand || ""} ${i.name}${i.size ? ` (${i.size})` : ""}`.trim())
+      .join(", ");
+    const tgPart = order.tgUsername
+      ? `@${order.tgUsername}`
+      : order.tgId
+        ? `id:${order.tgId}`
+        : "—";
+
+    // Человекочитаемый формат + машинная строка #ORD#...#END# для таблицы CRM
+    const payload = compactOrderForBot(order);
     const text =
-      `🛒 Новый заказ #${order.id}\n` +
-      `👤 ${order.fullName || "—"}\n` +
-      `📞 ${order.phone || "—"}\n` +
-      `📍 ${order.address || "—"}\n` +
-      `🚚 ${order.delivery === "europost" ? "Европочта" : "Курьер"}\n` +
-      `💰 ${order.finalTotal} BYN\n` +
-      (order.tgUsername ? `✈️ @${order.tgUsername}\n` : order.tgId ? `✈️ id: ${order.tgId}\n` : "") +
-      `\n${items}`;
+      `Новый заказ\n\n` +
+      `ФИО: ${order.fullName || "—"}\n` +
+      `Способ доставки и адрес: ${deliveryLabel}, ${order.address || "—"}\n` +
+      `ФИО, номер телефона и тг: ${order.fullName || "—"}, ${order.phone || "—"}, ${tgPart}\n` +
+      `Сумма к оплате и товар: ${order.finalTotal} BYN — ${itemsShort || "—"}\n` +
+      `\n#ORD#${JSON.stringify(payload)}#END#`;
+
     const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -194,6 +226,119 @@ const notifyAdminNewOrder = async (order) => {
   } catch (e) {
     console.warn("notifyAdminNewOrder", e);
     return false;
+  }
+};
+
+// Загрузить заказы из сообщений бота (getUpdates) → в таблицу CRM
+const fetchOrdersFromBot = async () => {
+  if (!BOT_TOKEN) return [];
+  try {
+    const urls = [
+      `https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?limit=100`,
+      `https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?limit=100&allowed_updates=${encodeURIComponent('["message"]')}`,
+    ];
+    let results = [];
+    for (const url of urls) {
+      try {
+        const r = await fetch(url, { cache: "no-store" });
+        if (!r.ok) continue;
+        const data = await r.json();
+        if (data && data.ok && Array.isArray(data.result)) {
+          results = data.result;
+          break;
+        }
+      } catch (e) {}
+    }
+
+    const orders = [];
+    for (const upd of results) {
+      const msg = upd.message || upd.edited_message || upd.channel_post;
+      const text = msg?.text || "";
+      if (!text) continue;
+
+      // 1) Машинный блок
+      const m = text.match(/#ORD#([\s\S]*?)#END#/);
+      if (m) {
+        try {
+          const obj = JSON.parse(m[1]);
+          if (obj && obj.id != null) orders.push(obj);
+          continue;
+        } catch (e) {}
+      }
+
+      // 2) Парсинг старого формата пуша
+      if (text.includes("Новый заказ") || text.includes("новый заказ")) {
+        const idMatch = text.match(/#(\d+)/);
+        const phoneMatch = text.match(/\+?\d{9,15}/);
+        const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
+        let fullName = "";
+        let address = "";
+        let phone = phoneMatch ? phoneMatch[0] : "";
+        let delivery = "courier";
+        let total = 0;
+        let tgUsername = null;
+        let items = [];
+
+        for (const line of lines) {
+          if (line.startsWith("ФИО:")) fullName = line.replace("ФИО:", "").trim();
+          if (line.includes("Способ доставки и адрес:")) {
+            const rest = line.split(":")[1] || "";
+            if (rest.toLowerCase().includes("евро")) delivery = "europost";
+            const parts = rest.split(",").map((s) => s.trim());
+            if (parts.length > 1) address = parts.slice(1).join(", ");
+            else address = rest.trim();
+          }
+          if (line.includes("номер телефона")) {
+            const rest = line.split(":").slice(1).join(":").trim();
+            const bits = rest.split(",").map((s) => s.trim());
+            if (bits[0] && !fullName) fullName = bits[0];
+            if (bits[1]) phone = bits[1];
+            if (bits[2] && bits[2].startsWith("@")) tgUsername = bits[2].replace("@", "");
+          }
+          if (line.includes("Сумма к оплате")) {
+            const tm = line.match(/(\d+(?:[.,]\d+)?)\s*BYN/i);
+            if (tm) total = parseFloat(tm[1].replace(",", "."));
+            const after = line.split("—")[1] || line.split("-")[1] || "";
+            if (after.trim()) items = [{ name: after.trim(), price: total }];
+          }
+          // старый формат
+          if (line.startsWith("👤")) fullName = line.replace("👤", "").trim();
+          if (line.startsWith("📞")) phone = line.replace("📞", "").trim();
+          if (line.startsWith("📍")) address = line.replace("📍", "").trim();
+          if (line.startsWith("🚚")) delivery = line.includes("Евро") ? "europost" : "courier";
+          if (line.startsWith("💰")) {
+            const tm = line.match(/(\d+)/);
+            if (tm) total = parseInt(tm[1], 10);
+          }
+          if (line.startsWith("✈️")) {
+            const t = line.replace("✈️", "").trim();
+            if (t.startsWith("@")) tgUsername = t.slice(1);
+          }
+          if (line.startsWith("•")) {
+            items.push({ name: line.replace("•", "").trim(), price: total });
+          }
+        }
+
+        if (idMatch || fullName || phone) {
+          orders.push({
+            id: idMatch ? parseInt(idMatch[1], 10) : Date.now(),
+            date: msg.date ? new Date(msg.date * 1000).toISOString() : new Date().toISOString(),
+            status: "Новый",
+            fullName,
+            phone,
+            address,
+            finalTotal: total,
+            delivery,
+            tgUsername,
+            items,
+          });
+        }
+      }
+    }
+    return orders;
+  } catch (e) {
+    console.warn("fetchOrdersFromBot", e);
+    return [];
   }
 };
 
@@ -1681,39 +1826,49 @@ export default function App() {
     setShowAdmin(!showAdmin);
   };
 
-  // Подтянуть заказы всех клиентов из общего хранилища (когда открыта CRM)
+  // Подтянуть заказы: общее хранилище + сообщения бота
   const syncSharedOrders = async (showFeedback = false) => {
     try {
-      const remote = await sharedOrdersLoad();
-      if (!Array.isArray(remote)) {
-        if (showFeedback) showToast("Не удалось загрузить общие заказы");
+      const [remote, fromBot] = await Promise.all([
+        sharedOrdersLoad().catch(() => []),
+        fetchOrdersFromBot().catch(() => []),
+      ]);
+
+      const incoming = [];
+      if (Array.isArray(remote)) incoming.push(...remote);
+      if (Array.isArray(fromBot)) incoming.push(...fromBot);
+
+      if (incoming.length === 0) {
+        if (showFeedback) {
+          showToast(
+            BOT_TOKEN
+              ? "Новых заказов из бота нет. Оформите тестовый заказ."
+              : "Укажите BOT_TOKEN в коде, чтобы подтягивать заказы"
+          );
+        }
         return 0;
       }
-      if (remote.length === 0) {
-        if (showFeedback) showToast("Общих заказов пока нет");
-        return 0;
-      }
+
       let added = 0;
       setAdminOrders((prev) => {
         const map = new Map();
         prev.forEach((o) => map.set(String(o.id), o));
-        remote.forEach((o) => {
+        incoming.forEach((o) => {
           const id = String(o.id);
           if (!map.has(id)) {
             added += 1;
             map.set(id, o);
           } else {
             const local = map.get(id);
-            // remote дополняет локальные данные
             map.set(id, {
               ...local,
               ...o,
-              status: o.status || local.status,
-              trackingNumber: o.trackingNumber || local.trackingNumber || null,
+              status: local.status && local.status !== "Новый" ? local.status : (o.status || local.status),
+              trackingNumber: local.trackingNumber || o.trackingNumber || null,
               phone: o.phone || local.phone,
               fullName: o.fullName || local.fullName,
               address: o.address || local.address,
-              items: (o.items && o.items.length ? o.items : local.items) || [],
+              items: (local.items && local.items.length ? local.items : o.items) || [],
             });
           }
         });
@@ -1723,10 +1878,11 @@ export default function App() {
           return db - da;
         });
       });
+
       if (showFeedback) {
-        showToast(added > 0 ? `Загружено новых заказов: ${added}` : `Синхронизировано: ${remote.length}`);
+        showToast(added > 0 ? `Добавлено в таблицу: ${added}` : `Синхронизировано: ${incoming.length}`);
       }
-      return remote.length;
+      return incoming.length;
     } catch (e) {
       console.warn("syncSharedOrders", e);
       if (showFeedback) showToast("Ошибка синхронизации заказов");
