@@ -1469,6 +1469,8 @@ export default function App() {
   const [localProduct, setLocalProduct] = useState(null);
   const [localIsNew, setLocalIsNew] = useState(false);
   const [openStatusId, setOpenStatusId] = useState(null);
+  const [reviewRating, setReviewRating] = useState(0);
+  const [reviewComment, setReviewComment] = useState("");
   // Сразу предзагружаем картинки, чтобы не было пустых карточек
   useEffect(() => {
   }, []);
@@ -1804,6 +1806,14 @@ export default function App() {
       clearInterval(t);
     };
   }, [dataReady, user?.id]);
+
+  // Сброс черновика отзыва при новом запросе
+  useEffect(() => {
+    if (reviewPrompt) {
+      setReviewRating(0);
+      setReviewComment("");
+    }
+  }, [reviewPrompt?.orderId, reviewPrompt?.product?.id]);
 
   // Запрос отзыва: если есть завершённый заказ с askReview — показываем модалку
   // Если нажали «Позже» — больше не показываем (сохраняем в localStorage)
@@ -3605,105 +3615,42 @@ export default function App() {
   };
 
   // ---- Review Prompt (после завершения заказа) ----
-  const ReviewPromptModal = () => {
-    const { theme } = useTheme();
-    const isDark = theme === "dark";
-    if (!reviewPrompt) return null;
-
-    const { product, rating, comment, orderId } = reviewPrompt;
-
-    const setPromptRating = (r) => setReviewPrompt((p) => (p ? { ...p, rating: r } : p));
-    const setPromptComment = (t) => setReviewPrompt((p) => (p ? { ...p, comment: t } : p));
-
-    const submit = () => {
-      if (!rating) {
-        Alert.alert("Оценка", "Поставьте оценку от 1 до 5");
-        return;
-      }
-      addRating(product.id, rating, comment || "");
-      // Помечаем заказ как обработанный по отзыву
-      setOrderHistory((prev) =>
-        prev.map((o) => (o.id === orderId ? { ...o, reviewDone: true, askReview: false } : o))
-      );
-      setAdminOrders((prev) =>
-        prev.map((o) => (o.id === orderId ? { ...o, reviewDone: true, askReview: false } : o))
-      );
-      setReviewPrompt(null);
-      showToast("Спасибо за отзыв!");
-    };
-
-    const skip = () => {
-      // Больше не показывать этот запрос
-      try {
-        if (typeof localStorage !== "undefined") {
-          const prev = JSON.parse(localStorage.getItem("krost_dismissed_reviews") || "[]");
-          if (!prev.includes(orderId)) {
-            localStorage.setItem("krost_dismissed_reviews", JSON.stringify([...prev, orderId]));
-          }
-        }
-      } catch (e) {}
-      setOrderHistory((prev) =>
-        prev.map((o) => (o.id === orderId ? { ...o, reviewDone: true, askReview: false } : o))
-      );
-      setAdminOrders((prev) =>
-        prev.map((o) => (o.id === orderId ? { ...o, reviewDone: true, askReview: false } : o))
-      );
-      setReviewPrompt(null);
-    };
-
-    return (
-      <Modal transparent visible={!!reviewPrompt} animationType="fade">
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalView, isDark && styles.modalViewDark]}>
-            <Text style={[styles.modalTitle, isDark && styles.textDark]}>Оцените заказ</Text>
-            <Text style={[styles.brand, isDark && styles.textDark, { textAlign: "center", marginBottom: 8 }]}>
-              {product.brand} {product.name}
-            </Text>
-            {!!product.image && (
-              <SmartImage
-                uri={product.image}
-                style={{ width: 100, height: 100, borderRadius: 16, alignSelf: "center", marginBottom: 12 }}
-              />
-            )}
-            <View style={[styles.stars, { justifyContent: "center" }]}>
-              {[1, 2, 3, 4, 5].map((s) => (
-                <TouchableOpacity key={s} onPress={() => setPromptRating(s)}>
-                  <Text
-                    style={[
-                      styles.star,
-                      rating >= s
-                        ? isDark
-                          ? styles.starActiveDark
-                          : styles.starActive
-                        : styles.starInactive,
-                    ]}
-                  >
-                    {rating >= s ? "★" : "☆"}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-            <TextInput
-              style={[styles.reviewInput, isDark && styles.inputDark]}
-              placeholder="Комментарий (необязательно)"
-              placeholderTextColor={isDark ? "#999" : "#888"}
-              value={comment}
-              onChangeText={setPromptComment}
-              multiline
-              blurOnSubmit={false}
-            />
-            <View style={styles.modalButtons}>
-              <TouchableOpacity style={styles.modalCancel} onPress={skip}>
-                <Text>Позже</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.modalConfirm} onPress={submit}>
-                <Text style={{ color: "#fff", fontWeight: "700" }}>Отправить</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
+  const submitReviewPrompt = () => {
+    if (!reviewPrompt) return;
+    if (!reviewRating) {
+      Alert.alert("Оценка", "Поставьте оценку от 1 до 5");
+      return;
+    }
+    const { product, orderId } = reviewPrompt;
+    addRating(product.id, reviewRating, reviewComment || "");
+    setOrderHistory((prev) =>
+      prev.map((o) => (o.id === orderId ? { ...o, reviewDone: true, askReview: false } : o))
     );
+    setAdminOrders((prev) =>
+      prev.map((o) => (o.id === orderId ? { ...o, reviewDone: true, askReview: false } : o))
+    );
+    setReviewPrompt(null);
+    showToast("Спасибо за отзыв!");
+  };
+
+  const skipReviewPrompt = () => {
+    if (!reviewPrompt) return;
+    const orderId = reviewPrompt.orderId;
+    try {
+      if (typeof localStorage !== "undefined") {
+        const prev = JSON.parse(localStorage.getItem("krost_dismissed_reviews") || "[]");
+        if (!prev.includes(orderId)) {
+          localStorage.setItem("krost_dismissed_reviews", JSON.stringify([...prev, orderId]));
+        }
+      }
+    } catch (e) {}
+    setOrderHistory((prev) =>
+      prev.map((o) => (o.id === orderId ? { ...o, reviewDone: true, askReview: false } : o))
+    );
+    setAdminOrders((prev) =>
+      prev.map((o) => (o.id === orderId ? { ...o, reviewDone: true, askReview: false } : o))
+    );
+    setReviewPrompt(null);
   };
 
   // ---- OrderModal ----
@@ -3945,7 +3892,66 @@ export default function App() {
         </View>
         <Menu />
         <OrderModal />
-        <ReviewPromptModal />
+        {/* Review modal — inline, чтобы не размонтировался при вводе */}
+        <Modal transparent visible={!!reviewPrompt} animationType="fade" onRequestClose={skipReviewPrompt}>
+          <View style={styles.modalOverlay}>
+            <View style={[styles.modalView, theme === "dark" && styles.modalViewDark]}>
+              <Text style={[styles.modalTitle, theme === "dark" && styles.textDark]}>Оцените заказ</Text>
+              {!!reviewPrompt && (
+                <Text style={[styles.brand, theme === "dark" && styles.textDark, { textAlign: "center", marginBottom: 8 }]}>
+                  {reviewPrompt.product.brand} {reviewPrompt.product.name}
+                </Text>
+              )}
+              {!!reviewPrompt?.product?.image && (
+                <SmartImage
+                  uri={reviewPrompt.product.image}
+                  style={{ width: 100, height: 100, borderRadius: 16, alignSelf: "center", marginBottom: 12 }}
+                />
+              )}
+              <View style={[styles.stars, { justifyContent: "center" }]}>
+                {[1, 2, 3, 4, 5].map((s) => (
+                  <TouchableOpacity key={s} onPress={() => setReviewRating(s)} activeOpacity={0.7}>
+                    <Text
+                      style={[
+                        styles.star,
+                        reviewRating >= s
+                          ? theme === "dark"
+                            ? styles.starActiveDark
+                            : styles.starActive
+                          : styles.starInactive,
+                      ]}
+                    >
+                      {reviewRating >= s ? "★" : "☆"}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <TextInput
+                style={[
+                  styles.reviewInput,
+                  theme === "dark" && styles.inputDark,
+                  { minHeight: 90, textAlignVertical: "top" },
+                ]}
+                placeholder="Комментарий (необязательно)"
+                placeholderTextColor={theme === "dark" ? "#999" : "#888"}
+                value={reviewComment}
+                onChangeText={setReviewComment}
+                multiline
+                blurOnSubmit={false}
+                textAlignVertical="top"
+              />
+              <View style={styles.modalButtons}>
+                <TouchableOpacity style={styles.modalCancel} onPress={skipReviewPrompt}>
+                  <Text>Позже</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.modalConfirm} onPress={submitReviewPrompt}>
+                  <Text style={{ color: "#fff", fontWeight: "700" }}>Отправить</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
         {/* CRM */}
         {isAdmin && (
           <Modal visible={showAdmin} animationType="none" transparent={false} onRequestClose={() => setShowAdmin(false)}>
@@ -3999,14 +4005,20 @@ export default function App() {
                 ) : (
                   <ScrollView horizontal showsHorizontalScrollIndicator nestedScrollEnabled style={{ marginBottom: 16 }}>
                     <View style={styles.crmTable}>
+                    <ScrollView
+                      nestedScrollEnabled
+                      style={{ maxHeight: 520 }}
+                      showsVerticalScrollIndicator
+                    >
                       {/* header */}
                       <View style={[styles.crmTableRow, styles.crmTableHeader]}>
                         <Text style={[styles.crmTh, { width: 72 }]}>#</Text>
                         <Text style={[styles.crmTh, { width: 120 }]}>Дата</Text>
                         <Text style={[styles.crmTh, { width: 140 }]}>Статус</Text>
-                        <Text style={[styles.crmTh, { width: 220 }]}>Клиент</Text>
-                        <Text style={[styles.crmTh, { width: 200 }]}>Товар</Text>
-                        <Text style={[styles.crmTh, { width: 90 }]}>Сумма</Text>
+                        <Text style={[styles.crmTh, { width: 200 }]}>Клиент</Text>
+                        <Text style={[styles.crmTh, { width: 130 }]}>Трек</Text>
+                        <Text style={[styles.crmTh, { width: 180 }]}>Товар</Text>
+                        <Text style={[styles.crmTh, { width: 80 }]}>Сумма</Text>
                       </View>
                       {adminOrders.slice(0, 50).map((order, idx) => {
                         const itemsLabel = (order.items || [])
@@ -4048,7 +4060,7 @@ export default function App() {
                                   </Text>
                                 </TouchableOpacity>
                               </View>
-                              <View style={{ width: 220, paddingVertical: 6, paddingHorizontal: 6 }}>
+                              <View style={{ width: 200, paddingVertical: 6, paddingHorizontal: 6 }}>
                                 <Text style={styles.crmTdStrong} numberOfLines={1}>
                                   {order.fullName || "—"}
                                 </Text>
@@ -4062,10 +4074,23 @@ export default function App() {
                                   {order.address || "—"}
                                 </Text>
                               </View>
-                              <Text style={[styles.crmTd, { width: 200 }]} numberOfLines={3}>
+                              <View style={{ width: 130, paddingVertical: 4, paddingHorizontal: 4 }}>
+                                <TextInput
+                                  style={styles.crmTrackInput}
+                                  placeholder="Трек-номер"
+                                  placeholderTextColor="#999"
+                                  defaultValue={order.trackingNumber || ""}
+                                  onEndEditing={(e) => {
+                                    const v = (e.nativeEvent.text || "").trim();
+                                    updateTracking(order.id, v);
+                                  }}
+                                  blurOnSubmit
+                                />
+                              </View>
+                              <Text style={[styles.crmTd, { width: 180 }]} numberOfLines={3}>
                                 {itemsLabel || "—"}
                               </Text>
-                              <Text style={[styles.crmTd, { width: 90, fontWeight: "700" }]}>
+                              <Text style={[styles.crmTd, { width: 80, fontWeight: "700" }]}>
                                 {order.finalTotal != null ? `${order.finalTotal}` : "—"}
                               </Text>
                             </View>
@@ -4093,23 +4118,13 @@ export default function App() {
                                     </Text>
                                   </TouchableOpacity>
                                 ))}
-                                {(order.delivery === "europost" ||
-                                  order.status === "Доставляется" ||
-                                  order.trackingNumber) && (
-                                  <TextInput
-                                    style={[styles.editInput, { marginTop: 8, marginBottom: 4 }]}
-                                    placeholder="Трек-номер"
-                                    placeholderTextColor="#999"
-                                    defaultValue={order.trackingNumber || ""}
-                                    onEndEditing={(e) => updateTracking(order.id, e.nativeEvent.text)}
-                                    blurOnSubmit
-                                  />
-                                )}
+
                               </View>
                             )}
                           </View>
                         );
                       })}
+                    </ScrollView>
                     </View>
                   </ScrollView>
                 )}
@@ -4535,11 +4550,11 @@ const styles = StyleSheet.create({
   // Белый круг с чёрной обводкой + чёрная корзина (как избранное)
   cartBtn: {
     position: "absolute",
-    bottom: 6,
-    right: 6,
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    bottom: 10,
+    right: 10,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     backgroundColor: "#fff",
     borderWidth: 1.5,
     borderColor: "#111",
@@ -4549,8 +4564,9 @@ const styles = StyleSheet.create({
     elevation: 6,
   },
   cartBtnText: {
-    fontSize: 13,
+    fontSize: 16,
     color: "#111",
+    lineHeight: 18,
   },
   brand: { fontSize: 11, color: "#777", marginTop: 6 },
   productName: { fontSize: 14, fontWeight: "800", marginTop: 4 },
@@ -4994,7 +5010,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     overflow: "hidden",
     backgroundColor: "#fff",
-    minWidth: 840,
+    minWidth: 960,
   },
   crmTableRow: {
     flexDirection: "row",
