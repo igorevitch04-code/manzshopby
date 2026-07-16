@@ -1984,10 +1984,28 @@ export default function App() {
   const AdminPanel = () => {
     const { theme } = useTheme();
     const isDark = theme === "dark";
-    // Локальные стейты, чтобы клавиатура не закрывалась при каждом символе
-    const [localBroadcast, setLocalBroadcast] = useState(broadcastText);
+
+    // === ВСЕ ФОРМЫ — ТОЛЬКО ЛОКАЛЬНЫЙ СТЕЙТ (клавиатура не сбрасывается) ===
+    const [localBroadcast, setLocalBroadcast] = useState("");
     const [trackingDrafts, setTrackingDrafts] = useState({});
-    const [openStatusId, setOpenStatusId] = useState(null); // id заказа, у которого открыт список статусов
+    const [openStatusId, setOpenStatusId] = useState(null);
+
+    // Локальная форма промокода
+    const [localPromo, setLocalPromo] = useState({ code: "", discount: "", maxUses: "", description: "" });
+
+    // Локальная форма товара (копия productDraft)
+    const [localProduct, setLocalProduct] = useState(null);
+    const [localIsNew, setLocalIsNew] = useState(false);
+
+    // Синхронизируем локальную форму товара когда открывают редактирование
+    useEffect(() => {
+      if (productDraft) {
+        setLocalProduct({ ...productDraft });
+        setLocalIsNew(isNewProduct);
+      } else {
+        setLocalProduct(null);
+      }
+    }, [productDraft, isNewProduct]);
 
     if (!showAdmin || !isAdmin) return null;
 
@@ -2034,7 +2052,7 @@ export default function App() {
     };
 
     return (
-      <Modal visible={showAdmin} animationType="slide" transparent={false}>
+      <Modal visible={showAdmin} animationType="fade" transparent={false}>
         <View style={[styles.page, isDark && styles.pageDark, { paddingTop: 40 }]}>
           <TouchableOpacity onPress={() => setShowAdmin(false)} style={styles.closeAdmin}>
             <Text style={[styles.closeAdminText, isDark && styles.textDark]}>✕ Закрыть CRM</Text>
@@ -2160,8 +2178,8 @@ export default function App() {
                 style={[styles.editInput, isDark && styles.inputDark]}
                 placeholder="Код (SAVE10)"
                 placeholderTextColor="#999"
-                value={promoForm.code}
-                onChangeText={(t) => setPromoForm((f) => ({ ...f, code: t }))}
+                value={localPromo.code}
+                onChangeText={(t) => setLocalPromo((f) => ({ ...f, code: t }))}
                 autoCapitalize="characters"
                 blurOnSubmit={false}
               />
@@ -2169,8 +2187,8 @@ export default function App() {
                 style={[styles.editInput, isDark && styles.inputDark]}
                 placeholder="Скидка %"
                 placeholderTextColor="#999"
-                value={promoForm.discount}
-                onChangeText={(t) => setPromoForm((f) => ({ ...f, discount: t.replace(/\D/g, "") }))}
+                value={localPromo.discount}
+                onChangeText={(t) => setLocalPromo((f) => ({ ...f, discount: t.replace(/\D/g, "") }))}
                 keyboardType="numeric"
                 blurOnSubmit={false}
               />
@@ -2178,8 +2196,8 @@ export default function App() {
                 style={[styles.editInput, isDark && styles.inputDark]}
                 placeholder="Кол-во использований (напр. 50)"
                 placeholderTextColor="#999"
-                value={promoForm.maxUses}
-                onChangeText={(t) => setPromoForm((f) => ({ ...f, maxUses: t.replace(/\D/g, "") }))}
+                value={localPromo.maxUses}
+                onChangeText={(t) => setLocalPromo((f) => ({ ...f, maxUses: t.replace(/\D/g, "") }))}
                 keyboardType="numeric"
                 blurOnSubmit={false}
               />
@@ -2187,11 +2205,18 @@ export default function App() {
                 style={[styles.editInput, isDark && styles.inputDark]}
                 placeholder="Описание (необязательно)"
                 placeholderTextColor="#999"
-                value={promoForm.description}
-                onChangeText={(t) => setPromoForm((f) => ({ ...f, description: t }))}
+                value={localPromo.description}
+                onChangeText={(t) => setLocalPromo((f) => ({ ...f, description: t }))}
                 blurOnSubmit={false}
               />
-              <TouchableOpacity style={styles.addBtn} onPress={addPromoFromForm}>
+              <TouchableOpacity style={styles.addBtn} onPress={() => {
+                // Временно подставляем локальные данные в глобальный стейт и вызываем оригинальную функцию
+                setPromoForm(localPromo);
+                setTimeout(() => {
+                  addPromoFromForm();
+                  setLocalPromo({ code: "", discount: "", maxUses: "", description: "" });
+                }, 0);
+              }}>
                 <Text style={styles.buttonText}>+ Создать промокод</Text>
               </TouchableOpacity>
             </View>
@@ -2227,31 +2252,31 @@ export default function App() {
             </TouchableOpacity>
 
             {/* Product editor (local draft — клавиатура не сбрасывается) */}
-            {productDraft && (
+            {localProduct && (
               <View style={[styles.productEdit, isDark && styles.productEditDark, { borderWidth: 2, borderColor: "#111" }]}>
                 <Text style={[styles.productName, isDark && styles.textDark]}>
-                  {isNewProduct ? "Новый товар" : "Редактирование"}
+                  {localIsNew ? "Новый товар" : "Редактирование"}
                 </Text>
                 <TextInput
                   style={[styles.editInput, isDark && styles.inputDark]}
-                  value={productDraft.brand}
-                  onChangeText={(t) => updateProductDraft("brand", t)}
+                  value={localProduct.brand || ""}
+                  onChangeText={(t) => setLocalProduct((d) => ({ ...d, brand: t }))}
                   placeholder="Бренд"
                   placeholderTextColor="#999"
                   blurOnSubmit={false}
                 />
                 <TextInput
                   style={[styles.editInput, isDark && styles.inputDark]}
-                  value={productDraft.name}
-                  onChangeText={(t) => updateProductDraft("name", t)}
+                  value={localProduct.name || ""}
+                  onChangeText={(t) => setLocalProduct((d) => ({ ...d, name: t }))}
                   placeholder="Название"
                   placeholderTextColor="#999"
                   blurOnSubmit={false}
                 />
                 <TextInput
                   style={[styles.editInput, isDark && styles.inputDark]}
-                  value={productDraft.price}
-                  onChangeText={(t) => updateProductDraft("price", t)}
+                  value={localProduct.price || ""}
+                  onChangeText={(t) => setLocalProduct((d) => ({ ...d, price: t }))}
                   placeholder="Цена"
                   placeholderTextColor="#999"
                   keyboardType="numeric"
@@ -2259,8 +2284,8 @@ export default function App() {
                 />
                 <TextInput
                   style={[styles.editInput, isDark && styles.inputDark]}
-                  value={productDraft.oldPrice}
-                  onChangeText={(t) => updateProductDraft("oldPrice", t)}
+                  value={localProduct.oldPrice || ""}
+                  onChangeText={(t) => setLocalProduct((d) => ({ ...d, oldPrice: t }))}
                   placeholder="Старая цена (необязательно)"
                   placeholderTextColor="#999"
                   keyboardType="numeric"
@@ -2268,25 +2293,26 @@ export default function App() {
                 />
                 <TextInput
                   style={[styles.editInput, isDark && styles.inputDark]}
-                  value={productDraft.description}
-                  onChangeText={(t) => updateProductDraft("description", t)}
+                  value={localProduct.description || ""}
+                  onChangeText={(t) => setLocalProduct((d) => ({ ...d, description: t }))}
                   placeholder="Описание"
                   placeholderTextColor="#999"
                   multiline
                   blurOnSubmit={false}
+                  textAlignVertical="top"
                 />
                 <TextInput
                   style={[styles.editInput, isDark && styles.inputDark]}
-                  value={productDraft.sizes}
-                  onChangeText={(t) => updateProductDraft("sizes", t)}
+                  value={localProduct.sizes || ""}
+                  onChangeText={(t) => setLocalProduct((d) => ({ ...d, sizes: t }))}
                   placeholder="Размеры через запятую"
                   placeholderTextColor="#999"
                   blurOnSubmit={false}
                 />
                 <TextInput
                   style={[styles.editInput, isDark && styles.inputDark]}
-                  value={productDraft.image}
-                  onChangeText={(t) => updateProductDraft("image", t)}
+                  value={localProduct.image || ""}
+                  onChangeText={(t) => setLocalProduct((d) => ({ ...d, image: t }))}
                   placeholder="URL картинки или загрузите фото"
                   placeholderTextColor="#999"
                   blurOnSubmit={false}
@@ -2295,16 +2321,23 @@ export default function App() {
                 <TouchableOpacity style={[styles.addBtn, { marginTop: 4 }]} onPress={pickProductImage}>
                   <Text style={styles.buttonText}>📷 Загрузить своё фото</Text>
                 </TouchableOpacity>
-                {!!productDraft.image && (
-                  <SmartImage uri={productDraft.image} style={{ width: "100%", height: 140, borderRadius: 12, marginBottom: 8 }} />
+                {!!localProduct.image && (
+                  <SmartImage uri={localProduct.image} style={{ width: "100%", height: 140, borderRadius: 12, marginBottom: 8 }} />
                 )}
                 <View style={{ flexDirection: "row", gap: 8 }}>
-                  <TouchableOpacity style={[styles.saveBtn, { flex: 1 }]} onPress={saveProductDraft}>
+                  <TouchableOpacity style={[styles.saveBtn, { flex: 1 }]} onPress={() => {
+                    // Передаём локальные данные в глобальный draft и сохраняем
+                    setProductDraft(localProduct);
+                    setTimeout(() => saveProductDraft(), 0);
+                  }}>
                     <Text style={styles.buttonText}>Сохранить</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={[styles.saveBtn, { flex: 1, backgroundColor: "#888" }]}
-                    onPress={cancelProductDraft}
+                    onPress={() => {
+                      setLocalProduct(null);
+                      cancelProductDraft();
+                    }}
                   >
                     <Text style={styles.buttonText}>Отмена</Text>
                   </TouchableOpacity>
