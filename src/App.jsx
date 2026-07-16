@@ -181,7 +181,16 @@ const LEVELS = [
   { name: "Постоянный клиент", min: 5, max: 14, cashback: 5 },
   { name: "VIP клиент", min: 15, max: 999, cashback: 10 }
 ];
-const ORDER_STATUSES = ["Ожидает подтверждения", "Принят", "На сборке", "Доставляется", "Готов к выдаче"];
+const ORDER_STATUSES = ["Новый", "Отправить", "Ждем поставку", "Доставляется", "Забрать деньги", "Деньги получены"];
+
+// Маппинг статуса для клиента
+const getClientStatus = (adminStatus) => {
+  if (adminStatus === "Отправить" || adminStatus === "Ждем поставку") return "На сборке";
+  if (adminStatus === "Доставляется") return "Доставляется";
+  if (adminStatus === "Забрать деньги" || adminStatus === "Деньги получены") return "Завершен";
+  if (adminStatus === "Новый") return "Ожидает подтверждения";
+  return adminStatus || "Ожидает подтверждения";
+};
 
 // CloudStorage
 const getCloudStorage = () => {
@@ -990,7 +999,7 @@ export default function App() {
     const order = {
       id: nextNumber, items: cart.map(i => ({ ...i })), total, delivery, address, phone, fullName,
       deliveryPrice, discount, usedBonus, finalTotal: orderTotal, date: new Date().toISOString(),
-      status: "Ожидает подтверждения", trackingNumber: null, freeDelivery,
+      status: "Новый", trackingNumber: null, freeDelivery,
       referredBy: referredBy || null,
       referralBonus
     };
@@ -1567,6 +1576,8 @@ export default function App() {
         return;
       }
       addCart({ ...selectedProduct, size: selectedSize });
+      // При добавлении в корзину — убираем из избранного
+      setFavorites(prev => prev.filter(x => x.id !== selectedProduct.id));
       showToast(`✅ ${selectedProduct.name} добавлен в корзину`);
     };
 
@@ -1963,8 +1974,8 @@ export default function App() {
             <View key={order.id} style={[styles.orderCard, isDark && styles.orderCardDark]}>
               <Text style={[styles.orderId, isDark && styles.textDark]}>Заказ #{order.id}</Text>
               <Text style={[styles.orderDate, isDark && styles.textDark]}>{new Date(order.date).toLocaleDateString()}</Text>
-              <Text style={[styles.orderStatus, isDark && styles.textDark]}>Статус: {order.status}</Text>
-              {order.delivery === "europost" && order.trackingNumber && (order.status === "Доставляется" || order.status === "Готов к выдаче") && (
+              <Text style={[styles.orderStatus, isDark && styles.textDark]}>Статус: {getClientStatus(order.status)}</Text>
+              {order.delivery === "europost" && order.trackingNumber && (order.status === "Доставляется") && (
                 <Text style={[styles.trackingText, isDark && styles.textDark]}>Трек-номер: {order.trackingNumber}</Text>
               )}
               <Text style={[styles.orderTotal, isDark && styles.textDark]}>Сумма: {money(order.finalTotal)}</Text>
@@ -2022,11 +2033,12 @@ export default function App() {
       .reduce((sum, o) => sum + (o.finalTotal || 0), 0);
 
     const statusColor = (s) => {
-      if (s === "Ожидает подтверждения") return "#f59e0b";
-      if (s === "Принят") return "#3b82f6";
-      if (s === "На сборке") return "#8b5cf6";
+      if (s === "Новый") return "#f59e0b";
+      if (s === "Отправить") return "#3b82f6";
+      if (s === "Ждем поставку") return "#8b5cf6";
       if (s === "Доставляется") return "#06b6d4";
-      if (s === "Готов к выдаче") return "#22c55e";
+      if (s === "Забрать деньги") return "#f97316";
+      if (s === "Деньги получены") return "#22c55e";
       return "#999";
     };
 
