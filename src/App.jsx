@@ -362,6 +362,219 @@ const refApiAdd = async (key, amount) => {
 };
 
 // ==============================
+// ОБЩЕЕ ХРАНИЛИЩЕ ЗАКАЗОВ (видно админу от всех клиентов)
+// CloudStorage у каждого свой — заказы дублируем в публичный JSON-blob
+// ==============================
+const SHARED_ORDERS_KEY = "manzshop_orders_v1";
+const SHARED_BLOB_KEY = "manzshop_orders_blob_id";
+
+// Получить общий blob id (один на всех клиентов магазина)
+const getSharedBlobId = async () => {
+  // 1) из localStorage
+  try {
+    if (typeof localStorage !== "undefined") {
+      const local = localStorage.getItem("krost_orders_blob_id");
+      if (local) return local;
+    }
+  } catch (e) {}
+
+  // 2) из общего keyvalue
+  try {
+    const urls = withProxies(
+      `https://keyvalue.immanuel.co/api/KeyVal/GetValue/manzshopby/${SHARED_BLOB_KEY}`
+    );
+    for (const url of urls) {
+      try {
+        const r = await fetch(url, { cache: "no-store", mode: "cors" });
+        if (!r.ok) continue;
+        let text = (await r.text()) || "";
+        text = text.replace(/^"|"$/g, "").trim();
+        if (text && text !== "null" && text.length > 5) {
+          try {
+            if (typeof localStorage !== "undefined") {
+              localStorage.setItem("krost_orders_blob_id", text);
+            }
+          } catch (e) {}
+          return text;
+        }
+      } catch (e) {}
+    }
+  } catch (e) {}
+  return null;
+};
+
+const setSharedBlobId = async (id) => {
+  if (!id) return;
+  try {
+    if (typeof localStorage !== "undefined") {
+      localStorage.setItem("krost_orders_blob_id", id);
+    }
+  } catch (e) {}
+  try {
+    const url = `https://keyvalue.immanuel.co/api/KeyVal/UpdateValue/manzshopby/${SHARED_BLOB_KEY}/${encodeURIComponent(
+      id
+    )}`;
+    await fetch(url, { method: "POST", mode: "cors", cache: "no-store" });
+  } catch (e) {}
+};
+
+const sharedOrdersLoad = async () => {
+  try {
+    // 1) jsonblob (основное хранилище)
+    const blobId = await getSharedBlobId();
+    if (blobId) {
+      const urls = withProxies(`https://jsonblob.com/api/jsonBlob/${blobId}`);
+      for (const url of urls) {
+        const j = await safeFetchJson(url, {
+          headers: { Accept: "application/json", "Content-Type": "application/json" },
+        });
+        if (Array.isArray(j)) return j;
+        if (j && Array.isArray(j.orders)) return j.orders;
+      }
+    }
+
+    // 2) keyvalue fallback
+    const kvUrls = withProxies(
+      `https://keyvalue.immanuel.co/api/KeyVal/GetValue/manzshopby/${SHARED_ORDERS_KEY}`
+    );
+    for (const url of kvUrls) {
+      try {
+        const r = await fetch(url, { cache: "no-store", mode: "cors" });
+        if (!r.ok) continue;
+        const text = await r.text();
+        if (!text || text === "null") continue;
+        let parsed = text;
+        try {
+          parsed = JSON.parse(text);
+        } catch (e) {}
+        if (typeof parsed === "string") {
+          try {
+            parsed = JSON.parse(parsed);
+          } catch (e) {}
+        }
+        if (Array.isArray(parsed)) return parsed;
+        if (parsed && Array.isArray(parsed.orders)) return parsed.orders;
+      } catch (e) {}
+    }
+  } catch (e) {
+    console.warn("sharedOrdersLoad", e);
+  }
+  return [];
+};
+
+const sharedOrdersSave = async (orders) => {
+  const list = Array.isArray(orders) ? orders.slice(0, 80) : [];
+  // компактный вид — меньше шанс упереться в лимиты
+  const compact = list.map((o) => ({
+    id: o.id,
+    date: o.date,
+    status: o.status,
+    fullName: o.fullName,
+    phone: o.phone,
+    address: o.address,
+    finalTotal: o.finalTotal,
+    delivery: o.delivery,
+    trackingNumber: o.trackingNumber || null,
+    tgId: o.tgId || null,
+    tgUsername: o.tgUsername || null,
+    freeDelivery: !!o.freeDelivery,
+    items: (o.items || []).map((i) => ({
+      id: i.id,
+      name: i.name,
+      brand: i.brand,
+      size: i.size,
+      price: i.price,
+    })),
+  }));
+  const body = JSON.stringify(compact);
+
+  // 1) jsonblob
+  try {
+    let blobId = await getSharedBlobId();
+
+    if (blobId) {
+      const urls = [
+        `https://jsonblob.com/api/jsonBlob/${blobId}`,
+        `https://corsproxy.io/?${encodeURIComponent(`https://jsonblob.com/api/jsonBlob/${blobId}`)}`,
+      ];
+      for (const url of urls) {
+        try {
+          const r = await fetch(url, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json", Accept: "application/json" },
+            body,
+          });
+          if (r.ok) return true;
+        } catch (e) {}
+      }
+    }
+
+    // создать blob и опубликовать id для всех
+    try {
+      const r = await fetch("https://jsonblob.com/api/jsonBlob", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body,
+      });
+      if (r.ok) {
+        const loc =
+          r.headers.get("Location") ||
+          r.headers.get("location") ||
+          r.headers.get("X-jsonblob") ||
+          r.headers.get("x-jsonblob") ||
+          "";
+        const id = String(loc).split("/").filter(Boolean).pop();
+        if (id) {
+          await setSharedBlobId(id);
+          return true;
+        }
+      }
+    } catch (e) {}
+  } catch (e) {
+    console.warn("sharedOrdersSave jsonblob", e);
+  }
+
+  // 2) keyvalue fallback
+  try {
+    const url = `https://keyvalue.immanuel.co/api/KeyVal/UpdateValue/manzshopby/${SHARED_ORDERS_KEY}/${encodeURIComponent(
+      body
+    )}`;
+    const r = await fetch(url, { method: "POST", mode: "cors", cache: "no-store" });
+    if (r.ok) return true;
+  } catch (e) {
+    console.warn("sharedOrdersSave kv", e);
+  }
+  return false;
+};
+
+const sharedOrdersPush = async (order) => {
+  try {
+    const current = await sharedOrdersLoad();
+    const without = current.filter((o) => String(o.id) !== String(order.id));
+    const next = [order, ...without].slice(0, 80);
+    await sharedOrdersSave(next);
+    return next;
+  } catch (e) {
+    console.warn("sharedOrdersPush", e);
+    return null;
+  }
+};
+
+const sharedOrdersUpdate = async (orderId, patch) => {
+  try {
+    const current = await sharedOrdersLoad();
+    const next = current.map((o) =>
+      String(o.id) === String(orderId) ? { ...o, ...patch } : o
+    );
+    await sharedOrdersSave(next);
+    return next;
+  } catch (e) {
+    console.warn("sharedOrdersUpdate", e);
+    return null;
+  }
+};
+
+// ==============================
 // КОМПОНЕНТ TOAST
 // ==============================
 const Toast = ({ message, visible, onHide }) => {
@@ -1056,7 +1269,8 @@ export default function App() {
       setUsedFreeDelivery(prev => [...prev, { phone: phone.trim(), fullName: fullName.trim() }]);
     }
     const orderTotal = finalTotal + deliveryPrice;
-    const nextNumber = lastOrderNumber + 1;
+    // Уникальный номер: локальный счётчик + хвост из времени (чтобы не пересекались у разных клиентов)
+    const nextNumber = Math.max(lastOrderNumber + 1, Number(String(Date.now()).slice(-6)));
     setLastOrderNumber(nextNumber);
 
     // 2% рефереру с суммы товаров (без доставки) — пишем в публичный счётчик
@@ -1080,6 +1294,8 @@ export default function App() {
     };
     setOrderHistory(prev => [order, ...prev]);
     setAdminOrders(prev => [order, ...prev]);
+    // Дублируем в общее хранилище — чтобы админ видел заказы всех клиентов
+    sharedOrdersPush(order).catch((e) => console.warn("shared push", e));
     // Увеличиваем счётчик использований промокода
     if (promoCode) {
       const codeUp = promoCode.toUpperCase();
@@ -1305,6 +1521,51 @@ export default function App() {
     if (!isAdmin) { Alert.alert("Доступ запрещён", "У вас нет прав администратора"); return; }
     setShowAdmin(!showAdmin);
   };
+
+  // Подтянуть заказы всех клиентов из общего хранилища (когда открыта CRM)
+  const syncSharedOrders = async () => {
+    try {
+      const remote = await sharedOrdersLoad();
+      if (!Array.isArray(remote) || remote.length === 0) return;
+      setAdminOrders((prev) => {
+        const map = new Map();
+        // Сначала локальные
+        prev.forEach((o) => map.set(String(o.id), o));
+        // Потом удалённые (не перезаписываем более новые локальные статусы без нужды)
+        remote.forEach((o) => {
+          const id = String(o.id);
+          if (!map.has(id)) {
+            map.set(id, o);
+          } else {
+            // мержим: берём более полный объект
+            const local = map.get(id);
+            map.set(id, {
+              ...o,
+              ...local,
+              // если у remote есть трек/статус, а локально пусто — подтягиваем
+              status: local.status || o.status,
+              trackingNumber: local.trackingNumber || o.trackingNumber || null,
+            });
+          }
+        });
+        return Array.from(map.values()).sort((a, b) => {
+          const da = a.date ? new Date(a.date).getTime() : 0;
+          const db = b.date ? new Date(b.date).getTime() : 0;
+          return db - da;
+        });
+      });
+    } catch (e) {
+      console.warn("syncSharedOrders", e);
+    }
+  };
+
+  useEffect(() => {
+    if (!showAdmin || !isAdmin) return;
+    syncSharedOrders();
+    const t = setInterval(syncSharedOrders, 15000); // каждые 15 сек пока открыта CRM
+    return () => clearInterval(t);
+  }, [showAdmin, isAdmin]);
+
   const confirmAction = (msg) => {
     try {
       if (typeof window !== "undefined" && typeof window.confirm === "function") {
@@ -1447,25 +1708,20 @@ export default function App() {
   const changeStatus = (orderId, newStatus) => {
     // При завершении заказа просим клиента оставить отзыв
     const completed = newStatus === "Забрать деньги" || newStatus === "Деньги получены";
+    const patch = { status: newStatus, ...(completed ? { askReview: true } : {}) };
     setAdminOrders((prev) =>
-      prev.map((o) =>
-        o.id === orderId
-          ? { ...o, status: newStatus, ...(completed ? { askReview: true } : {}) }
-          : o
-      )
+      prev.map((o) => (o.id === orderId ? { ...o, ...patch } : o))
     );
     setOrderHistory((prev) =>
-      prev.map((o) =>
-        o.id === orderId
-          ? { ...o, status: newStatus, ...(completed ? { askReview: true } : {}) }
-          : o
-      )
+      prev.map((o) => (o.id === orderId ? { ...o, ...patch } : o))
     );
+    sharedOrdersUpdate(orderId, patch).catch(() => {});
   };
 
   const updateTracking = (orderId, trackingNumber) => {
     setAdminOrders((prev) => prev.map((o) => (o.id === orderId ? { ...o, trackingNumber } : o)));
     setOrderHistory((prev) => prev.map((o) => (o.id === orderId ? { ...o, trackingNumber } : o)));
+    sharedOrdersUpdate(orderId, { trackingNumber }).catch(() => {});
   };
 
   const sendBroadcast = () => {
