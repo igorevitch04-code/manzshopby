@@ -1,232 +1,364 @@
 /**
- * Общие заказы + статусы (для CRM и клиента)
- * GET/POST /api/orders
+ * Заказы — Netlify Blobs + защита админ-действий
  *
- * Blob ID:
- *  1) Netlify Env ORDERS_BLOB_ID
- *  2) fallback: ord:… из short_description (только чтение)
+ * GET  — публично (клиент/CRM читают)
+ * POST { order }  — публично (новый заказ) + серверный пуш в Telegram
+ * POST { orders } / { patch } — только с заголовком X-Admin-Secret
+ *
+ * Env:
+ *   PUSH_BOT_TOKEN
+ *   ADMIN_NOTIFY_CHAT_ID  (default группа Manz)
+ *   ADMIN_NOTIFY_THREAD_ID (default 2)
+ *   ADMIN_API_SECRET
  */
+import { getStore, connectLambda } from "@netlify/blobs";
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "Content-Type",
+  "Access-Control-Allow-Headers": "Content-Type, X-Admin-Secret",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Content-Type": "application/json; charset=utf-8",
   "Cache-Control": "no-store",
 };
 
-const BOT_TOKEN =
-  process.env.BOT_TOKEN ||
-  process.env.PUSH_BOT_TOKEN ||
-  "8912775566:AAHEExxwO5Ub39DU0tDT97Hlppw1IfLwjvU";
+function compact(o) {
+  return {
+    id: o.id,
+    date: o.date || null,
+    status: o.status || "Новый",
+    fullName: String(o.fullName || "").slice(0, 80),
+    phone: String(o.phone || "").slice(0, 40),
+    address: String(o.address || "").slice(0, 160),
+    finalTotal: Number(o.finalTotal) || 0,
+    delivery: o.delivery || "courier",
+    trackingNumber: o.trackingNumber || null,
+    tgId: o.tgId || null,
+    tgUsername: o.tgUsername || null,
+    freeDelivery: !!o.freeDelivery,
+    pendingCashback: Number(o.pendingCashback) || 0,
+    cashbackCredited: !!o.cashbackCredited,
+    askReview: !!o.askReview,
+    reviewDone: !!o.reviewDone,
+    utmSource: o.utmSource || null,
+    usedBonus: Number(o.usedBonus) || 0,
+    items: Array.isArray(o.items)
+      ? o.items.slice(0, 10).map(function (i) {
+          return {
+            id: i.id,
+            name: String(i.name || "").slice(0, 60),
+            brand: String(i.brand || "").slice(0, 40),
+            size: i.size || null,
+            price: Number(i.price) || 0,
+          };
+        })
+      : [],
+  };
+}
 
-const json = (status, data) =>
-  new Response(JSON.stringify(data), { status, headers: corsHeaders });
+function isAdmin(eventOrHeaders) {
+  var secret = (process.env.ADMIN_API_SECRET || "").trim();
+  if (!secret) return false;
+  var h = eventOrHeaders || {};
+  var got =
+    h["x-admin-secret"] ||
+    h["X-Admin-Secret"] ||
+    h["X-ADMIN-SECRET"] ||
+    "";
+  return String(got) === secret;
+}
 
-const compact = (o) => ({
-  id: o.id,
-  date: o.date || null,
-  status: o.status || "Новый",
-  fullName: (o.fullName || "").slice(0, 80),
-  phone: (o.phone || "").slice(0, 40),
-  address: (o.address || "").slice(0, 160),
-  finalTotal: Number(o.finalTotal) || 0,
-  delivery: o.delivery || "courier",
-  trackingNumber: o.trackingNumber || null,
-  tgId: o.tgId || null,
-  tgUsername: o.tgUsername || null,
-  freeDelivery: !!o.freeDelivery,
-  pendingCashback: Number(o.pendingCashback) || 0,
-  cashbackCredited: !!o.cashbackCredited,
-  askReview: !!o.askReview,
-  reviewDone: !!o.reviewDone,
-  utmSource: o.utmSource || null,
-  items: Array.isArray(o.items)
-    ? o.items.slice(0, 10).map((i) => ({
-        id: i.id,
-        name: (i.name || "").slice(0, 60),
-        brand: (i.brand || "").slice(0, 40),
-        size: i.size || null,
-        price: Number(i.price) || 0,
-      }))
-    : [],
-});
-
-async function blobRead(id) {
-  if (!id) return null;
+async function readOrders(store) {
   try {
-    const r = await fetch("https://jsonblob.com/api/jsonBlob/" + id, {
-      headers: { Accept: "application/json" },
-      cache: "no-store",
-    });
-    if (!r.ok) return null;
-    return await r.json();
+    var raw = await store.get("orders");
+    if (!raw) return [];
+    var data = typeof raw === "string" ? JSON.parse(raw) : raw;
+    if (data && Array.isArray(data.orders)) return data.orders;
+    if (Array.isArray(data)) return data;
   } catch (e) {
-    return null;
+    console.error("[orders] read", e);
   }
+  return [];
 }
 
-async function blobWrite(id, payload) {
-  const body = JSON.stringify(payload);
-  if (id) {
-    try {
-      const r = await fetch("https://jsonblob.com/api/jsonBlob/" + id, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-        body: body,
-      });
-      if (r.ok || r.status === 200 || r.status === 201) return id;
-    } catch (e) {}
-  }
-  try {
-    const r = await fetch("https://jsonblob.com/api/jsonBlob", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body: body,
-    });
-    if (r.ok || r.status === 201) {
-      const x =
-        r.headers.get("X-jsonblob") ||
-        r.headers.get("x-jsonblob") ||
-        r.headers.get("X-Jsonblob");
-      if (x) return String(x).trim();
-      const loc = r.headers.get("Location") || r.headers.get("location") || "";
-      const parts = loc.split("/").filter(Boolean);
-      if (parts.length) return parts[parts.length - 1];
-    }
-  } catch (e) {}
-  return null;
+async function writeOrders(store, orders) {
+  var payload = {
+    orders: orders,
+    updatedAt: new Date().toISOString(),
+    v: 3,
+  };
+  await store.set("orders", JSON.stringify(payload));
+  return payload;
 }
 
-async function blobIdFromBotDescription() {
+async function sendPush(text) {
+  var token = (
+    process.env.PUSH_BOT_TOKEN ||
+    process.env.BOT_TOKEN ||
+    ""
+  ).trim();
+  if (!token) return { ok: false, error: "no_token" };
+  var chatId = (process.env.ADMIN_NOTIFY_CHAT_ID || "-1004319683257").trim();
+  var threadRaw = (process.env.ADMIN_NOTIFY_THREAD_ID || "2").trim();
+  var threadId = threadRaw ? Number(threadRaw) : null;
+  var payload = {
+    chat_id: chatId,
+    text: String(text).slice(0, 3500),
+    disable_web_page_preview: true,
+  };
+  if (threadId && !isNaN(threadId)) payload.message_thread_id = threadId;
   try {
-    const r = await fetch(
-      "https://api.telegram.org/bot" + BOT_TOKEN + "/getMyShortDescription",
-      { cache: "no-store" }
+    var r = await fetch(
+      "https://api.telegram.org/bot" + token + "/sendMessage",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }
     );
-    const data = await r.json();
-    const desc =
-      (data && data.result && data.result.short_description) || "";
-    const m = String(desc).match(/ord:([A-Za-z0-9_-]+)/);
-    return m ? m[1] : null;
+    var data = await r.json().catch(function () {
+      return {};
+    });
+    return data;
   } catch (e) {
-    return null;
+    return { ok: false, error: String(e && e.message ? e.message : e) };
   }
 }
 
-async function resolveOrdersBlobId() {
-  const fromEnv = (process.env.ORDERS_BLOB_ID || "").trim();
-  if (fromEnv) return fromEnv;
-  return await blobIdFromBotDescription();
+function formatOrderPush(order) {
+  var deliveryLabel =
+    order.delivery === "europost" ? "Европочта" : "Курьер";
+  var itemsShort = (order.items || [])
+    .map(function (i) {
+      return (
+        (i.brand || "") +
+        " " +
+        (i.name || "") +
+        (i.size ? " (" + i.size + ")" : "")
+      ).trim();
+    })
+    .join(", ")
+    .slice(0, 400);
+  var tgPart = order.tgUsername
+    ? "@" + order.tgUsername
+    : order.tgId
+      ? "id:" + order.tgId
+      : "—";
+  var utmPart = order.utmSource ? "\nРеклама: " + order.utmSource : "";
+  return (
+    "🛍 Новый заказ #" +
+    order.id +
+    "\nФИО: " +
+    (order.fullName || "—") +
+    "\nТел: " +
+    (order.phone || "—") +
+    "\nTG: " +
+    tgPart +
+    utmPart +
+    "\nДоставка: " +
+    deliveryLabel +
+    "\nАдрес: " +
+    String(order.address || "—").slice(0, 160) +
+    "\nСумма: " +
+    order.finalTotal +
+    " BYN" +
+    (Number(order.usedBonus) > 0
+      ? " (бонусы " + order.usedBonus + ")"
+      : "") +
+    "\nТовар: " +
+    (itemsShort || "—")
+  );
+}
+
+async function handle(method, body, admin) {
+  var store = getStore("orders");
+  var existing = await readOrders(store);
+
+  if (method === "GET") {
+    return {
+      statusCode: 200,
+      headers: corsHeaders,
+      body: JSON.stringify({
+        ok: true,
+        orders: existing,
+        count: existing.length,
+        storage: "netlify-blobs",
+      }),
+    };
+  }
+
+  if (method !== "POST") {
+    return {
+      statusCode: 405,
+      headers: corsHeaders,
+      body: JSON.stringify({ ok: false, error: "method_not_allowed" }),
+    };
+  }
+
+  // --- новый заказ от клиента (публично) ---
+  if (body && body.order && body.order.id != null) {
+    var c = compact(body.order);
+    var without = existing.filter(function (o) {
+      return String(o.id) !== String(c.id);
+    });
+    var orders = [c].concat(without).slice(0, 100);
+    orders.sort(function (a, b) {
+      var da = a.date ? new Date(a.date).getTime() : 0;
+      var db = b.date ? new Date(b.date).getTime() : 0;
+      return db - da;
+    });
+    var payload = await writeOrders(store, orders);
+    var push = await sendPush(formatOrderPush(c));
+    return {
+      statusCode: 200,
+      headers: corsHeaders,
+      body: JSON.stringify({
+        ok: true,
+        count: orders.length,
+        pushed: true,
+        notify: !!(push && push.ok),
+        storage: "netlify-blobs",
+        updatedAt: payload.updatedAt,
+      }),
+    };
+  }
+
+  // --- админ: полная замена / patch ---
+  if (!admin) {
+    return {
+      statusCode: 401,
+      headers: corsHeaders,
+      body: JSON.stringify({
+        ok: false,
+        error: "unauthorized",
+        message: "Admin secret required for this action",
+      }),
+    };
+  }
+
+  var nextOrders = existing;
+
+  if (body && body.patch && body.patch.id != null) {
+    var patch = body.patch;
+    var map = {};
+    existing.forEach(function (o) {
+      map[String(o.id)] = o;
+    });
+    var cur = map[String(patch.id)] || { id: patch.id };
+    map[String(patch.id)] = compact(Object.assign({}, cur, patch));
+    nextOrders = Object.keys(map).map(function (k) {
+      return map[k];
+    });
+  } else if (body && Array.isArray(body.orders)) {
+    nextOrders = body.orders.map(compact);
+  } else {
+    return {
+      statusCode: 400,
+      headers: corsHeaders,
+      body: JSON.stringify({
+        ok: false,
+        error: "need order, orders, or patch",
+      }),
+    };
+  }
+
+  nextOrders.sort(function (a, b) {
+    var da = a.date ? new Date(a.date).getTime() : 0;
+    var db = b.date ? new Date(b.date).getTime() : 0;
+    return db - da;
+  });
+
+  var saved = await writeOrders(store, nextOrders);
+  return {
+    statusCode: 200,
+    headers: corsHeaders,
+    body: JSON.stringify({
+      ok: true,
+      count: nextOrders.length,
+      storage: "netlify-blobs",
+      updatedAt: saved.updatedAt,
+    }),
+  };
+}
+
+export async function handler(event) {
+  try {
+    connectLambda(event);
+  } catch (e) {}
+
+  if (event.httpMethod === "OPTIONS") {
+    return { statusCode: 200, headers: corsHeaders, body: "" };
+  }
+
+  var headers = event.headers || {};
+  var admin = isAdmin(headers);
+  var body = {};
+  if (event.httpMethod === "POST") {
+    try {
+      body = JSON.parse(event.body || "{}");
+    } catch (e) {
+      return {
+        statusCode: 400,
+        headers: corsHeaders,
+        body: JSON.stringify({ ok: false, error: "invalid_json" }),
+      };
+    }
+  }
+
+  try {
+    return await handle(event.httpMethod, body, admin);
+  } catch (e) {
+    console.error("[orders]", e);
+    return {
+      statusCode: 500,
+      headers: corsHeaders,
+      body: JSON.stringify({
+        ok: false,
+        error: String(e && e.message ? e.message : e),
+        orders: [],
+      }),
+    };
+  }
 }
 
 export default async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("", { status: 204, headers: corsHeaders });
   }
-
+  var headers = {};
   try {
-    let blobId = await resolveOrdersBlobId();
-
-    if (req.method === "GET") {
-      const data = blobId ? await blobRead(blobId) : null;
-      const orders =
-        data && Array.isArray(data.orders)
-          ? data.orders
-          : Array.isArray(data)
-            ? data
-            : [];
-      return json(200, {
-        ok: true,
-        orders: orders,
-        updatedAt: (data && data.updatedAt) || null,
-        blobId: blobId || null,
-        storage: blobId ? "jsonblob" : "empty",
-      });
-    }
-
-    if (req.method === "POST") {
-      let body = {};
-      try {
-        body = await req.json();
-      } catch (e) {
-        return json(400, { ok: false, error: "invalid_json" });
-      }
-
-      let orders = [];
-      const existingData = blobId ? await blobRead(blobId) : null;
-      const existing =
-        existingData && Array.isArray(existingData.orders)
-          ? existingData.orders
-          : [];
-
-      if (body.patch && body.patch.id != null) {
-        const patch = body.patch;
-        const map = new Map(existing.map((o) => [String(o.id), o]));
-        const cur = map.get(String(patch.id)) || { id: patch.id };
-        map.set(String(patch.id), compact(Object.assign({}, cur, patch)));
-        orders = Array.from(map.values());
-      } else if (Array.isArray(body.orders)) {
-        orders = body.orders.map(compact);
-      } else if (body.order && body.order.id != null) {
-        const c = compact(body.order);
-        const without = existing.filter(function (o) {
-          return String(o.id) !== String(c.id);
-        });
-        orders = [c].concat(without).slice(0, 80);
-      } else {
-        return json(400, { ok: false, error: "need orders, order, or patch" });
-      }
-
-      orders.sort(function (a, b) {
-        const da = a.date ? new Date(a.date).getTime() : 0;
-        const db = b.date ? new Date(b.date).getTime() : 0;
-        return db - da;
-      });
-
-      const payload = {
-        orders: orders,
-        updatedAt: new Date().toISOString(),
-        v: 1,
-      };
-
-      const written = await blobWrite(blobId, payload);
-      if (!written) {
-        return json(500, { ok: false, error: "blob_write_failed" });
-      }
-
-      const needEnvUpdate =
-        !(process.env.ORDERS_BLOB_ID || "").trim() || written !== blobId;
-
-      return json(200, {
-        ok: true,
-        count: orders.length,
-        blobId: written,
-        updatedAt: payload.updatedAt,
-        storage: "jsonblob",
-        needEnvUpdate: needEnvUpdate,
-        hint: needEnvUpdate
-          ? "Добавьте в Netlify Env: ORDERS_BLOB_ID=" + written
-          : undefined,
-      });
-    }
-
-    return json(405, { ok: false, error: "method_not_allowed" });
-  } catch (e) {
-    console.error("[orders]", e);
-    return json(500, {
-      ok: false,
-      error: String(e && e.message ? e.message : e),
-      orders: [],
+    req.headers.forEach(function (v, k) {
+      headers[k] = v;
     });
+  } catch (e) {
+    headers = req.headers || {};
+  }
+  var admin = isAdmin(headers);
+  var body = {};
+  if (req.method === "POST") {
+    try {
+      body = await req.json();
+    } catch (e) {
+      return new Response(JSON.stringify({ ok: false, error: "invalid_json" }), {
+        status: 400,
+        headers: corsHeaders,
+      });
+    }
+  }
+  try {
+    var res = await handle(req.method, body, admin);
+    return new Response(res.body, {
+      status: res.statusCode,
+      headers: corsHeaders,
+    });
+  } catch (e) {
+    return new Response(
+      JSON.stringify({
+        ok: false,
+        error: String(e && e.message ? e.message : e),
+      }),
+      { status: 500, headers: corsHeaders }
+    );
   }
 };
 
-export const config = {
-  path: "/api/orders",
-};
+export const config = { path: "/api/orders" };
