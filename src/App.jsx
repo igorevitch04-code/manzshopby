@@ -182,6 +182,7 @@ const compactOrderForBot = (o) => ({
   freeDelivery: !!o.freeDelivery,
   pendingCashback: o.pendingCashback || 0,
   cashbackCredited: !!o.cashbackCredited,
+  utmSource: o.utmSource || null,
   items: (o.items || []).slice(0, 8).map((i) => ({
     id: i.id,
     name: i.name,
@@ -298,11 +299,13 @@ const notifyAdminNewOrder = async (order) => {
         ? `id:${order.tgId}`
         : "—";
 
+    const utmPart = order.utmSource ? `\nРеклама: ${order.utmSource}` : "";
     const humanText =
       `🛍 Новый заказ #${order.id}\n` +
       `ФИО: ${order.fullName || "—"}\n` +
       `Тел: ${order.phone || "—"}\n` +
-      `TG: ${tgPart}\n` +
+      `TG: ${tgPart}` +
+      utmPart + `\n` +
       `Доставка: ${deliveryLabel}\n` +
       `Адрес: ${(order.address || "—").slice(0, 160)}\n` +
       `Сумма: ${order.finalTotal} BYN` +
@@ -871,6 +874,7 @@ const compactOrder = (o) => ({
   cashbackCredited: !!o.cashbackCredited,
   askReview: !!o.askReview,
   reviewDone: !!o.reviewDone,
+  utmSource: o.utmSource || null,
   items: (o.items || []).slice(0, 6).map((i) => ({
     id: i.id,
     name: i.name,
@@ -891,6 +895,7 @@ const ultraCompactOrder = (o) => ({
   delivery: o.delivery || "courier",
   tgId: o.tgId || null,
   tgUsername: o.tgUsername || null,
+  utmSource: o.utmSource || null,
   items: (o.items || []).slice(0, 2).map((i) => ({
     name: i.name,
     size: i.size,
@@ -1601,8 +1606,49 @@ export default function App() {
       clearTimeout(stop);
     };
   }, []);
-  const [theme, setTheme] = useState("light");
-  const toggleTheme = () => setTheme(t => t === "light" ? "dark" : "light");
+  // Тема автоматически берётся с устройства / Telegram (без ручного переключателя)
+  const getSystemTheme = () => {
+    try {
+      if (tg && (tg.colorScheme === "dark" || tg.colorScheme === "light")) {
+        return tg.colorScheme;
+      }
+    } catch (e) {}
+    try {
+      if (typeof window !== "undefined" && window.matchMedia) {
+        if (window.matchMedia("(prefers-color-scheme: dark)").matches) return "dark";
+      }
+    } catch (e) {}
+    return "light";
+  };
+  const [theme, setTheme] = useState(() => getSystemTheme());
+  const toggleTheme = () => {}; // больше не используется — тема только системная
+
+  // Слушаем смену темы на устройстве / в Telegram
+  useEffect(() => {
+    const apply = () => setTheme(getSystemTheme());
+    apply();
+    try {
+      if (tg && tg.onEvent) {
+        tg.onEvent("themeChanged", apply);
+      }
+    } catch (e) {}
+    let mql = null;
+    try {
+      if (typeof window !== "undefined" && window.matchMedia) {
+        mql = window.matchMedia("(prefers-color-scheme: dark)");
+        if (mql.addEventListener) mql.addEventListener("change", apply);
+        else if (mql.addListener) mql.addListener(apply);
+      }
+    } catch (e) {}
+    return () => {
+      try {
+        if (mql) {
+          if (mql.removeEventListener) mql.removeEventListener("change", apply);
+          else if (mql.removeListener) mql.removeListener(apply);
+        }
+      } catch (e) {}
+    };
+  }, []);
 
   // Синхронизируем фон Telegram WebApp с темой приложения (убирает чёрную полосу)
   useEffect(() => {
@@ -1683,6 +1729,12 @@ export default function App() {
   const [localIsNew, setLocalIsNew] = useState(false);
   const [openStatusId, setOpenStatusId] = useState(null);
   const [ordersFullscreen, setOrdersFullscreen] = useState(false);
+  // Фильтры таблицы заказов CRM
+  const [orderFilterStatus, setOrderFilterStatus] = useState("all"); // all | статус
+  const [orderFilterUtm, setOrderFilterUtm] = useState("all"); // all | utm_xxx
+  const [orderFilterQuery, setOrderFilterQuery] = useState(""); // поиск по ФИО / тел / username / id
+  const [orderFilterPeriod, setOrderFilterPeriod] = useState("month"); // today | yesterday | month | last_month | all
+  const [showOrderFilters, setShowOrderFilters] = useState(false); // свёрнуты по умолчанию
   const [reviewRating, setReviewRating] = useState(0);
   const [reviewComment, setReviewComment] = useState("");
   // Сразу предзагружаем картинки, чтобы не было пустых карточек
@@ -1713,6 +1765,8 @@ export default function App() {
   const [referralCount, setReferralCount] = useState(0); // сколько пришло по моей ссылке
   const [referralEarnings, setReferralEarnings] = useState(0); // сколько заработал с рефералов
   const [referralNotified, setReferralNotified] = useState(false); // уже показали toast о регистрации
+  // UTM / рекламный источник (first-touch): сохраняется при первом заходе и живёт до заказа
+  const [utmSource, setUtmSource] = useState(null);
 
   const showToast = (msg) => {
     setToastMessage(msg);
@@ -1739,6 +1793,7 @@ export default function App() {
     referralCount: "krost_referralCount",
     referralEarnings: "krost_referralEarnings",
     referralNotified: "krost_referralNotified",
+    utmSource: "krost_utm_source",
     // Общая «очередь» реферальных событий (в рамках одного устройства / для демо)
     refEvents: "krost_refEvents"
   };
@@ -1753,7 +1808,8 @@ export default function App() {
           cloudCart, cloudFavorites, cloudOrders, cloudBonus,
           cloudOrderHistory, cloudLastOrderNumber, cloudUsedFreeDelivery,
           cloudAdminOrders, cloudPromoCodes, cloudProducts, cloudTheme,
-          cloudReferredBy, cloudReferralCount, cloudReferralEarnings, cloudReferralNotified
+          cloudReferredBy, cloudReferralCount, cloudReferralEarnings, cloudReferralNotified,
+          cloudUtmSource
         ] = await Promise.all([
           loadFromCloud(CLOUD_KEYS.cart),
           loadFromCloud(CLOUD_KEYS.favorites),
@@ -1769,7 +1825,8 @@ export default function App() {
           loadFromCloud(CLOUD_KEYS.referredBy),
           loadFromCloud(CLOUD_KEYS.referralCount),
           loadFromCloud(CLOUD_KEYS.referralEarnings),
-          loadFromCloud(CLOUD_KEYS.referralNotified)
+          loadFromCloud(CLOUD_KEYS.referralNotified),
+          loadFromCloud(CLOUD_KEYS.utmSource)
         ]);
 
         setCart(cloudCart || []);
@@ -1836,11 +1893,15 @@ export default function App() {
           console.warn("shared orders merge on load", e);
         }
 
-        if (cloudTheme) setTheme(cloudTheme);
+        // theme больше не берём из облака — только системная / Telegram
         if (cloudReferredBy) setReferredBy(cloudReferredBy);
         setReferralCount(cloudReferralCount || 0);
         setReferralEarnings(cloudReferralEarnings || 0);
         setReferralNotified(!!cloudReferralNotified);
+        // first-touch UTM: если уже сохраняли — не перезаписываем
+        if (cloudUtmSource && typeof cloudUtmSource === "string") {
+          setUtmSource(cloudUtmSource);
+        }
 
         // Ссылка на Google Таблицу для импорта
         try {
@@ -1875,12 +1936,25 @@ export default function App() {
   useEffect(() => { if (!dataReady) return; saveToCloud(CLOUD_KEYS.usedFreeDelivery, usedFreeDelivery); }, [usedFreeDelivery, dataReady]);
   useEffect(() => { if (!dataReady) return; saveToCloud(CLOUD_KEYS.adminOrders, adminOrders); }, [adminOrders, dataReady]);
   useEffect(() => { if (!dataReady) return; saveToCloud(CLOUD_KEYS.promoCodes, promoCodes); }, [promoCodes, dataReady]);
+  // Автоудаление промокодов с исчерпанным лимитом
+  useEffect(() => {
+    if (!dataReady || !Array.isArray(promoCodes) || promoCodes.length === 0) return;
+    const cleaned = promoCodes.filter((p) => {
+      const used = Number(p.usedCount) || 0;
+      const maxU = p.maxUses != null ? Number(p.maxUses) : 999999;
+      return used < maxU;
+    });
+    if (cleaned.length !== promoCodes.length) {
+      setPromoCodes(cleaned);
+    }
+  }, [promoCodes, dataReady]);
   useEffect(() => { if (!dataReady) return; saveToCloud(CLOUD_KEYS.products, products); }, [products, dataReady]);
-  useEffect(() => { if (!dataReady) return; saveToCloud(CLOUD_KEYS.theme, theme); }, [theme, dataReady]);
+  // theme больше не сохраняем — только системная / Telegram
   useEffect(() => { if (!dataReady) return; if (referredBy != null) saveToCloud(CLOUD_KEYS.referredBy, referredBy); }, [referredBy, dataReady]);
   useEffect(() => { if (!dataReady) return; saveToCloud(CLOUD_KEYS.referralCount, referralCount); }, [referralCount, dataReady]);
   useEffect(() => { if (!dataReady) return; saveToCloud(CLOUD_KEYS.referralEarnings, referralEarnings); }, [referralEarnings, dataReady]);
   useEffect(() => { if (!dataReady) return; saveToCloud(CLOUD_KEYS.referralNotified, referralNotified); }, [referralNotified, dataReady]);
+  useEffect(() => { if (!dataReady) return; if (utmSource) saveToCloud(CLOUD_KEYS.utmSource, utmSource); }, [utmSource, dataReady]);
 
   // Если referredBy уже есть, а Telegram ID стал числовым — дорегистрируем реферала
   useEffect(() => {
@@ -2401,7 +2475,13 @@ export default function App() {
       console.warn("ensureReferralRegistered", e);
     }
   };
-  const openOrderModal = () => setOrderModalVisible(true);
+  const openOrderModal = () => {
+    if (!cart || cart.length === 0) {
+      showToast("Корзина пустая");
+      return;
+    }
+    setOrderModalVisible(true);
+  };
   const closeOrderModal = () => { setOrderModalVisible(false); setUseBonus(false); setPromoCode(""); };
 
   const calculateTotals = () => {
@@ -2462,6 +2542,8 @@ export default function App() {
       tgName: user?.name || null,
       pendingCashback,
       cashbackCredited: false,
+      // источник рекламы (first-touch), даже если заказ через несколько дней
+      utmSource: utmSource || null,
     };
     setOrderHistory(prev => [order, ...prev]);
     setAdminOrders(prev => [order, ...prev]);
@@ -2488,14 +2570,20 @@ export default function App() {
         console.log("[Orders] Telegram notify OK", order.id);
       }
     })();
-    // Увеличиваем счётчик использований промокода
+    // Увеличиваем счётчик использований промокода; если лимит исчерпан — удаляем
     if (promoCode) {
       const codeUp = promoCode.toUpperCase();
-      setPromoCodes(prev => prev.map(p =>
-        p.code.toUpperCase() === codeUp
-          ? { ...p, usedCount: (Number(p.usedCount) || 0) + 1 }
-          : p
-      ));
+      setPromoCodes((prev) =>
+        prev
+          .map((p) => {
+            if (p.code.toUpperCase() !== codeUp) return p;
+            const used = (Number(p.usedCount) || 0) + 1;
+            const maxU = p.maxUses != null ? Number(p.maxUses) : 999999;
+            if (used >= maxU) return null; // лимит исчерпан — удалить
+            return { ...p, usedCount: used };
+          })
+          .filter(Boolean)
+      );
     }
     // Списываем только использованные бонусы; кэшбэк — после доставки
     if (usedBonus > 0) {
@@ -2673,6 +2761,57 @@ export default function App() {
               }
             };
             setTimeout(() => tryRegister(1), 500);
+          }
+        }
+
+        // UTM / реклама: startapp=utm_CHANNEL или src_XXX или ads_XXX
+        // First-touch: сохраняем только если источник ещё не был записан
+        if (
+          startParam &&
+          !startParam.startsWith("product_") &&
+          !startParam.startsWith("ref_")
+        ) {
+          const isUtm =
+            startParam.startsWith("utm_") ||
+            startParam.startsWith("src_") ||
+            startParam.startsWith("ads_") ||
+            // любой другой короткий код кампании (буквы/цифры/_/-)
+            /^[a-zA-Z0-9_-]{2,64}$/.test(startParam);
+
+          if (isUtm) {
+            const source = startParam.slice(0, 64);
+            console.log("[UTM] campaign start_param =", source);
+
+            const applyUtm = async () => {
+              try {
+                // уже есть first-touch — не перезаписываем
+                const existing =
+                  (await loadFromCloud(CLOUD_KEYS.utmSource)) ||
+                  (typeof localStorage !== "undefined"
+                    ? localStorage.getItem("krost_utm_source")
+                    : null);
+                if (existing && String(existing).trim()) {
+                  console.log("[UTM] already attributed to", existing);
+                  setUtmSource(String(existing));
+                  return;
+                }
+                setUtmSource(source);
+                await saveToCloud(CLOUD_KEYS.utmSource, source);
+                try {
+                  if (typeof localStorage !== "undefined") {
+                    localStorage.setItem("krost_utm_source", source);
+                  }
+                } catch (e) {}
+                // счётчик визитов по кампании (для оценки охватов)
+                try {
+                  await refApiHit(`utm_${source}`);
+                } catch (e) {}
+                console.log("[UTM] first-touch saved:", source);
+              } catch (e) {
+                console.warn("[UTM] save error", e);
+              }
+            };
+            applyUtm();
           }
         }
       } catch (e) {
@@ -3112,20 +3251,21 @@ export default function App() {
     setBroadcastText("");
   };
 
-  const addPromoFromForm = () => {
-    const code = (promoForm.code || "").trim().toUpperCase();
-    const discount = parseInt(String(promoForm.discount || ""), 10);
-    const maxUses = parseInt(String(promoForm.maxUses || ""), 10);
+  const addPromoFromForm = (formData) => {
+    const src = formData || promoForm || {};
+    const code = (src.code || "").trim().toUpperCase();
+    const discount = parseInt(String(src.discount || ""), 10);
+    const maxUses = parseInt(String(src.maxUses || ""), 10);
     if (!code) {
-      Alert.alert("Ошибка", "Введите код промокода");
+      showToast("Введите код промокода");
       return;
     }
     if (!discount || discount < 1 || discount > 100) {
-      Alert.alert("Ошибка", "Скидка должна быть от 1 до 100%");
+      showToast("Скидка должна быть от 1 до 100%");
       return;
     }
     if (promoCodes.some((p) => p.code.toUpperCase() === code)) {
-      Alert.alert("Ошибка", "Такой промокод уже есть");
+      showToast("Такой промокод уже есть");
       return;
     }
     setPromoCodes((prev) => [
@@ -3133,14 +3273,15 @@ export default function App() {
       {
         code,
         discount,
-        description: (promoForm.description || "").trim(),
+        description: (src.description || "").trim(),
         maxUses: maxUses > 0 ? maxUses : 999999,
         usedCount: 0,
         active: true,
       },
     ]);
     setPromoForm({ code: "", discount: "", maxUses: "", description: "" });
-    showToast("✅ Промокод добавлен");
+    setLocalPromo({ code: "", discount: "", maxUses: "", description: "" });
+    showToast(`✅ Промокод ${code} добавлен (−${discount}%)`);
   };
 
   const deletePromoCode = (code) => {
@@ -3152,6 +3293,106 @@ export default function App() {
   const salesMap = {};
   adminOrders.forEach(o => { adminRevenue += o.finalTotal; o.items.forEach(i => { salesMap[i.id] = (salesMap[i.id] || 0) + 1; }); });
   const popular = Object.keys(salesMap).sort((a,b) => salesMap[b] - salesMap[a]).slice(0,5).map(id => products.find(p => p.id === parseInt(id))).filter(Boolean);
+
+  // Уникальные UTM-источники из заказов (для фильтра)
+  const utmSourceOptions = Array.from(
+    new Set(
+      adminOrders
+        .map((o) => (o.utmSource ? String(o.utmSource).trim() : ""))
+        .filter(Boolean)
+    )
+  ).sort();
+
+  // Период: сегодня / вчера / этот месяц / прошлый месяц / всё время
+  const orderInPeriod = (orderDate, period) => {
+    if (period === "all") return true;
+    if (!orderDate) return false;
+    const d = new Date(orderDate);
+    if (isNaN(d.getTime())) return false;
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const startOfTomorrow = new Date(startOfToday);
+    startOfTomorrow.setDate(startOfTomorrow.getDate() + 1);
+    const startOfYesterday = new Date(startOfToday);
+    startOfYesterday.setDate(startOfYesterday.getDate() - 1);
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const startOfNextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const startOfThisMonth = startOfMonth;
+
+    if (period === "today") {
+      return d >= startOfToday && d < startOfTomorrow;
+    }
+    if (period === "yesterday") {
+      return d >= startOfYesterday && d < startOfToday;
+    }
+    if (period === "month") {
+      return d >= startOfMonth && d < startOfNextMonth;
+    }
+    if (period === "last_month") {
+      return d >= startOfLastMonth && d < startOfThisMonth;
+    }
+    return true;
+  };
+
+  // Отфильтрованные заказы для CRM-таблицы
+  const filteredAdminOrders = adminOrders.filter((o) => {
+    if (!orderInPeriod(o.date, orderFilterPeriod)) return false;
+    if (orderFilterStatus !== "all") {
+      const st = o.status || "Новый";
+      if (st !== orderFilterStatus) return false;
+    }
+    if (orderFilterUtm !== "all") {
+      if (orderFilterUtm === "__none__") {
+        if (o.utmSource) return false;
+      } else if (String(o.utmSource || "") !== orderFilterUtm) {
+        return false;
+      }
+    }
+    const q = (orderFilterQuery || "").trim().toLowerCase();
+    if (q) {
+      const hay = [
+        o.fullName,
+        o.phone,
+        o.tgUsername,
+        o.tgId,
+        o.id,
+        o.address,
+        o.trackingNumber,
+        o.utmSource,
+      ]
+        .map((x) => String(x || "").toLowerCase())
+        .join(" ");
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+
+  const filteredOrdersSum = filteredAdminOrders.reduce(
+    (s, o) => s + (Number(o.finalTotal) || 0),
+    0
+  );
+
+  const PERIOD_OPTIONS = [
+    { key: "today", label: "Сегодня" },
+    { key: "yesterday", label: "Вчера" },
+    { key: "month", label: "Этот месяц" },
+    { key: "last_month", label: "Прошлый месяц" },
+    { key: "all", label: "Всё время" },
+  ];
+
+  const hasActiveOrderFilters =
+    orderFilterStatus !== "all" ||
+    orderFilterUtm !== "all" ||
+    orderFilterPeriod !== "month" ||
+    !!(orderFilterQuery || "").trim();
+
+  const resetOrderFilters = () => {
+    setOrderFilterStatus("all");
+    setOrderFilterUtm("all");
+    setOrderFilterQuery("");
+    setOrderFilterPeriod("month");
+  };
 
   // ==============================
   // КОМПОНЕНТЫ СТРАНИЦ
@@ -3712,7 +3953,7 @@ export default function App() {
     return (
       <ScrollView style={[styles.page, isDark && styles.pageDark]} contentContainerStyle={styles.scrollContent}>
         <Text style={[styles.pageTitle, isDark && styles.textDark]}>
-          Корзина{cart.length > 0 && <Text style={styles.cartBadge}> ({cart.length})</Text>}
+          {cart.length > 0 ? `Корзина (${cart.length})` : "Корзина"}
         </Text>
         {cart.length === 0 ? (
           <Text style={[styles.empty, isDark && styles.textDark]}>Корзина пустая</Text>
@@ -3746,7 +3987,7 @@ export default function App() {
 
   // ---- Profile ----
   const Profile = () => {
-    const { theme, toggleTheme } = useTheme(); const isDark = theme === "dark";
+    const { theme } = useTheme(); const isDark = theme === "dark";
     // При открытии профиля — сразу подтягиваем рефералов (без кнопки)
     useEffect(() => {
       ensureReferralRegistered();
@@ -3758,12 +3999,6 @@ export default function App() {
     return (
       <ScrollView style={[styles.page, isDark && styles.pageDark]} contentContainerStyle={styles.scrollContent}>
         <Text style={[styles.pageTitle, isDark && styles.textDark]}>Профиль</Text>
-
-        {/* Тёмная тема — в самом верху */}
-        <View style={[styles.themeRow, { marginBottom: 16 }]}>
-          <Text style={[styles.themeLabel, isDark && styles.textDark]}>Тёмная тема</Text>
-          <Switch value={theme === "dark"} onValueChange={toggleTheme} />
-        </View>
 
         {isAdmin && (
           <TouchableOpacity style={styles.adminButton} onPress={() => setShowAdmin(true)}>
@@ -4350,93 +4585,116 @@ export default function App() {
       setErrorMsg("");
       placeOrderWithDetails({ fullName, address, phone: fullPhone, delivery, freeDelivery: useFreeDelivery });
     };
+    if (!orderModalVisible) return null;
+
     return (
-      <Modal transparent visible={orderModalVisible} onRequestClose={closeOrderModal} animationType="none">
-        <View style={styles.modalOverlay}>
-          <ScrollView contentContainerStyle={styles.modalScrollView} keyboardShouldPersistTaps="handled">
-            <View style={[styles.modalView, isDark && styles.modalViewDark]}>
-              <Text style={[styles.modalTitle, isDark && styles.textDark]}>Оформление заказа</Text>
-              
-              {errorMsg ? (
-                <View style={styles.modalError}>
-                  <Text style={styles.modalErrorText}>{errorMsg}</Text>
-                </View>
-              ) : null}
+      <View
+        style={{
+          position: "fixed",
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: "rgba(0,0,0,0.55)",
+          zIndex: 200000,
+          elevation: 200000,
+          justifyContent: "center",
+          alignItems: "center",
+          padding: 12,
+        }}
+      >
+        <ScrollView
+          contentContainerStyle={{
+            flexGrow: 1,
+            justifyContent: "center",
+            alignItems: "center",
+            paddingVertical: 16,
+            width: "100%",
+          }}
+          keyboardShouldPersistTaps="handled"
+          style={{ width: "100%", maxWidth: 440 }}
+        >
+          <View style={[styles.modalView, isDark && styles.modalViewDark, { width: "100%" }]}>
+            <Text style={[styles.modalTitle, isDark && styles.textDark]}>Оформление заказа</Text>
 
-              <Text style={[styles.deliveryLabel, isDark && styles.textDark]}>Способ доставки</Text>
-              <View style={styles.deliveryOptions}>
-                <TouchableOpacity style={[styles.deliveryOption, delivery === "courier" && styles.deliveryOptionActive]} onPress={() => setDelivery("courier")}>
-                  <Text style={[styles.deliveryOptionTitle, delivery === "courier" && styles.deliveryOptionTextActive]}>Курьер</Text>
-                  <Text style={[styles.deliveryDetail, delivery === "courier" && styles.deliveryDetailActive]}>10 BYN</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={[styles.deliveryOption, delivery === "europost" && styles.deliveryOptionActive]} onPress={() => setDelivery("europost")}>
-                  <Text style={[styles.deliveryOptionTitle, delivery === "europost" && styles.deliveryOptionTextActive]}>ЕвроПочта</Text>
-                  <Text style={[styles.deliveryDetail, delivery === "europost" && styles.deliveryDetailActive]}>12 BYN</Text>
-                </TouchableOpacity>
+            {errorMsg ? (
+              <View style={styles.modalError}>
+                <Text style={styles.modalErrorText}>{errorMsg}</Text>
               </View>
-              <TextInput style={[styles.modalInput, isDark && styles.inputDark]} placeholder="ФИО" placeholderTextColor={isDark ? "#999" : "#888"} value={fullName} onChangeText={(t) => { setFullName(t); setErrorMsg(""); }} />
-              <TextInput style={[styles.modalInput, isDark && styles.inputDark]} placeholder={delivery === "europost" ? "Адрес и номер отделения" : "Адрес доставки"} placeholderTextColor={isDark ? "#999" : "#888"} value={address} onChangeText={(t) => { setAddress(t); setErrorMsg(""); }} />
-              <View style={[styles.phoneRow, isDark && styles.inputDark]}>
-                <Text style={[styles.phonePrefix, isDark && { color: "#fff" }]}>+375</Text>
-                <TextInput
-                  style={[styles.phoneInput, isDark && { color: "#fff" }]}
-                  placeholder="29 123-45-67"
-                  placeholderTextColor={isDark ? "#999" : "#888"}
-                  value={phone}
-                  onChangeText={(t) => {
-                    const digits = t.replace(/\D/g, "").slice(0, 9);
-                    setPhone(digits);
-                    setErrorMsg("");
-                  }}
-                  keyboardType="phone-pad"
-                  maxLength={9}
-                />
-              </View>
+            ) : null}
 
-              {/* Промокод — в оформлении заказа */}
-              <View style={styles.promoBox}>
-                <TextInput
-                  style={[styles.promoInput, isDark && styles.inputDark]}
-                  placeholder="Промокод"
-                  placeholderTextColor={isDark ? "#999" : "#888"}
-                  value={promoInput}
-                  onChangeText={(t) => { setPromoInput(t); setPromoMsg(""); }}
-                  autoCapitalize="characters"
-                />
-                <TouchableOpacity style={styles.promoButton} onPress={applyPromoInModal}>
-                  <Text style={styles.buttonText}>Применить</Text>
-                </TouchableOpacity>
-              </View>
-              {!!promoMsg && (
-                <Text style={[styles.discountText, isDark && styles.textDark, { marginBottom: 8 }, promoMsg.startsWith("✓") ? null : { color: "#c00" }]}>
-                  {promoMsg}
-                </Text>
-              )}
-              {discount > 0 && (
-                <Text style={[styles.discountText, isDark && styles.textDark, { marginBottom: 4 }]}>
-                  Скидка по промокоду: -{money(discount)}
-                </Text>
-              )}
-
-              {showFreeDeliveryOption && (
-                <TouchableOpacity style={styles.bonusCheckbox} onPress={() => setUseFreeDelivery(!useFreeDelivery)}>
-                  <Text style={[styles.bonusCheckboxText, isDark && styles.textDark]}>
-                    {useFreeDelivery ? "☑" : "☐"} Бесплатная доставка (первый заказ)
-                  </Text>
-                </TouchableOpacity>
-              )}
-              <View style={styles.totalRow}>
-                <Text style={[styles.totalLabel, isDark && styles.textDark]}>Итого к оплате:</Text>
-                <Text style={[styles.totalAmount, isDark && styles.textDark]}>{money(orderTotal)}</Text>
-              </View>
-              <View style={styles.modalButtons}>
-                <TouchableOpacity style={styles.modalCancel} onPress={closeOrderModal}><Text>Отмена</Text></TouchableOpacity>
-                <TouchableOpacity style={styles.modalConfirm} onPress={handlePlace}><Text style={styles.buttonText}>Подтвердить</Text></TouchableOpacity>
-              </View>
+            <Text style={[styles.deliveryLabel, isDark && styles.textDark]}>Способ доставки</Text>
+            <View style={styles.deliveryOptions}>
+              <TouchableOpacity style={[styles.deliveryOption, delivery === "courier" && styles.deliveryOptionActive]} onPress={() => setDelivery("courier")}>
+                <Text style={[styles.deliveryOptionTitle, delivery === "courier" && styles.deliveryOptionTextActive]}>Курьер</Text>
+                <Text style={[styles.deliveryDetail, delivery === "courier" && styles.deliveryDetailActive]}>10 BYN</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.deliveryOption, delivery === "europost" && styles.deliveryOptionActive]} onPress={() => setDelivery("europost")}>
+                <Text style={[styles.deliveryOptionTitle, delivery === "europost" && styles.deliveryOptionTextActive]}>ЕвроПочта</Text>
+                <Text style={[styles.deliveryDetail, delivery === "europost" && styles.deliveryDetailActive]}>12 BYN</Text>
+              </TouchableOpacity>
             </View>
-          </ScrollView>
-        </View>
-      </Modal>
+            <TextInput style={[styles.modalInput, isDark && styles.inputDark]} placeholder="ФИО" placeholderTextColor={isDark ? "#999" : "#888"} value={fullName} onChangeText={(t) => { setFullName(t); setErrorMsg(""); }} />
+            <TextInput style={[styles.modalInput, isDark && styles.inputDark]} placeholder={delivery === "europost" ? "Адрес и номер отделения" : "Адрес доставки"} placeholderTextColor={isDark ? "#999" : "#888"} value={address} onChangeText={(t) => { setAddress(t); setErrorMsg(""); }} />
+            <View style={[styles.phoneRow, isDark && styles.inputDark]}>
+              <Text style={[styles.phonePrefix, isDark && { color: "#fff" }]}>+375</Text>
+              <TextInput
+                style={[styles.phoneInput, isDark && { color: "#fff" }]}
+                placeholder="29 123-45-67"
+                placeholderTextColor={isDark ? "#999" : "#888"}
+                value={phone}
+                onChangeText={(t) => {
+                  const digits = t.replace(/\D/g, "").slice(0, 9);
+                  setPhone(digits);
+                  setErrorMsg("");
+                }}
+                keyboardType="phone-pad"
+                maxLength={9}
+              />
+            </View>
+
+            <View style={styles.promoBox}>
+              <TextInput
+                style={[styles.promoInput, isDark && styles.inputDark]}
+                placeholder="Промокод"
+                placeholderTextColor={isDark ? "#999" : "#888"}
+                value={promoInput}
+                onChangeText={(t) => { setPromoInput(t); setPromoMsg(""); }}
+                autoCapitalize="characters"
+              />
+              <TouchableOpacity style={styles.promoButton} onPress={applyPromoInModal}>
+                <Text style={styles.buttonText}>Применить</Text>
+              </TouchableOpacity>
+            </View>
+            {!!promoMsg && (
+              <Text style={[styles.discountText, isDark && styles.textDark, { marginBottom: 8 }, promoMsg.startsWith("✓") ? null : { color: "#c00" }]}>
+                {promoMsg}
+              </Text>
+            )}
+            {discount > 0 && (
+              <Text style={[styles.discountText, isDark && styles.textDark, { marginBottom: 4 }]}>
+                Скидка по промокоду: -{money(discount)}
+              </Text>
+            )}
+
+            {showFreeDeliveryOption && (
+              <TouchableOpacity style={styles.bonusCheckbox} onPress={() => setUseFreeDelivery(!useFreeDelivery)}>
+                <Text style={[styles.bonusCheckboxText, isDark && styles.textDark]}>
+                  {useFreeDelivery ? "☑" : "☐"} Бесплатная доставка (первый заказ)
+                </Text>
+              </TouchableOpacity>
+            )}
+            <View style={styles.totalRow}>
+              <Text style={[styles.totalLabel, isDark && styles.textDark]}>Итого к оплате:</Text>
+              <Text style={[styles.totalAmount, isDark && styles.textDark]}>{money(orderTotal)}</Text>
+            </View>
+            <View style={styles.modalButtons}>
+              <TouchableOpacity style={styles.modalCancel} onPress={closeOrderModal}><Text>Отмена</Text></TouchableOpacity>
+              <TouchableOpacity style={styles.modalConfirm} onPress={handlePlace}><Text style={styles.buttonText}>Подтвердить</Text></TouchableOpacity>
+            </View>
+          </View>
+        </ScrollView>
+      </View>
     );
   };
 
@@ -4639,7 +4897,6 @@ export default function App() {
                     alignItems: "center",
                     justifyContent: "flex-end",
                     marginBottom: 10,
-                    flexWrap: "wrap",
                     gap: 8,
                   }}
                 >
@@ -4647,34 +4904,250 @@ export default function App() {
                     style={[
                       styles.productAdminBtn,
                       {
-                        paddingHorizontal: 14,
-                        paddingVertical: 10,
-                        minWidth: 110,
+                        width: 42,
+                        height: 42,
+                        paddingHorizontal: 0,
+                        paddingVertical: 0,
+                        borderRadius: 12,
                         alignItems: "center",
+                        justifyContent: "center",
+                      },
+                    ]}
+                    onPress={() => syncSharedOrders(true)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={[styles.productAdminBtnText, { fontSize: 18 }]}>↻</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.productAdminBtn,
+                      {
+                        width: 42,
+                        height: 42,
+                        paddingHorizontal: 0,
+                        paddingVertical: 0,
+                        borderRadius: 12,
+                        alignItems: "center",
+                        justifyContent: "center",
                       },
                     ]}
                     onPress={() => setOrdersFullscreen(true)}
                     activeOpacity={0.8}
                   >
-                    <Text style={[styles.productAdminBtnText, { fontSize: 12, lineHeight: 16 }]}>
-                      ⛶ Полный экран
-                    </Text>
-                    <Text style={[styles.productAdminBtnText, { fontSize: 11, opacity: 0.85, lineHeight: 14 }]}>
-                      таблицы заказов
-                    </Text>
+                    <Text style={[styles.productAdminBtnText, { fontSize: 16 }]}>⛶</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.productAdminBtn, { paddingHorizontal: 14, paddingVertical: 10 }]}
-                    onPress={() => syncSharedOrders(true)}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={styles.productAdminBtnText}>Обновить</Text>
-                  </TouchableOpacity>
+                </View>
+
+                {/* Фильтры заказов — сворачиваемые */}
+                <View style={{ marginBottom: 12 }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                    <TouchableOpacity
+                      onPress={() => setShowOrderFilters((v) => !v)}
+                      style={{
+                        flexDirection: "row",
+                        alignItems: "center",
+                        backgroundColor: theme === "dark" ? "#2a2a2a" : "#eee",
+                        paddingVertical: 8,
+                        paddingHorizontal: 14,
+                        borderRadius: 16,
+                      }}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={[{ fontSize: 13, fontWeight: "700", color: "#111" }, theme === "dark" && styles.textDark]}>
+                        {showOrderFilters ? "▾ Фильтры" : "▸ Фильтры"}
+                      </Text>
+                      {hasActiveOrderFilters && (
+                        <View
+                          style={{
+                            marginLeft: 8,
+                            backgroundColor: "#111",
+                            borderRadius: 10,
+                            minWidth: 18,
+                            height: 18,
+                            alignItems: "center",
+                            justifyContent: "center",
+                            paddingHorizontal: 5,
+                          }}
+                        >
+                          <Text style={{ color: "#fff", fontSize: 10, fontWeight: "800" }}>•</Text>
+                        </View>
+                      )}
+                    </TouchableOpacity>
+                    <Text
+                      style={[
+                        { fontSize: 12, color: "#888" },
+                        theme === "dark" && styles.textDark,
+                      ]}
+                    >
+                      {filteredAdminOrders.length}
+                      {filteredAdminOrders.length !== adminOrders.length
+                        ? ` / ${adminOrders.length}`
+                        : ""}
+                      {" · "}
+                      {filteredOrdersSum.toLocaleString("ru-RU")} BYN
+                    </Text>
+                  </View>
+
+                  {showOrderFilters && (
+                    <View>
+                      <TextInput
+                        style={[
+                          styles.searchInput,
+                          theme === "dark" && styles.inputDark,
+                          { marginBottom: 8 },
+                        ]}
+                        placeholder="Поиск: ФИО, телефон, @username, № заказа..."
+                        placeholderTextColor={theme === "dark" ? "#999" : "#888"}
+                        value={orderFilterQuery}
+                        onChangeText={setOrderFilterQuery}
+                      />
+                      <ScrollView
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        style={{ marginBottom: 8 }}
+                        contentContainerStyle={{ alignItems: "center", paddingRight: 8 }}
+                      >
+                        {PERIOD_OPTIONS.map((p) => (
+                          <TouchableOpacity
+                            key={p.key}
+                            style={[
+                              styles.filterChip,
+                              orderFilterPeriod === p.key && styles.filterChipActive,
+                            ]}
+                            onPress={() => setOrderFilterPeriod(p.key)}
+                          >
+                            <Text
+                              style={[
+                                { fontSize: 12, fontWeight: "600", color: "#555" },
+                                orderFilterPeriod === p.key && styles.filterChipTextActive,
+                              ]}
+                            >
+                              {p.label}
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                      </ScrollView>
+                      <ScrollView
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        style={{ marginBottom: 8 }}
+                        contentContainerStyle={{ alignItems: "center", paddingRight: 8 }}
+                      >
+                        <TouchableOpacity
+                          style={[
+                            styles.filterChip,
+                            orderFilterStatus === "all" && styles.filterChipActive,
+                          ]}
+                          onPress={() => setOrderFilterStatus("all")}
+                        >
+                          <Text
+                            style={[
+                              { fontSize: 12, fontWeight: "600", color: "#555" },
+                              orderFilterStatus === "all" && styles.filterChipTextActive,
+                            ]}
+                          >
+                            Все статусы
+                          </Text>
+                        </TouchableOpacity>
+                        {ORDER_STATUSES.map((st) => (
+                          <TouchableOpacity
+                            key={st}
+                            style={[
+                              styles.filterChip,
+                              orderFilterStatus === st && styles.filterChipActive,
+                            ]}
+                            onPress={() => setOrderFilterStatus(st)}
+                          >
+                            <Text
+                              style={[
+                                { fontSize: 12, fontWeight: "600", color: "#555" },
+                                orderFilterStatus === st && styles.filterChipTextActive,
+                              ]}
+                            >
+                              {st}
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                      </ScrollView>
+                      <ScrollView
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        contentContainerStyle={{ alignItems: "center", paddingRight: 8 }}
+                      >
+                        <TouchableOpacity
+                          style={[
+                            styles.filterChip,
+                            orderFilterUtm === "all" && styles.filterChipActive,
+                          ]}
+                          onPress={() => setOrderFilterUtm("all")}
+                        >
+                          <Text
+                            style={[
+                              { fontSize: 12, fontWeight: "600", color: "#555" },
+                              orderFilterUtm === "all" && styles.filterChipTextActive,
+                            ]}
+                          >
+                            Все источники
+                          </Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[
+                            styles.filterChip,
+                            orderFilterUtm === "__none__" && styles.filterChipActive,
+                          ]}
+                          onPress={() => setOrderFilterUtm("__none__")}
+                        >
+                          <Text
+                            style={[
+                              { fontSize: 12, fontWeight: "600", color: "#555" },
+                              orderFilterUtm === "__none__" && styles.filterChipTextActive,
+                            ]}
+                          >
+                            Без метки
+                          </Text>
+                        </TouchableOpacity>
+                        {utmSourceOptions.map((src) => (
+                          <TouchableOpacity
+                            key={src}
+                            style={[
+                              styles.filterChip,
+                              orderFilterUtm === src && styles.filterChipActive,
+                            ]}
+                            onPress={() => setOrderFilterUtm(src)}
+                          >
+                            <Text
+                              style={[
+                                { fontSize: 12, fontWeight: "600", color: "#555" },
+                                orderFilterUtm === src && styles.filterChipTextActive,
+                              ]}
+                              numberOfLines={1}
+                            >
+                              {src}
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                      </ScrollView>
+                      {hasActiveOrderFilters && (
+                        <TouchableOpacity
+                          onPress={resetOrderFilters}
+                          style={{ marginTop: 8, alignSelf: "flex-start" }}
+                        >
+                          <Text style={{ fontSize: 12, fontWeight: "700", color: "#111" }}>
+                            Сбросить фильтры
+                          </Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  )}
                 </View>
 
                 {adminOrders.length === 0 ? (
                   <Text style={[styles.empty, theme === "dark" && styles.textDark, { marginBottom: 16 }]}>
                     Заказов пока нет
+                  </Text>
+                ) : filteredAdminOrders.length === 0 ? (
+                  <Text style={[styles.empty, theme === "dark" && styles.textDark, { marginBottom: 16 }]}>
+                    Нет заказов по выбранным фильтрам
                   </Text>
                 ) : (
                   <ScrollView horizontal showsHorizontalScrollIndicator nestedScrollEnabled style={{ marginBottom: 16 }}>
@@ -4686,15 +5159,17 @@ export default function App() {
                     >
                       {/* header */}
                       <View style={[styles.crmTableRow, styles.crmTableHeader]}>
-                        <Text style={[styles.crmTh, { width: 72 }]}>#</Text>
+                        <Text style={[styles.crmTh, { width: 40 }]}>№</Text>
+                        <Text style={[styles.crmTh, { width: 72 }]}>ID</Text>
                         <Text style={[styles.crmTh, { width: 120 }]}>Дата</Text>
                         <Text style={[styles.crmTh, { width: 140 }]}>Статус</Text>
                         <Text style={[styles.crmTh, { width: 200 }]}>Клиент</Text>
                         <Text style={[styles.crmTh, { width: 130 }]}>Трек</Text>
                         <Text style={[styles.crmTh, { width: 180 }]}>Товар</Text>
                         <Text style={[styles.crmTh, { width: 80 }]}>Сумма</Text>
+                        <Text style={[styles.crmTh, { width: 110 }]}>Источник</Text>
                       </View>
-                      {adminOrders.slice(0, 50).map((order, idx) => {
+                      {filteredAdminOrders.slice(0, 50).map((order, idx) => {
                         const itemsLabel = (order.items || [])
                           .map((i) => `${i.brand || ""} ${i.name}${i.size ? ` (${i.size})` : ""}`.trim())
                           .join(", ");
@@ -4709,118 +5184,134 @@ export default function App() {
                           : "—";
                         const isOpen = openStatusId === order.id;
                         return (
-                          <View key={order.id}>
+                          <View
+                            key={order.id}
+                            style={[
+                              styles.crmTableRow,
+                              idx % 2 === 1 && styles.crmTableRowAlt,
+                              theme === "dark" && { borderBottomColor: "#333" },
+                              isOpen && { zIndex: 100, elevation: 20 },
+                            ]}
+                          >
+                            <Text style={[styles.crmTd, { width: 40, fontWeight: "700", color: "#888" }]} numberOfLines={1}>
+                              {idx + 1}
+                            </Text>
+                            <Text style={[styles.crmTd, { width: 72, fontWeight: "700" }]} numberOfLines={1}>
+                              {order.id}
+                            </Text>
+                            <Text style={[styles.crmTd, { width: 120 }]} numberOfLines={2}>
+                              {dateLabel}
+                            </Text>
                             <View
-                              style={[
-                                styles.crmTableRow,
-                                idx % 2 === 1 && styles.crmTableRowAlt,
-                                theme === "dark" && { borderBottomColor: "#333" },
-                              ]}
+                              style={{
+                                width: 140,
+                                paddingVertical: 6,
+                                paddingHorizontal: 4,
+                                alignItems: "center",
+                                justifyContent: "center",
+                                position: "relative",
+                                zIndex: isOpen ? 200 : 1,
+                              }}
                             >
-                              <Text style={[styles.crmTd, { width: 72, fontWeight: "700" }]} numberOfLines={1}>
-                                {order.id}
-                              </Text>
-                              <Text style={[styles.crmTd, { width: 120 }]} numberOfLines={2}>
-                                {dateLabel}
-                              </Text>
-                              <View style={{ width: 140, paddingVertical: 6, paddingHorizontal: 4 }}>
-                                <TouchableOpacity
+                              <TouchableOpacity
+                                style={[
+                                  styles.crmStatusBtn,
+                                  {
+                                    backgroundColor: getStatusBadgeStyle(order.status || "Новый").backgroundColor,
+                                    borderColor: getStatusBadgeStyle(order.status || "Новый").borderColor,
+                                  },
+                                ]}
+                                onPress={() => setOpenStatusId(isOpen ? null : order.id)}
+                                activeOpacity={0.85}
+                              >
+                                <Text
                                   style={[
-                                    styles.crmStatusBtn,
-                                    {
-                                      backgroundColor: getStatusBadgeStyle(order.status || "Новый").backgroundColor,
-                                      borderColor: getStatusBadgeStyle(order.status || "Новый").borderColor,
-                                    },
+                                    styles.crmStatusBtnText,
+                                    { color: getStatusBadgeStyle(order.status || "Новый").color },
                                   ]}
-                                  onPress={() => setOpenStatusId(isOpen ? null : order.id)}
-                                  activeOpacity={0.85}
+                                  numberOfLines={1}
                                 >
-                                  <Text
-                                    style={[
-                                      styles.crmStatusBtnText,
-                                      { color: getStatusBadgeStyle(order.status || "Новый").color },
-                                    ]}
-                                    numberOfLines={1}
-                                  >
-                                    {order.status || "Новый"} ▾
-                                  </Text>
-                                </TouchableOpacity>
-                              </View>
-                              <View style={{ width: 200, paddingVertical: 6, paddingHorizontal: 6 }}>
-                                <Text style={styles.crmTdStrong} numberOfLines={1}>
-                                  {order.fullName || "—"}
+                                  {order.status || "Новый"} ▾
                                 </Text>
-                                <Text style={styles.crmTdMuted} numberOfLines={1}>
-                                  {order.phone || "—"}
-                                </Text>
-                                <Text style={styles.crmTdMuted} numberOfLines={1}>
-                                  {order.tgUsername ? `@${order.tgUsername}` : order.tgId ? `id:${order.tgId}` : "—"}
-                                </Text>
-                                <Text style={styles.crmTdMuted} numberOfLines={2}>
-                                  {order.address || "—"}
-                                </Text>
-                              </View>
-                              <View style={{ width: 130, paddingVertical: 4, paddingHorizontal: 4 }}>
-                                <TextInput
-                                  style={styles.crmTrackInput}
-                                  placeholder="Трек-номер"
-                                  placeholderTextColor="#999"
-                                  value={order.trackingNumber || ""}
-                                  onChangeText={(t) => {
-                                    setAdminOrders((prev) =>
-                                      prev.map((o) =>
-                                        String(o.id) === String(order.id)
-                                          ? { ...o, trackingNumber: t }
-                                          : o
-                                      )
-                                    );
-                                  }}
-                                  onBlur={() => {
-                                    const cur = (order.trackingNumber || "").trim();
-                                    updateTracking(order.id, cur);
-                                  }}
-                                  onSubmitEditing={() => {
-                                    const cur = (order.trackingNumber || "").trim();
-                                    updateTracking(order.id, cur);
-                                  }}
-                                  blurOnSubmit
-                                  returnKeyType="done"
-                                />
-                              </View>
-                              <Text style={[styles.crmTd, { width: 180 }]} numberOfLines={3}>
-                                {itemsLabel || "—"}
+                              </TouchableOpacity>
+                              {isOpen && (
+                                <View style={styles.crmStatusMenu}>
+                                  {ORDER_STATUSES.map((st, stIdx) => (
+                                    <TouchableOpacity
+                                      key={st}
+                                      style={[
+                                        styles.crmStatusMenuItem,
+                                        order.status === st && styles.crmStatusMenuItemActive,
+                                        stIdx === ORDER_STATUSES.length - 1 && { borderBottomWidth: 0 },
+                                      ]}
+                                      onPress={() => {
+                                        changeStatus(order.id, st);
+                                        setOpenStatusId(null);
+                                      }}
+                                    >
+                                      <Text
+                                        style={[
+                                          styles.crmStatusMenuText,
+                                          order.status === st && styles.crmStatusMenuTextActive,
+                                        ]}
+                                      >
+                                        {st}
+                                      </Text>
+                                    </TouchableOpacity>
+                                  ))}
+                                </View>
+                              )}
+                            </View>
+                            <View style={{ width: 200, paddingVertical: 6, paddingHorizontal: 6, alignItems: "center" }}>
+                              <Text style={styles.crmTdStrong} numberOfLines={1}>
+                                {order.fullName || "—"}
                               </Text>
-                              <Text style={[styles.crmTd, { width: 80, fontWeight: "700" }]}>
-                                {order.finalTotal != null ? `${order.finalTotal}` : "—"}
+                              <Text style={styles.crmTdMuted} numberOfLines={1}>
+                                {order.phone || "—"}
+                              </Text>
+                              <Text style={styles.crmTdMuted} numberOfLines={1}>
+                                {order.tgUsername ? `@${order.tgUsername}` : "—"}
+                              </Text>
+                              <Text style={styles.crmTdMuted} numberOfLines={2}>
+                                {order.address || "—"}
                               </Text>
                             </View>
-                            {isOpen && (
-                              <View style={styles.crmStatusMenu}>
-                                {ORDER_STATUSES.map((st) => (
-                                  <TouchableOpacity
-                                    key={st}
-                                    style={[
-                                      styles.crmStatusMenuItem,
-                                      order.status === st && styles.crmStatusMenuItemActive,
-                                    ]}
-                                    onPress={() => {
-                                      changeStatus(order.id, st);
-                                      setOpenStatusId(null);
-                                    }}
-                                  >
-                                    <Text
-                                      style={[
-                                        styles.crmStatusMenuText,
-                                        order.status === st && styles.crmStatusMenuTextActive,
-                                      ]}
-                                    >
-                                      {st}
-                                    </Text>
-                                  </TouchableOpacity>
-                                ))}
-
-                              </View>
-                            )}
+                            <View style={{ width: 130, paddingVertical: 4, paddingHorizontal: 4, alignItems: "center", justifyContent: "center" }}>
+                              <TextInput
+                                style={[styles.crmTrackInput, { width: "100%" }]}
+                                placeholder="Трек-номер"
+                                placeholderTextColor="#999"
+                                value={order.trackingNumber || ""}
+                                onChangeText={(t) => {
+                                  setAdminOrders((prev) =>
+                                    prev.map((o) =>
+                                      String(o.id) === String(order.id)
+                                        ? { ...o, trackingNumber: t }
+                                        : o
+                                    )
+                                  );
+                                }}
+                                onBlur={() => {
+                                  const cur = (order.trackingNumber || "").trim();
+                                  updateTracking(order.id, cur);
+                                }}
+                                onSubmitEditing={() => {
+                                  const cur = (order.trackingNumber || "").trim();
+                                  updateTracking(order.id, cur);
+                                }}
+                                blurOnSubmit
+                                returnKeyType="done"
+                              />
+                            </View>
+                            <Text style={[styles.crmTd, { width: 180 }]} numberOfLines={3}>
+                              {itemsLabel || "—"}
+                            </Text>
+                            <Text style={[styles.crmTd, { width: 80, fontWeight: "700" }]}>
+                              {order.finalTotal != null ? `${order.finalTotal}` : "—"}
+                            </Text>
+                            <Text style={[styles.crmTd, { width: 110, fontSize: 11 }]} numberOfLines={2}>
+                              {order.utmSource || "—"}
+                            </Text>
                           </View>
                         );
                       })}
@@ -4869,13 +5360,11 @@ export default function App() {
                     onChangeText={(t) => setLocalPromo((f) => ({ ...f, description: t }))}
                     blurOnSubmit={false}
                   />
-                  <TouchableOpacity style={styles.addBtn} onPress={() => {
-                    setPromoForm(localPromo);
-                    setTimeout(() => {
-                      addPromoFromForm();
-                      setLocalPromo({ code: "", discount: "", maxUses: "", description: "" });
-                    }, 0);
-                  }}>
+                  <TouchableOpacity
+                    style={styles.addBtn}
+                    onPress={() => addPromoFromForm(localPromo)}
+                    activeOpacity={0.85}
+                  >
                     <Text style={styles.buttonText}>+ Создать промокод</Text>
                   </TouchableOpacity>
                 </View>
@@ -5299,28 +5788,255 @@ export default function App() {
                 </Text>
                 <View style={{ flexDirection: "row", gap: 8 }}>
                   <TouchableOpacity
-                    style={[styles.productAdminBtn, { paddingHorizontal: 14, paddingVertical: 10 }]}
+                    style={[
+                      styles.productAdminBtn,
+                      {
+                        width: 42,
+                        height: 42,
+                        paddingHorizontal: 0,
+                        paddingVertical: 0,
+                        borderRadius: 12,
+                        alignItems: "center",
+                        justifyContent: "center",
+                      },
+                    ]}
                     onPress={() => syncSharedOrders(true)}
                     activeOpacity={0.8}
                   >
-                    <Text style={styles.productAdminBtnText}>Обновить</Text>
+                    <Text style={[styles.productAdminBtnText, { fontSize: 18 }]}>↻</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={[
                       styles.productAdminBtn,
-                      { paddingHorizontal: 14, paddingVertical: 10, backgroundColor: "#333" },
+                      {
+                        width: 42,
+                        height: 42,
+                        paddingHorizontal: 0,
+                        paddingVertical: 0,
+                        borderRadius: 12,
+                        alignItems: "center",
+                        justifyContent: "center",
+                        backgroundColor: "#333",
+                      },
                     ]}
                     onPress={() => setOrdersFullscreen(false)}
                     activeOpacity={0.8}
                   >
-                    <Text style={styles.productAdminBtnText}>✕ Закрыть</Text>
+                    <Text style={[styles.productAdminBtnText, { fontSize: 16 }]}>✕</Text>
                   </TouchableOpacity>
                 </View>
+              </View>
+
+              {/* Фильтры (полный экран) — сворачиваемые */}
+              <View style={{ marginBottom: 10, paddingHorizontal: 4 }}>
+                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                  <TouchableOpacity
+                    onPress={() => setShowOrderFilters((v) => !v)}
+                    style={{
+                      flexDirection: "row",
+                      alignItems: "center",
+                      backgroundColor: theme === "dark" ? "#2a2a2a" : "#eee",
+                      paddingVertical: 8,
+                      paddingHorizontal: 14,
+                      borderRadius: 16,
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={[{ fontSize: 13, fontWeight: "700", color: "#111" }, theme === "dark" && styles.textDark]}>
+                      {showOrderFilters ? "▾ Фильтры" : "▸ Фильтры"}
+                    </Text>
+                    {hasActiveOrderFilters && (
+                      <View
+                        style={{
+                          marginLeft: 8,
+                          backgroundColor: "#111",
+                          borderRadius: 10,
+                          minWidth: 18,
+                          height: 18,
+                          alignItems: "center",
+                          justifyContent: "center",
+                          paddingHorizontal: 5,
+                        }}
+                      >
+                        <Text style={{ color: "#fff", fontSize: 10, fontWeight: "800" }}>•</Text>
+                      </View>
+                    )}
+                  </TouchableOpacity>
+                  <Text
+                    style={[
+                      { fontSize: 12, color: "#888" },
+                      theme === "dark" && styles.textDark,
+                    ]}
+                  >
+                    {filteredAdminOrders.length}
+                    {filteredAdminOrders.length !== adminOrders.length
+                      ? ` / ${adminOrders.length}`
+                      : ""}
+                    {" · "}
+                    {filteredOrdersSum.toLocaleString("ru-RU")} BYN
+                  </Text>
+                </View>
+
+                {showOrderFilters && (
+                  <View>
+                    <TextInput
+                      style={[
+                        styles.searchInput,
+                        theme === "dark" && styles.inputDark,
+                        { marginBottom: 8 },
+                      ]}
+                      placeholder="Поиск: ФИО, телефон, @username, № заказа..."
+                      placeholderTextColor={theme === "dark" ? "#999" : "#888"}
+                      value={orderFilterQuery}
+                      onChangeText={setOrderFilterQuery}
+                    />
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      style={{ marginBottom: 8 }}
+                      contentContainerStyle={{ alignItems: "center", paddingRight: 8 }}
+                    >
+                      {PERIOD_OPTIONS.map((p) => (
+                        <TouchableOpacity
+                          key={`fs-period-${p.key}`}
+                          style={[
+                            styles.filterChip,
+                            orderFilterPeriod === p.key && styles.filterChipActive,
+                          ]}
+                          onPress={() => setOrderFilterPeriod(p.key)}
+                        >
+                          <Text
+                            style={[
+                              { fontSize: 12, fontWeight: "600", color: "#555" },
+                              orderFilterPeriod === p.key && styles.filterChipTextActive,
+                            ]}
+                          >
+                            {p.label}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      style={{ marginBottom: 8 }}
+                      contentContainerStyle={{ alignItems: "center", paddingRight: 8 }}
+                    >
+                      <TouchableOpacity
+                        style={[
+                          styles.filterChip,
+                          orderFilterStatus === "all" && styles.filterChipActive,
+                        ]}
+                        onPress={() => setOrderFilterStatus("all")}
+                      >
+                        <Text
+                          style={[
+                            { fontSize: 12, fontWeight: "600", color: "#555" },
+                            orderFilterStatus === "all" && styles.filterChipTextActive,
+                          ]}
+                        >
+                          Все статусы
+                        </Text>
+                      </TouchableOpacity>
+                      {ORDER_STATUSES.map((st) => (
+                        <TouchableOpacity
+                          key={`fs-st-${st}`}
+                          style={[
+                            styles.filterChip,
+                            orderFilterStatus === st && styles.filterChipActive,
+                          ]}
+                          onPress={() => setOrderFilterStatus(st)}
+                        >
+                          <Text
+                            style={[
+                              { fontSize: 12, fontWeight: "600", color: "#555" },
+                              orderFilterStatus === st && styles.filterChipTextActive,
+                            ]}
+                          >
+                            {st}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      contentContainerStyle={{ alignItems: "center", paddingRight: 8 }}
+                    >
+                      <TouchableOpacity
+                        style={[
+                          styles.filterChip,
+                          orderFilterUtm === "all" && styles.filterChipActive,
+                        ]}
+                        onPress={() => setOrderFilterUtm("all")}
+                      >
+                        <Text
+                          style={[
+                            { fontSize: 12, fontWeight: "600", color: "#555" },
+                            orderFilterUtm === "all" && styles.filterChipTextActive,
+                          ]}
+                        >
+                          Все источники
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[
+                          styles.filterChip,
+                          orderFilterUtm === "__none__" && styles.filterChipActive,
+                        ]}
+                        onPress={() => setOrderFilterUtm("__none__")}
+                      >
+                        <Text
+                          style={[
+                            { fontSize: 12, fontWeight: "600", color: "#555" },
+                            orderFilterUtm === "__none__" && styles.filterChipTextActive,
+                          ]}
+                        >
+                          Без метки
+                        </Text>
+                      </TouchableOpacity>
+                      {utmSourceOptions.map((src) => (
+                        <TouchableOpacity
+                          key={`fs-utm-${src}`}
+                          style={[
+                            styles.filterChip,
+                            orderFilterUtm === src && styles.filterChipActive,
+                          ]}
+                          onPress={() => setOrderFilterUtm(src)}
+                        >
+                          <Text
+                            style={[
+                              { fontSize: 12, fontWeight: "600", color: "#555" },
+                              orderFilterUtm === src && styles.filterChipTextActive,
+                            ]}
+                            numberOfLines={1}
+                          >
+                            {src}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+                    {hasActiveOrderFilters && (
+                      <TouchableOpacity
+                        onPress={resetOrderFilters}
+                        style={{ marginTop: 8, alignSelf: "flex-start" }}
+                      >
+                        <Text style={{ fontSize: 12, fontWeight: "700", color: "#111" }}>
+                          Сбросить фильтры
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                )}
               </View>
 
               {adminOrders.length === 0 ? (
                 <Text style={[styles.empty, theme === "dark" && styles.textDark]}>
                   Заказов пока нет
+                </Text>
+              ) : filteredAdminOrders.length === 0 ? (
+                <Text style={[styles.empty, theme === "dark" && styles.textDark]}>
+                  Нет заказов по выбранным фильтрам
                 </Text>
               ) : (
                 <ScrollView
@@ -5329,22 +6045,24 @@ export default function App() {
                   nestedScrollEnabled
                   style={{ flex: 1 }}
                 >
-                  <View style={[styles.crmTable, { minWidth: 1100 }]}>
+                  <View style={[styles.crmTable, { minWidth: 1300 }]}>
                     <ScrollView
                       nestedScrollEnabled
                       style={{ flex: 1 }}
                       showsVerticalScrollIndicator
                     >
                       <View style={[styles.crmTableRow, styles.crmTableHeader]}>
-                        <Text style={[styles.crmTh, { width: 80 }]}>#</Text>
+                        <Text style={[styles.crmTh, { width: 44 }]}>№</Text>
+                        <Text style={[styles.crmTh, { width: 80 }]}>ID</Text>
                         <Text style={[styles.crmTh, { width: 130 }]}>Дата</Text>
                         <Text style={[styles.crmTh, { width: 150 }]}>Статус</Text>
                         <Text style={[styles.crmTh, { width: 220 }]}>Клиент</Text>
                         <Text style={[styles.crmTh, { width: 140 }]}>Трек</Text>
                         <Text style={[styles.crmTh, { width: 220 }]}>Товар</Text>
                         <Text style={[styles.crmTh, { width: 90 }]}>Сумма</Text>
+                        <Text style={[styles.crmTh, { width: 120 }]}>Источник</Text>
                       </View>
-                      {adminOrders.map((order, idx) => {
+                      {filteredAdminOrders.map((order, idx) => {
                         const itemsLabel = (order.items || [])
                           .map((i) =>
                             `${i.brand || ""} ${i.name}${i.size ? ` (${i.size})` : ""}`.trim()
@@ -5361,147 +6079,166 @@ export default function App() {
                           : "—";
                         const isOpen = openStatusId === order.id;
                         return (
-                          <View key={`fs-${order.id}`}>
-                            <View
-                              style={[
-                                styles.crmTableRow,
-                                idx % 2 === 1 && styles.crmTableRowAlt,
-                                theme === "dark" && { borderBottomColor: "#333" },
-                              ]}
+                          <View
+                            key={`fs-${order.id}`}
+                            style={[
+                              styles.crmTableRow,
+                              idx % 2 === 1 && styles.crmTableRowAlt,
+                              theme === "dark" && { borderBottomColor: "#333" },
+                              isOpen && { zIndex: 100, elevation: 20 },
+                            ]}
+                          >
+                            <Text
+                              style={[styles.crmTd, { width: 44, fontWeight: "700", color: "#888" }]}
+                              numberOfLines={1}
                             >
-                              <Text
-                                style={[styles.crmTd, { width: 80, fontWeight: "700" }]}
-                                numberOfLines={1}
+                              {idx + 1}
+                            </Text>
+                            <Text
+                              style={[styles.crmTd, { width: 80, fontWeight: "700" }]}
+                              numberOfLines={1}
+                            >
+                              {order.id}
+                            </Text>
+                            <Text style={[styles.crmTd, { width: 130 }]} numberOfLines={2}>
+                              {dateLabel}
+                            </Text>
+                            <View
+                              style={{
+                                width: 150,
+                                paddingVertical: 6,
+                                paddingHorizontal: 4,
+                                alignItems: "center",
+                                justifyContent: "center",
+                                position: "relative",
+                                zIndex: isOpen ? 200 : 1,
+                              }}
+                            >
+                              <TouchableOpacity
+                                style={[
+                                  styles.crmStatusBtn,
+                                  {
+                                    backgroundColor: getStatusBadgeStyle(
+                                      order.status || "Новый"
+                                    ).backgroundColor,
+                                    borderColor: getStatusBadgeStyle(
+                                      order.status || "Новый"
+                                    ).borderColor,
+                                  },
+                                ]}
+                                onPress={() =>
+                                  setOpenStatusId(isOpen ? null : order.id)
+                                }
+                                activeOpacity={0.85}
                               >
-                                {order.id}
-                              </Text>
-                              <Text style={[styles.crmTd, { width: 130 }]} numberOfLines={2}>
-                                {dateLabel}
-                              </Text>
-                              <View style={{ width: 150, paddingVertical: 6, paddingHorizontal: 4 }}>
-                                <TouchableOpacity
+                                <Text
                                   style={[
-                                    styles.crmStatusBtn,
+                                    styles.crmStatusBtnText,
                                     {
-                                      backgroundColor: getStatusBadgeStyle(
+                                      color: getStatusBadgeStyle(
                                         order.status || "Новый"
-                                      ).backgroundColor,
-                                      borderColor: getStatusBadgeStyle(
-                                        order.status || "Новый"
-                                      ).borderColor,
+                                      ).color,
                                     },
                                   ]}
-                                  onPress={() =>
-                                    setOpenStatusId(isOpen ? null : order.id)
-                                  }
-                                  activeOpacity={0.85}
+                                  numberOfLines={1}
                                 >
-                                  <Text
-                                    style={[
-                                      styles.crmStatusBtnText,
-                                      {
-                                        color: getStatusBadgeStyle(
-                                          order.status || "Новый"
-                                        ).color,
-                                      },
-                                    ]}
-                                    numberOfLines={1}
-                                  >
-                                    {order.status || "Новый"} ▾
-                                  </Text>
-                                </TouchableOpacity>
-                              </View>
-                              <View
-                                style={{ width: 220, paddingVertical: 6, paddingHorizontal: 6 }}
-                              >
-                                <Text style={styles.crmTdStrong} numberOfLines={1}>
-                                  {order.fullName || "—"}
+                                  {order.status || "Новый"} ▾
                                 </Text>
-                                <Text style={styles.crmTdMuted} numberOfLines={1}>
-                                  {order.phone || "—"}
-                                </Text>
-                                <Text style={styles.crmTdMuted} numberOfLines={1}>
-                                  {order.tgUsername
-                                    ? `@${order.tgUsername}`
-                                    : order.tgId
-                                      ? `id:${order.tgId}`
-                                      : "—"}
-                                </Text>
-                                <Text style={styles.crmTdMuted} numberOfLines={2}>
-                                  {order.address || "—"}
-                                </Text>
-                              </View>
-                              <View
-                                style={{ width: 140, paddingVertical: 4, paddingHorizontal: 4 }}
-                              >
-                                <TextInput
-                                  style={styles.crmTrackInput}
-                                  placeholder="Трек-номер"
-                                  placeholderTextColor="#999"
-                                  value={order.trackingNumber || ""}
-                                  onChangeText={(t) => {
-                                    setAdminOrders((prev) =>
-                                      prev.map((o) =>
-                                        String(o.id) === String(order.id)
-                                          ? { ...o, trackingNumber: t }
-                                          : o
-                                      )
-                                    );
-                                  }}
-                                  onBlur={() => {
-                                    const cur = (order.trackingNumber || "").trim();
-                                    updateTracking(order.id, cur);
-                                  }}
-                                  onSubmitEditing={() => {
-                                    const cur = (order.trackingNumber || "").trim();
-                                    updateTracking(order.id, cur);
-                                  }}
-                                  blurOnSubmit
-                                  returnKeyType="done"
-                                />
-                              </View>
-                              <Text
-                                style={[styles.crmTd, { width: 220 }]}
-                                numberOfLines={3}
-                              >
-                                {itemsLabel || "—"}
+                              </TouchableOpacity>
+                              {isOpen && (
+                                <View style={styles.crmStatusMenu}>
+                                  {ORDER_STATUSES.map((st, stIdx) => (
+                                    <TouchableOpacity
+                                      key={st}
+                                      style={[
+                                        styles.crmStatusMenuItem,
+                                        order.status === st && styles.crmStatusMenuItemActive,
+                                        stIdx === ORDER_STATUSES.length - 1 && { borderBottomWidth: 0 },
+                                      ]}
+                                      onPress={() => {
+                                        changeStatus(order.id, st);
+                                        setOpenStatusId(null);
+                                      }}
+                                    >
+                                      <Text
+                                        style={[
+                                          styles.crmStatusMenuText,
+                                          order.status === st &&
+                                            styles.crmStatusMenuTextActive,
+                                        ]}
+                                      >
+                                        {st}
+                                      </Text>
+                                    </TouchableOpacity>
+                                  ))}
+                                </View>
+                              )}
+                            </View>
+                            <View
+                              style={{ width: 220, paddingVertical: 6, paddingHorizontal: 6, alignItems: "center" }}
+                            >
+                              <Text style={styles.crmTdStrong} numberOfLines={1}>
+                                {order.fullName || "—"}
                               </Text>
-                              <Text
-                                style={[
-                                  styles.crmTd,
-                                  { width: 90, fontWeight: "700" },
-                                ]}
-                              >
-                                {order.finalTotal != null ? `${order.finalTotal}` : "—"}
+                              <Text style={styles.crmTdMuted} numberOfLines={1}>
+                                {order.phone || "—"}
+                              </Text>
+                              <Text style={styles.crmTdMuted} numberOfLines={1}>
+                                {order.tgUsername ? `@${order.tgUsername}` : "—"}
+                              </Text>
+                              <Text style={styles.crmTdMuted} numberOfLines={2}>
+                                {order.address || "—"}
                               </Text>
                             </View>
-                            {isOpen && (
-                              <View style={styles.crmStatusMenu}>
-                                {ORDER_STATUSES.map((st) => (
-                                  <TouchableOpacity
-                                    key={st}
-                                    style={[
-                                      styles.crmStatusMenuItem,
-                                      order.status === st && styles.crmStatusMenuItemActive,
-                                    ]}
-                                    onPress={() => {
-                                      changeStatus(order.id, st);
-                                      setOpenStatusId(null);
-                                    }}
-                                  >
-                                    <Text
-                                      style={[
-                                        styles.crmStatusMenuText,
-                                        order.status === st &&
-                                          styles.crmStatusMenuTextActive,
-                                      ]}
-                                    >
-                                      {st}
-                                    </Text>
-                                  </TouchableOpacity>
-                                ))}
-                              </View>
-                            )}
+                            <View
+                              style={{ width: 140, paddingVertical: 4, paddingHorizontal: 4, alignItems: "center", justifyContent: "center" }}
+                            >
+                              <TextInput
+                                style={[styles.crmTrackInput, { width: "100%" }]}
+                                placeholder="Трек-номер"
+                                placeholderTextColor="#999"
+                                value={order.trackingNumber || ""}
+                                onChangeText={(t) => {
+                                  setAdminOrders((prev) =>
+                                    prev.map((o) =>
+                                      String(o.id) === String(order.id)
+                                        ? { ...o, trackingNumber: t }
+                                        : o
+                                    )
+                                  );
+                                }}
+                                onBlur={() => {
+                                  const cur = (order.trackingNumber || "").trim();
+                                  updateTracking(order.id, cur);
+                                }}
+                                onSubmitEditing={() => {
+                                  const cur = (order.trackingNumber || "").trim();
+                                  updateTracking(order.id, cur);
+                                }}
+                                blurOnSubmit
+                                returnKeyType="done"
+                              />
+                            </View>
+                            <Text
+                              style={[styles.crmTd, { width: 220 }]}
+                              numberOfLines={3}
+                            >
+                              {itemsLabel || "—"}
+                            </Text>
+                            <Text
+                              style={[
+                                styles.crmTd,
+                                { width: 90, fontWeight: "700" },
+                              ]}
+                            >
+                              {order.finalTotal != null ? `${order.finalTotal}` : "—"}
+                            </Text>
+                            <Text
+                              style={[styles.crmTd, { width: 120, fontSize: 11 }]}
+                              numberOfLines={2}
+                            >
+                              {order.utmSource || "—"}
+                            </Text>
                           </View>
                         );
                       })}
@@ -6064,13 +6801,13 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#E5E5E5",
     borderRadius: 12,
-    overflow: "hidden",
+    overflow: "visible",
     backgroundColor: "#fff",
-    minWidth: 960,
+    minWidth: 1100,
   },
   crmTableRow: {
     flexDirection: "row",
-    alignItems: "flex-start",
+    alignItems: "center",
     borderBottomWidth: 1,
     borderBottomColor: "#EEE",
     paddingVertical: 4,
@@ -6090,22 +6827,26 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "700",
     paddingHorizontal: 6,
+    textAlign: "center",
   },
   crmTd: {
     fontSize: 12,
     color: "#222",
     paddingHorizontal: 6,
     paddingVertical: 8,
+    textAlign: "center",
   },
   crmTdStrong: {
     fontSize: 12,
     fontWeight: "700",
     color: "#111",
+    textAlign: "center",
   },
   crmTdMuted: {
     fontSize: 11,
     color: "#666",
     marginTop: 1,
+    textAlign: "center",
   },
   crmStatusBtn: {
     borderRadius: 8,
@@ -6113,22 +6854,37 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderWidth: 1,
     borderColor: "transparent",
+    alignItems: "center",
+    justifyContent: "center",
   },
   crmStatusBtnText: {
     fontSize: 11,
     fontWeight: "700",
+    textAlign: "center",
   },
   crmStatusMenu: {
-    backgroundColor: "#F5F5F5",
-    padding: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: "#E5E5E5",
+    position: "absolute",
+    top: "100%",
+    left: 0,
+    minWidth: 160,
+    marginTop: 4,
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: "#DDD",
+    borderRadius: 10,
+    overflow: "hidden",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.18,
+    shadowRadius: 10,
+    elevation: 24,
+    zIndex: 9999,
   },
   crmStatusMenuItem: {
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    borderRadius: 8,
-    marginBottom: 4,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F0F0F0",
     backgroundColor: "#fff",
   },
   crmStatusMenuItemActive: {
@@ -6137,6 +6893,7 @@ const styles = StyleSheet.create({
   crmStatusMenuText: {
     fontSize: 13,
     color: "#222",
+    textAlign: "center",
   },
   crmStatusMenuTextActive: {
     color: "#fff",
@@ -6151,6 +6908,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     backgroundColor: "#fff",
     color: "#111",
+    textAlign: "center",
   },
 
   productAdminBtn: {
