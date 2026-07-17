@@ -3964,23 +3964,37 @@ export default function App() {
         {(() => {
           const gallery = getProductImages(selectedProduct);
           const imgs = gallery.length ? gallery : ["https://via.placeholder.com/400?text=Photo"];
+          const screenW =
+            typeof window !== "undefined" && window.innerWidth
+              ? window.innerWidth
+              : 360;
+          // ширина слайда = экран минус горизонтальные отступы страницы
+          const slideW = Math.max(260, screenW - 32);
           return (
             <View style={styles.bigImageWrap}>
-              <ScrollView
-                horizontal
-                pagingEnabled
-                showsHorizontalScrollIndicator={false}
-                style={{ width: "100%" }}
-              >
-                {imgs.map((uri, idx) => (
-                  <SmartImage
-                    key={`${selectedProduct.id}-img-${idx}`}
-                    uri={uri}
-                    style={styles.bigImage}
-                    highQuality
-                  />
-                ))}
-              </ScrollView>
+              {imgs.length === 1 ? (
+                <SmartImage uri={imgs[0]} style={styles.bigImage} highQuality />
+              ) : (
+                <ScrollView
+                  horizontal
+                  pagingEnabled
+                  showsHorizontalScrollIndicator={false}
+                  decelerationRate="fast"
+                  snapToInterval={slideW}
+                  snapToAlignment="start"
+                  style={{ width: "100%" }}
+                  contentContainerStyle={{ alignItems: "center" }}
+                >
+                  {imgs.map((uri, idx) => (
+                    <SmartImage
+                      key={`${selectedProduct.id}-img-${idx}`}
+                      uri={uri}
+                      style={[styles.bigImage, { width: slideW }]}
+                      highQuality
+                    />
+                  ))}
+                </ScrollView>
+              )}
               {imgs.length > 1 && (
                 <View style={{ flexDirection: "row", justifyContent: "center", gap: 6, marginTop: 8 }}>
                   {imgs.map((_, idx) => (
@@ -3991,7 +4005,7 @@ export default function App() {
                         height: 7,
                         borderRadius: 4,
                         backgroundColor: "#111",
-                        opacity: 0.25,
+                        opacity: 0.35,
                       }}
                     />
                   ))}
