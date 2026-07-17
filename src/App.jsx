@@ -467,13 +467,14 @@ const getProductImages = (p) => {
 };
 const getProductMainImage = (p) => getProductImages(p)[0] || "";
 
-const ORDER_STATUSES = ["Новый", "Отправить", "Ждем поставку", "Доставляется", "Забрать деньги", "Деньги получены"];
+const ORDER_STATUSES = ["Новый", "Отправить", "Ждем поставку", "Доставляется", "Забрать деньги", "Деньги получены", "Отмена"];
 
 // Маппинг статуса для клиента
 const getClientStatus = (adminStatus) => {
   if (adminStatus === "Отправить" || adminStatus === "Ждем поставку") return "На сборке";
   if (adminStatus === "Доставляется") return "Доставляется";
   if (adminStatus === "Забрать деньги" || adminStatus === "Деньги получены") return "Завершен";
+  if (adminStatus === "Отмена") return "Отменён";
   if (adminStatus === "Новый") return "Ожидает подтверждения";
   return adminStatus || "Ожидает подтверждения";
 };
@@ -493,6 +494,8 @@ const getStatusBadgeStyle = (status) => {
       return { backgroundColor: "#22C55E", color: "#FFFFFF", borderColor: "#22C55E" };
     case "Деньги получены":
       return { backgroundColor: "#FFFFFF", color: "#111111", borderColor: "#111111" };
+    case "Отмена":
+      return { backgroundColor: "#FFFFFF", color: "#6B7280", borderColor: "#D1D5DB" };
     default:
       return { backgroundColor: "#111111", color: "#FFFFFF", borderColor: "#111111" };
   }
@@ -2252,10 +2255,14 @@ export default function App() {
     });
   }, [showAdmin, isAdmin]);
 
-  const currentLevel = LEVELS.find(l => orders >= l.min && orders <= l.max) || LEVELS[0];
+  // В уровень не считаем отменённые заказы
+  const levelOrdersCount = (orderHistory || []).filter(
+    (o) => (o.status || "") !== "Отмена"
+  ).length;
+  const currentLevel = LEVELS.find(l => levelOrdersCount >= l.min && levelOrdersCount <= l.max) || LEVELS[0];
   const nextLevel = LEVELS[LEVELS.indexOf(currentLevel) + 1];
   let progress = 100;
-  if (nextLevel) progress = Math.min(100, Math.floor(((orders - currentLevel.min) / (nextLevel.min - currentLevel.min)) * 100));
+  if (nextLevel) progress = Math.min(100, Math.floor(((levelOrdersCount - currentLevel.min) / (nextLevel.min - currentLevel.min)) * 100));
   // Уникальная реферальная ссылка — только если есть реальный числовой Telegram ID
   const hasRealId = /^\d+$/.test(String(user.id));
   const referral = hasRealId
@@ -3309,14 +3316,20 @@ export default function App() {
   const changeStatus = (orderId, newStatus) => {
     // При завершении заказа просим клиента оставить отзыв
     const askReview = newStatus === "Забрать деньги" || newStatus === "Деньги получены";
-    // Бонусы клиенту — только когда деньги получены
+    // Бонусы клиенту — только когда деньги получены (не при отмене)
     const creditCashback = newStatus === "Деньги получены";
+    const isCancelled = newStatus === "Отмена";
 
     setAdminOrders((prev) =>
       prev.map((o) => {
         if (o.id !== orderId) return o;
         const patch = { ...o, status: newStatus };
         if (askReview) patch.askReview = true;
+        if (isCancelled) {
+          // Отмена: кэшбэк не начисляем, pending обнуляем, отзыв не просим
+          patch.pendingCashback = 0;
+          patch.askReview = false;
+        }
         if (creditCashback && o.pendingCashback && !o.cashbackCredited) {
           patch.cashbackCredited = true;
         }
@@ -3328,6 +3341,10 @@ export default function App() {
         if (o.id !== orderId) return o;
         const patch = { ...o, status: newStatus };
         if (askReview) patch.askReview = true;
+        if (isCancelled) {
+          patch.pendingCashback = 0;
+          patch.askReview = false;
+        }
         if (creditCashback && o.pendingCashback && !o.cashbackCredited) {
           // Начисляем бонусы владельцу заказа (если это текущий пользователь)
           if (String(o.tgId) === String(user?.id) || !o.tgId) {
@@ -3342,6 +3359,7 @@ export default function App() {
     sharedOrdersUpdate(orderId, {
       status: newStatus,
       ...(askReview ? { askReview: true } : {}),
+      ...(isCancelled ? { pendingCashback: 0, askReview: false } : {}),
     }).catch(() => {});
   };
 
@@ -4296,18 +4314,18 @@ export default function App() {
         <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Все уровни</Text>
         {LEVELS.map((item, idx) => {
           const isActive = item.name === currentLevel.name;
-          // прогресс внутри уровня
+          // прогресс внутри уровня (без отменённых)
           let levelProgress = 0;
-          if (orders < item.min) {
+          if (levelOrdersCount < item.min) {
             levelProgress = 0;
-          } else if (item.max === 999 || orders > item.max) {
+          } else if (item.max === 999 || levelOrdersCount > item.max) {
             levelProgress = 100;
           } else {
             const span = item.max - item.min;
-            levelProgress = span <= 0 ? 100 : Math.min(100, Math.round(((orders - item.min) / span) * 100));
+            levelProgress = span <= 0 ? 100 : Math.min(100, Math.round(((levelOrdersCount - item.min) / span) * 100));
           }
           const next = LEVELS[idx + 1];
-          const remaining = next && isActive ? Math.max(0, next.min - orders) : 0;
+          const remaining = next && isActive ? Math.max(0, next.min - levelOrdersCount) : 0;
 
           return (
             <View
