@@ -59,12 +59,17 @@ function isAdmin(eventOrHeaders) {
   var secret = (process.env.ADMIN_API_SECRET || "").trim();
   if (!secret) return false;
   var h = eventOrHeaders || {};
-  var got =
-    h["x-admin-secret"] ||
-    h["X-Admin-Secret"] ||
-    h["X-ADMIN-SECRET"] ||
-    "";
-  return String(got) === secret;
+  var got = "";
+  try {
+    var keys = Object.keys(h);
+    for (var i = 0; i < keys.length; i++) {
+      if (String(keys[i]).toLowerCase() === "x-admin-secret") {
+        got = h[keys[i]];
+        break;
+      }
+    }
+  } catch (e) {}
+  return String(got || "") === secret;
 }
 
 async function readOrders(store) {
