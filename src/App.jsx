@@ -161,15 +161,8 @@ const preloadImages = (list) => {
 const getBrands = (products) => [...new Set(products.map(p => p.brand))];
 
 const ADMIN_IDS = [778715828, 987654321];
-// Чтобы заказы приходили вам в Telegram — токен от @BotFather
-// Админ (chat_id) хотя бы раз должен написать боту /start
-const BOT_TOKEN = "8912775566:AAHEExxwO5Ub39DU0tDT97Hlppw1IfLwjvU";
-// Куда слать пуши о заказах:
-// — личка админу: ADMIN_IDS[0]
-// — группа с темами: chat_id группы (например -1001234567890) + message_thread_id темы
-// Группа Manz → тема «Пуши»
-const ADMIN_NOTIFY_CHAT_ID = -1004319683257;
-const ADMIN_NOTIFY_THREAD_ID = 2;
+// Пуши о заказах идут через Netlify /api/notify (BOT_TOKEN только в Env Netlify)
+// Группа Manz / тема «Пуши» настроены в notify.mjs + Env
 
 const compactOrderForBot = (o) => ({
   id: o.id,
@@ -197,113 +190,42 @@ const compactOrderForBot = (o) => ({
   })),
 });
 
-// Надёжная отправка в Telegram из WebView/браузера.
-// JSON POST часто режется CORS-preflight — поэтому GET + form-urlencoded + beacon.
+// Отправка пуша через Netlify Function (токен на сервере)
 const tgSendMessage = async (text) => {
-  if (!BOT_TOKEN || !ADMIN_NOTIFY_CHAT_ID) {
-    console.warn("[TG] BOT_TOKEN или ADMIN_NOTIFY_CHAT_ID не заданы");
-    return false;
-  }
-  const t = String(text).slice(0, 3500);
-  const chat = String(ADMIN_NOTIFY_CHAT_ID);
-  const token = BOT_TOKEN;
-  const api = `https://api.telegram.org/bot${token}/sendMessage`;
-  const threadId =
-    ADMIN_NOTIFY_THREAD_ID != null && ADMIN_NOTIFY_THREAD_ID !== ""
-      ? Number(ADMIN_NOTIFY_THREAD_ID)
-      : null;
-  const threadQS =
-    threadId && !isNaN(threadId) ? `&message_thread_id=${threadId}` : "";
-  const threadBody =
-    threadId && !isNaN(threadId) ? `&message_thread_id=${threadId}` : "";
-
-  // 1) form-urlencoded POST — Telegram принимает, часто проходит без preflight
+  const t = String(text || "").slice(0, 3500);
+  if (!t) return false;
+  const urls = [];
   try {
-    const body =
-      `chat_id=${encodeURIComponent(chat)}` +
-      `&text=${encodeURIComponent(t)}` +
-      `&disable_web_page_preview=true` +
-      threadBody;
-    const r = await fetch(api, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body,
-      cache: "no-store",
-    });
-    const data = await r.json().catch(() => null);
-    if (data && data.ok) {
-      console.log("[TG] send OK via form POST");
-      return true;
+    if (typeof window !== "undefined" && window.location?.origin) {
+      const o = window.location.origin;
+      urls.push(`${o}/api/notify`);
+      urls.push(`${o}/.netlify/functions/notify`);
     }
-    if (data) console.warn("[TG] form POST response:", data);
-  } catch (e) {
-    console.warn("[TG] form POST fail", e && e.message);
-  }
+  } catch (e) {}
+  urls.push("https://manzshop.netlify.app/api/notify");
 
-  // 2) JSON POST (как раньше — у вас пуши уже доходили этим способом)
-  try {
-    const payload = {
-      chat_id: Number(chat) || chat,
-      text: t,
-      disable_web_page_preview: true,
-    };
-    if (threadId && !isNaN(threadId)) payload.message_thread_id = threadId;
-    const r = await fetch(api, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-      cache: "no-store",
-    });
-    const data = await r.json().catch(() => null);
-    if (data && data.ok) {
-      console.log("[TG] send OK via JSON POST");
-      return true;
-    }
-    if (data) console.warn("[TG] JSON POST response:", data);
-  } catch (e) {
-    console.warn("[TG] JSON POST fail", e && e.message);
-  }
-
-  // 3) GET (короткие сообщения)
-  if (t.length < 1200) {
-    const getUrl =
-      `${api}?chat_id=${encodeURIComponent(chat)}` +
-      `&text=${encodeURIComponent(t)}` +
-      `&disable_web_page_preview=true` +
-      threadQS;
+  for (const url of urls) {
     try {
-      const r = await fetch(getUrl, { method: "GET", cache: "no-store" });
-      const data = await r.json().catch(() => null);
-      if (data && data.ok) {
-        console.log("[TG] send OK via GET");
+      const r = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: t }),
+        cache: "no-store",
+      });
+      const data = await r.json().catch(() => ({}));
+      if (r.ok && data && data.ok !== false) {
+        console.log("[TG] notify OK via", url);
         return true;
       }
+      console.warn("[TG] notify fail", url, data);
     } catch (e) {
-      console.warn("[TG] GET fail", e && e.message);
+      console.warn("[TG] notify error", url, e && e.message);
     }
-    // beacon только как последний шанс
-    try {
-      if (typeof Image !== "undefined") {
-        await new Promise((resolve) => {
-          const img = new Image();
-          img.onload = img.onerror = () => resolve();
-          img.src = getUrl;
-          setTimeout(resolve, 1500);
-        });
-        console.log("[TG] send attempted via Image beacon");
-        return true;
-      }
-    } catch (e) {}
   }
-
   return false;
 };
 
 const notifyAdminNewOrder = async (order) => {
-  if (!BOT_TOKEN) {
-    console.warn("[TG] BOT_TOKEN пустой");
-    return false;
-  }
   try {
     const deliveryLabel = order.delivery === "europost" ? "Европочта" : "Курьер";
     const itemsShort = (order.items || [])
@@ -342,102 +264,9 @@ const notifyAdminNewOrder = async (order) => {
 
 // Загрузить заказы из сообщений бота (getUpdates) → в таблицу CRM
 const fetchOrdersFromBot = async () => {
-  if (!BOT_TOKEN) return [];
-  try {
-    const base = `https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?limit=100`;
-    const urls = [
-      base,
-      `https://corsproxy.io/?${encodeURIComponent(base)}`,
-      `https://api.allorigins.win/raw?url=${encodeURIComponent(base)}`,
-    ];
-    let results = [];
-    for (const url of urls) {
-      try {
-        const r = await fetch(url, { cache: "no-store", mode: "cors" });
-        if (!r.ok) continue;
-        const data = await r.json();
-        if (data && data.ok && Array.isArray(data.result)) {
-          results = data.result;
-          break;
-        }
-      } catch (e) {}
-    }
-
-    const orders = [];
-    for (const upd of results) {
-      const msg = upd.message || upd.edited_message || upd.channel_post;
-      const text = msg?.text || "";
-      if (!text) continue;
-
-      // 1) Машинный блок
-      const m = text.match(/#ORD#([\s\S]*?)#END#/);
-      if (m) {
-        try {
-          const obj = JSON.parse(m[1]);
-          if (obj && obj.id != null) orders.push(obj);
-          continue;
-        } catch (e) {}
-      }
-
-      // 2) Парсинг человекочитаемого формата
-      if (text.includes("Новый заказ") || text.includes("новый заказ")) {
-        const idMatch = text.match(/#(\d+)/);
-        const phoneMatch = text.match(/\+?\d{9,15}/);
-        const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
-        let fullName = "";
-        let address = "";
-        let phone = phoneMatch ? phoneMatch[0] : "";
-        let delivery = "courier";
-        let total = 0;
-        let tgUsername = null;
-        let items = [];
-
-        for (const line of lines) {
-          if (line.startsWith("ФИО:")) fullName = line.replace("ФИО:", "").trim();
-          if (line.startsWith("Тел:")) phone = line.replace("Тел:", "").trim();
-          if (line.startsWith("TG:") && line.includes("@")) {
-            tgUsername = line.replace("TG:", "").trim().replace("@", "");
-          }
-          if (line.startsWith("Доставка:") && line.toLowerCase().includes("евро")) delivery = "europost";
-          if (line.startsWith("Адрес:")) address = line.replace("Адрес:", "").trim();
-          if (line.startsWith("Сумма:")) {
-            const tm = line.match(/(\d+(?:[.,]\d+)?)/);
-            if (tm) total = parseFloat(tm[1].replace(",", "."));
-          }
-          if (line.startsWith("Товар:")) {
-            const after = line.replace("Товар:", "").trim();
-            if (after) items = [{ name: after, price: total }];
-          }
-          if (line.includes("Способ доставки и адрес:")) {
-            const rest = line.split(":")[1] || "";
-            if (rest.toLowerCase().includes("евро")) delivery = "europost";
-            const parts = rest.split(",").map((s) => s.trim());
-            if (parts.length > 1) address = parts.slice(1).join(", ");
-            else address = rest.trim();
-          }
-        }
-
-        if (idMatch || fullName || phone) {
-          orders.push({
-            id: idMatch ? parseInt(idMatch[1], 10) : Date.now(),
-            date: msg.date ? new Date(msg.date * 1000).toISOString() : new Date().toISOString(),
-            status: "Новый",
-            fullName,
-            phone,
-            address,
-            finalTotal: total,
-            delivery,
-            tgUsername,
-            items,
-          });
-        }
-      }
-    }
-    return orders;
-  } catch (e) {
-    console.warn("fetchOrdersFromBot", e);
-    return [];
-  }
+  // Раньше ходило в Telegram getUpdates с токеном на клиенте — небезопасно.
+  // Заказы теперь только через /api/orders.
+  return [];
 };
 
 const DEFAULT_PRODUCTS = [
@@ -2604,7 +2433,7 @@ export default function App() {
         if (!notified) await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
       }
       if (!notified) {
-        console.warn("[Orders] push в Telegram не дошёл. Проверьте BOT_TOKEN и что админ написал боту /start");
+        console.warn("[Orders] push в Telegram не дошёл. Проверьте /api/notify и BOT_TOKEN в Netlify Env");
       } else {
         console.log("[Orders] Telegram notify OK", order.id);
       }
@@ -4035,11 +3864,29 @@ export default function App() {
           <Text style={[styles.productPrice, isDark && styles.textDark]}>{money(selectedProduct.price)}</Text>
         </View>
 
+        <View
+          style={{
+            backgroundColor: isDark ? "#1C1C1E" : "#F3F4F6",
+            borderRadius: 14,
+            paddingVertical: 10,
+            paddingHorizontal: 12,
+            marginBottom: 12,
+            gap: 4,
+          }}
+        >
+          <Text style={[{ fontSize: 13, fontWeight: "700", color: "#111" }, isDark && styles.textDark]}>
+            💵 Оплата при получении
+          </Text>
+          <Text style={[{ fontSize: 12, color: "#555", lineHeight: 17 }, isDark && { color: "#AAA" }]}>
+            При доставке курьером — примерка перед оплатой
+          </Text>
+        </View>
+
         {selectedProduct.description && (
           <Text style={[styles.descriptionText, isDark && styles.textDark]}>{selectedProduct.description}</Text>
         )}
         {(() => {
-          const approvedReviews = (selectedProduct.ratings || []).filter(r => r.approved !== false);
+          const approvedReviews = (selectedProduct.ratings || []).filter(r => r.approved === true);
           return approvedReviews.length > 0 ? (
             <Text style={[styles.ratingDisplay, isDark && styles.textDark]}>
               ★ {selectedProduct.averageRating.toFixed(1)} ({approvedReviews.length} отзывов)
@@ -4068,7 +3915,7 @@ export default function App() {
 
         <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Отзывы</Text>
         {(() => {
-          const approvedReviews = (selectedProduct.ratings || []).filter(r => r.approved !== false);
+          const approvedReviews = (selectedProduct.ratings || []).filter(r => r.approved === true);
           return approvedReviews.length > 0 ? (
             approvedReviews.slice(0, 5).map((r, idx) => (
               <View key={idx} style={[styles.reviewItem, isDark && styles.reviewItemDark]}>
