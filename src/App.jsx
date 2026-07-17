@@ -3483,7 +3483,7 @@ export default function App() {
               setPage("product"); 
             }}
           >
-            <SmartImage uri={getProductMainImage(item)} style={styles.image} />
+            <SmartImage uri={getProductMainImage(item)} style={styles.image} resizeMode="contain" />
           </TouchableOpacity>
           
           {/* Кнопка избранного на фото */}
@@ -3823,7 +3823,7 @@ export default function App() {
                     <SmartImage
                       key={`${selectedProduct.id}-img-${idx}`}
                       uri={uri}
-                      style={[styles.bigImage, { width: slideW }]}
+                      style={[styles.bigImage, { width: slideW, height: slideW, aspectRatio: 1 }]}
                       highQuality
                       resizeMode="contain"
                     />
@@ -6632,13 +6632,26 @@ const styles = StyleSheet.create({
 
   grid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between" },
   card: { width: "48%", backgroundColor: "#fff", borderRadius: 20, padding: 8, marginBottom: 12, position: "relative" },
-  image: { height: 120, width: "100%", borderRadius: 16, backgroundColor: "#FFFFFF" },
+  image: {
+    width: "100%",
+    aspectRatio: 1,
+    borderRadius: 16,
+    backgroundColor: "#FFFFFF",
+  },
   bigImageWrap: {
     width: "100%",
     position: "relative",
     marginTop: 8,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 24,
+    overflow: "hidden",
   },
-  bigImage: { width: "100%", height: 250, borderRadius: 24, backgroundColor: "#FFFFFF" },
+  bigImage: {
+    width: "100%",
+    aspectRatio: 1,
+    borderRadius: 24,
+    backgroundColor: "#FFFFFF",
+  },
   favorite: { position: "absolute", right: 12, top: 12 },
   favoriteText: { fontSize: 20 },
   // Белый круг с чёрной обводкой + чёрное сердце
