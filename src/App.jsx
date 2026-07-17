@@ -2857,10 +2857,10 @@ export default function App() {
       try {
         const check = await sharedProductsLoad();
         const still = (check || []).some((p) => String(p.id) === String(id));
-        if (still) showToast("⚠️ На сервере ещё есть — нажми «Опубликовать»");
+        if (still) showToast("⚠️ На сервере ещё есть — удали ещё раз");
       } catch (e) {}
     } else {
-      showToast("⚠️ Сервер не принял удаление — нажми «Опубликовать каталог»");
+      showToast("⚠️ Сервер не принял удаление — попробуй ещё раз");
     }
   };
 
@@ -4774,12 +4774,10 @@ export default function App() {
             `\n\nКаталог опубликован.`
         );
       } else {
-        showToast(
-          `⚠️ Добавлено локально ${newProducts.length}, нажми «Опубликовать каталог»`
-        );
+        showToast(`⚠️ Добавлено локально ${newProducts.length} — повторно нажми «Импортировать»`);
         Alert.alert(
-          "Импорт (локально)",
-          `Добавлено ${newProducts.length} товаров в этом устройстве.\n\nНажми «Опубликовать каталог для всех», чтобы увидеть их у других.`
+          "Импорт",
+          `Товары добавлены на этом устройстве, но сервер не принял сохранение.\nПопробуй ещё раз «Импортировать новые».`
         );
       }
     } catch (e) {
@@ -5176,32 +5174,6 @@ export default function App() {
                 <View style={styles.adminStatCard}>
                   <Text style={styles.adminStatWhite}>Товаров в каталоге: {products.length}</Text>
                   <Text style={styles.adminStatWhite}>Промокодов: {promoCodes.length}</Text>
-                  <Text style={[styles.adminStatWhite, { opacity: 0.75, fontSize: 13, marginTop: 6 }]}>
-                    Пуш о заказе — в Telegram. Статусы меняйте ниже. Учёт — в Google Таблицах.
-                  </Text>
-                  <TouchableOpacity
-                    style={[
-                      styles.addBtn,
-                      {
-                        marginTop: 14,
-                        marginBottom: 0,
-                        backgroundColor: "#fff",
-                        paddingVertical: 14,
-                        paddingHorizontal: 18,
-                      },
-                    ]}
-                    onPress={publishCatalogToAll}
-                    activeOpacity={0.85}
-                  >
-                    <Text
-                      style={[
-                        styles.buttonText,
-                        { color: "#111", fontSize: 15, fontWeight: "800" },
-                      ]}
-                    >
-                      🌐 Опубликовать каталог для всех
-                    </Text>
-                  </TouchableOpacity>
                 </View>
 
                 <Text style={[styles.sectionTitle, theme === "dark" && styles.textDark]}>Заказы</Text>
