@@ -1,8 +1,10 @@
 /**
- * Каталог: jsonblob (данные) + Telegram short_description (указатель на blob id).
+ * Каталог товаров
  * GET/POST /api/catalog
+ *
+ * Blob ID берётся из Netlify Env: CATALOG_BLOB_ID
+ * (больше НЕ пишем в short_description бота)
  */
-
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "Content-Type",
@@ -10,8 +12,6 @@ const corsHeaders = {
   "Content-Type": "application/json; charset=utf-8",
   "Cache-Control": "no-store",
 };
-
-const BOT_TOKEN = "8912775566:AAHEExxwO5Ub39DU0tDT97Hlppw1IfLwjvU";
 
 const json = (status, data) =>
   new Response(JSON.stringify(data), { status, headers: corsHeaders });
@@ -22,6 +22,14 @@ const normalizeProducts = (list) =>
       p && typeof p.image === "string" && p.image.startsWith("data:")
         ? ""
         : (p && p.image) || "";
+    const images = Array.isArray(p.images)
+      ? p.images
+          .filter((u) => typeof u === "string" && !u.startsWith("data:"))
+          .map((u) => String(u).slice(0, 400))
+          .slice(0, 8)
+      : image
+        ? [image]
+        : [];
     const ratings = Array.isArray(p.ratings)
       ? p.ratings.slice(-40).map((r) => ({
           userId: r.userId,
@@ -39,7 +47,8 @@ const normalizeProducts = (list) =>
       name: p.name || "",
       price: Number(p.price) || 0,
       oldPrice: p.oldPrice != null ? Number(p.oldPrice) : null,
-      image,
+      image: images[0] || image || "",
+      images,
       description: String(p.description || "").slice(0, 500),
       sizes: Array.isArray(p.sizes) ? p.sizes : [],
       sales: Number(p.sales) || 0,
@@ -50,55 +59,6 @@ const normalizeProducts = (list) =>
       ratings,
     };
   });
-
-async function tgGetDesc() {
-  try {
-    const r = await fetch(
-      "https://api.telegram.org/bot" + BOT_TOKEN + "/getMyShortDescription",
-      { cache: "no-store" }
-    );
-    const data = await r.json();
-    return (data && data.result && data.result.short_description) || "";
-  } catch (e) {
-    return "";
-  }
-}
-
-async function tgGetPointer() {
-  try {
-    const desc = await tgGetDesc();
-    const m = String(desc).match(/mz:([A-Za-z0-9_-]+)/);
-    return m ? m[1] : null;
-  } catch (e) {
-    return null;
-  }
-}
-
-async function tgSetPointer(blobId) {
-  try {
-    const desc = await tgGetDesc();
-    const ord = String(desc).match(/ord:([A-Za-z0-9_-]+)/);
-    const u = String(desc).match(/u:([A-Za-z0-9_-]+)/);
-    const parts = ["mz:" + blobId];
-    if (ord) parts.push("ord:" + ord[1]);
-    if (u) parts.push("u:" + u[1]);
-    const text = parts.join(";");
-    const body = "short_description=" + encodeURIComponent(text);
-    const r = await fetch(
-      "https://api.telegram.org/bot" + BOT_TOKEN + "/setMyShortDescription",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: body,
-        cache: "no-store",
-      }
-    );
-    const data = await r.json();
-    return !!(data && data.ok);
-  } catch (e) {
-    return false;
-  }
-}
 
 async function blobRead(id) {
   if (!id) return null;
@@ -152,14 +112,19 @@ async function blobWrite(id, payload) {
   return null;
 }
 
+function getCatalogBlobId() {
+  return (process.env.CATALOG_BLOB_ID || "").trim() || null;
+}
+
 export default async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("", { status: 204, headers: corsHeaders });
   }
 
   try {
+    let blobId = getCatalogBlobId();
+
     if (req.method === "GET") {
-      const blobId = await tgGetPointer();
       const data = blobId ? await blobRead(blobId) : null;
       let products = [];
       if (data && Array.isArray(data.products)) products = data.products;
@@ -168,7 +133,7 @@ export default async (req) => {
         ok: true,
         products: products,
         updatedAt: (data && data.updatedAt) || null,
-        storage: blobId ? "jsonblob+tg" : "empty",
+        storage: blobId ? "jsonblob+env" : "empty",
         blobId: blobId || null,
       });
     }
@@ -188,7 +153,6 @@ export default async (req) => {
         v: 2,
       };
 
-      const blobId = await tgGetPointer();
       const written = await blobWrite(blobId, payload);
       if (!written) {
         return json(500, {
@@ -198,16 +162,19 @@ export default async (req) => {
         });
       }
 
-      const pointerOk = await tgSetPointer(written);
+      const needEnvUpdate = !blobId || written !== blobId;
       const verify = await blobRead(written);
 
       return json(200, {
         ok: true,
         count: products.length,
         updatedAt: payload.updatedAt,
-        storage: "jsonblob+tg",
+        storage: "jsonblob+env",
         blobId: written,
-        pointerOk: pointerOk,
+        needEnvUpdate,
+        hint: needEnvUpdate
+          ? `Добавьте в Netlify Env: CATALOG_BLOB_ID=${written}`
+          : undefined,
         verified: !!(verify && (verify.products || Array.isArray(verify))),
       });
     }
