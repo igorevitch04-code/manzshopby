@@ -74,6 +74,7 @@ function normalizeProducts(list) {
 
 async function readProducts(store) {
   var products = [];
+  var promoCodes = [];
   var updatedAt = null;
   try {
     var raw = await store.get("products");
@@ -85,11 +86,14 @@ async function readProducts(store) {
       } else if (Array.isArray(data)) {
         products = data;
       }
+      if (data && Array.isArray(data.promoCodes)) {
+        promoCodes = data.promoCodes;
+      }
     }
   } catch (e) {
     console.error("[catalog] read", e);
   }
-  return { products: products, updatedAt: updatedAt };
+  return { products: products, promoCodes: promoCodes, updatedAt: updatedAt };
 }
 
 async function handle(method, bodyObj) {
@@ -103,6 +107,7 @@ async function handle(method, bodyObj) {
       body: JSON.stringify({
         ok: true,
         products: current.products,
+        promoCodes: current.promoCodes || [],
         updatedAt: current.updatedAt,
         storage: "netlify-blobs",
         count: current.products.length,
@@ -111,8 +116,16 @@ async function handle(method, bodyObj) {
   }
 
   if (method === "POST") {
-    var next = normalizeProducts(bodyObj && bodyObj.products);
-    if (!next.length && current.products.length > 0) {
+    var hasProducts = bodyObj && Array.isArray(bodyObj.products);
+    var hasPromos = bodyObj && Array.isArray(bodyObj.promoCodes);
+    var next = hasProducts
+      ? normalizeProducts(bodyObj.products)
+      : current.products;
+    var nextPromos = hasPromos
+      ? bodyObj.promoCodes
+      : current.promoCodes || [];
+
+    if (hasProducts && !next.length && current.products.length > 0) {
       return {
         statusCode: 400,
         headers: corsHeaders,
@@ -125,8 +138,9 @@ async function handle(method, bodyObj) {
     }
     var payload = {
       products: next,
+      promoCodes: nextPromos,
       updatedAt: new Date().toISOString(),
-      v: 3,
+      v: 4,
     };
     await store.set("products", JSON.stringify(payload));
     var verify = await readProducts(store);
@@ -136,6 +150,7 @@ async function handle(method, bodyObj) {
       body: JSON.stringify({
         ok: true,
         count: next.length,
+        promoCount: nextPromos.length,
         verified: verify.products.length,
         updatedAt: payload.updatedAt,
         storage: "netlify-blobs",
