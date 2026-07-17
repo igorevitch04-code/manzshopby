@@ -2751,7 +2751,7 @@ export default function App() {
     const matchBrand = selectedBrand ? p.brand === selectedBrand : true;
     const matchPrice = (minPrice === "" || p.price >= parseInt(minPrice)) && (maxPrice === "" || p.price <= parseInt(maxPrice));
     return matchName && matchBrand && matchPrice;
-  });
+  }); // основной фильтр каталога — в Catalog (localFiltered), здесь запасной
   const PAGE_SIZE = 4;
   const paginated = filtered.slice(0, currentPage * PAGE_SIZE);
   const hasMore = paginated.length < filtered.length;
@@ -3560,6 +3560,13 @@ export default function App() {
   // ---- Catalog ----
   const Catalog = () => {
     const brands = getBrands(products);
+    const allSizes = Array.from(
+      new Set(
+        (products || []).flatMap((p) =>
+          (Array.isArray(p.sizes) ? p.sizes : []).map((s) => String(s).trim()).filter(Boolean)
+        )
+      )
+    ).sort((a, b) => Number(a) - Number(b) || String(a).localeCompare(String(b)));
     const { theme } = useTheme();
     const isDark = theme === "dark";
 
@@ -3568,6 +3575,7 @@ export default function App() {
     const [localMin, setLocalMin] = useState(minPrice);
     const [localMax, setLocalMax] = useState(maxPrice);
     const [localBrand, setLocalBrand] = useState(selectedBrand);
+    const [localSize, setLocalSize] = useState(null); // фильтр по размеру
     const [sortBy, setSortBy] = useState(null); // null | "asc" | "desc"
     const [onlyNew, setOnlyNew] = useState(false);   // Новинки (3 дня)
     const [onlySale, setOnlySale] = useState(false); // Скидки (есть oldPrice)
@@ -3583,10 +3591,13 @@ export default function App() {
       const q = localSearch.toLowerCase();
       const matchName = (p.name || "").toLowerCase().includes(q) || (p.brand || "").toLowerCase().includes(q);
       const matchBrand = localBrand ? p.brand === localBrand : true;
+      const matchSize = localSize
+        ? (Array.isArray(p.sizes) ? p.sizes : []).map(String).includes(String(localSize))
+        : true;
       const matchPrice = (localMin === "" || p.price >= parseInt(localMin)) && (localMax === "" || p.price <= parseInt(localMax));
       const matchNew = !onlyNew || (p.createdAt && new Date(p.createdAt).getTime() >= threeDaysAgo);
       const matchSale = !onlySale || (p.oldPrice != null && Number(p.oldPrice) > Number(p.price));
-      return matchName && matchBrand && matchPrice && matchNew && matchSale;
+      return matchName && matchBrand && matchSize && matchPrice && matchNew && matchSale;
     });
 
     // Сортировка: сначала закреплённые, потом по цене (если выбрано)
@@ -3605,6 +3616,7 @@ export default function App() {
 
     const activeFiltersCount =
       (localBrand ? 1 : 0) +
+      (localSize ? 1 : 0) +
       (sortBy ? 1 : 0) +
       (localMin !== "" || localMax !== "" ? 1 : 0) +
       (onlyNew ? 1 : 0) +
@@ -3625,6 +3637,7 @@ export default function App() {
     const resetFilters = () => {
       setLocalBrand(null);
       setSelectedBrand(null);
+      setLocalSize(null);
       setLocalMin("");
       setLocalMax("");
       setSortBy(null);
@@ -3730,6 +3743,25 @@ export default function App() {
                     onPress={() => setLocalBrand(b)}
                   >
                     <Text style={localBrand === b ? styles.filterChipTextActive : null}>{b}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              <Text style={[styles.sizeTitle, isDark && styles.textDark, { marginBottom: 8 }]}>Размер</Text>
+              <View style={{ flexDirection: "row", flexWrap: "wrap", marginBottom: 16 }}>
+                <TouchableOpacity
+                  style={[styles.filterChip, localSize === null && styles.filterChipActive, { marginBottom: 6 }]}
+                  onPress={() => setLocalSize(null)}
+                >
+                  <Text style={localSize === null ? styles.filterChipTextActive : null}>Все</Text>
+                </TouchableOpacity>
+                {allSizes.map((s) => (
+                  <TouchableOpacity
+                    key={s}
+                    style={[styles.filterChip, localSize === s && styles.filterChipActive, { marginBottom: 6, minWidth: 44 }]}
+                    onPress={() => setLocalSize(s)}
+                  >
+                    <Text style={localSize === s ? styles.filterChipTextActive : null}>{s}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
