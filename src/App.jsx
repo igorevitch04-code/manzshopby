@@ -164,7 +164,11 @@ const ADMIN_IDS = [778715828, 987654321];
 // Чтобы заказы приходили вам в Telegram — токен от @BotFather
 // Админ (chat_id) хотя бы раз должен написать боту /start
 const BOT_TOKEN = "8912775566:AAHEExxwO5Ub39DU0tDT97Hlppw1IfLwjvU";
-const ADMIN_NOTIFY_CHAT_ID = ADMIN_IDS[0]; // 778715828
+// Куда слать пуши о заказах:
+// — личка админу: ADMIN_IDS[0]
+// — группа с темами: chat_id группы (например -1001234567890) + message_thread_id темы
+const ADMIN_NOTIFY_CHAT_ID = ADMIN_IDS[0]; // 778715828  ← замените на chat_id группы
+const ADMIN_NOTIFY_THREAD_ID = null; // ← ID темы «Пуши об новых заказах», например 3 (null = без темы)
 
 const compactOrderForBot = (o) => ({
   id: o.id,
@@ -203,13 +207,22 @@ const tgSendMessage = async (text) => {
   const chat = String(ADMIN_NOTIFY_CHAT_ID);
   const token = BOT_TOKEN;
   const api = `https://api.telegram.org/bot${token}/sendMessage`;
+  const threadId =
+    ADMIN_NOTIFY_THREAD_ID != null && ADMIN_NOTIFY_THREAD_ID !== ""
+      ? Number(ADMIN_NOTIFY_THREAD_ID)
+      : null;
+  const threadQS =
+    threadId && !isNaN(threadId) ? `&message_thread_id=${threadId}` : "";
+  const threadBody =
+    threadId && !isNaN(threadId) ? `&message_thread_id=${threadId}` : "";
 
   // 1) form-urlencoded POST — Telegram принимает, часто проходит без preflight
   try {
     const body =
       `chat_id=${encodeURIComponent(chat)}` +
       `&text=${encodeURIComponent(t)}` +
-      `&disable_web_page_preview=true`;
+      `&disable_web_page_preview=true` +
+      threadBody;
     const r = await fetch(api, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -228,14 +241,16 @@ const tgSendMessage = async (text) => {
 
   // 2) JSON POST (как раньше — у вас пуши уже доходили этим способом)
   try {
+    const payload = {
+      chat_id: Number(chat) || chat,
+      text: t,
+      disable_web_page_preview: true,
+    };
+    if (threadId && !isNaN(threadId)) payload.message_thread_id = threadId;
     const r = await fetch(api, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: Number(chat) || chat,
-        text: t,
-        disable_web_page_preview: true,
-      }),
+      body: JSON.stringify(payload),
       cache: "no-store",
     });
     const data = await r.json().catch(() => null);
@@ -253,7 +268,8 @@ const tgSendMessage = async (text) => {
     const getUrl =
       `${api}?chat_id=${encodeURIComponent(chat)}` +
       `&text=${encodeURIComponent(t)}` +
-      `&disable_web_page_preview=true`;
+      `&disable_web_page_preview=true` +
+      threadQS;
     try {
       const r = await fetch(getUrl, { method: "GET", cache: "no-store" });
       const data = await r.json().catch(() => null);
@@ -3373,6 +3389,21 @@ export default function App() {
     0
   );
 
+  // Статистика по выбранному периоду (без учёта статуса/UTM/поиска)
+  const periodOrdersForStats = adminOrders.filter((o) =>
+    orderInPeriod(o.date, orderFilterPeriod)
+  );
+  // Завершённые продажи = «Деньги получены» (+ «Забрать деньги» как почти завершённые)
+  const salesCompletedSum = periodOrdersForStats
+    .filter((o) => {
+      const st = o.status || "";
+      return st === "Деньги получены" || st === "Забрать деньги";
+    })
+    .reduce((s, o) => s + (Number(o.finalTotal) || 0), 0);
+  const deliveringSum = periodOrdersForStats
+    .filter((o) => (o.status || "") === "Доставляется")
+    .reduce((s, o) => s + (Number(o.finalTotal) || 0), 0);
+
   const PERIOD_OPTIONS = [
     { key: "today", label: "Сегодня" },
     { key: "yesterday", label: "Вчера" },
@@ -3393,6 +3424,52 @@ export default function App() {
     setOrderFilterQuery("");
     setOrderFilterPeriod("month");
   };
+
+  const ordersStatsBar = (
+    <View
+      style={{
+        flexDirection: "row",
+        flexWrap: "wrap",
+        gap: 8,
+        marginBottom: 10,
+      }}
+    >
+      <View
+        style={{
+          flex: 1,
+          minWidth: 140,
+          backgroundColor: "#111",
+          borderRadius: 16,
+          paddingVertical: 12,
+          paddingHorizontal: 14,
+        }}
+      >
+        <Text style={{ color: "rgba(255,255,255,0.65)", fontSize: 11, fontWeight: "600", marginBottom: 4 }}>
+          Всего продаж
+        </Text>
+        <Text style={{ color: "#fff", fontSize: 18, fontWeight: "900" }}>
+          {salesCompletedSum.toLocaleString("ru-RU")} BYN
+        </Text>
+      </View>
+      <View
+        style={{
+          flex: 1,
+          minWidth: 140,
+          backgroundColor: "#FACC15",
+          borderRadius: 16,
+          paddingVertical: 12,
+          paddingHorizontal: 14,
+        }}
+      >
+        <Text style={{ color: "rgba(113,63,18,0.75)", fontSize: 11, fontWeight: "600", marginBottom: 4 }}>
+          Доставляется
+        </Text>
+        <Text style={{ color: "#713F12", fontSize: 18, fontWeight: "900" }}>
+          {deliveringSum.toLocaleString("ru-RU")} BYN
+        </Text>
+      </View>
+    </View>
+  );
 
   // ==============================
   // КОМПОНЕНТЫ СТРАНИЦ
@@ -4213,6 +4290,146 @@ export default function App() {
     }
   };
 
+  // Полная очистка тестовых данных (локально + сервер заказов)
+  const resetAllTestData = () => {
+    Alert.alert(
+      "Очистить все данные?",
+      "Будут обнулены: заказы (CRM), история заказов, бонусы, рефералы, корзина. Каталог товаров не трогаем.",
+      [
+        { text: "Отмена", style: "cancel" },
+        {
+          text: "Очистить",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              showToast("Очищаю…");
+              // 1) Сервер заказов
+              try {
+                const urls = [];
+                if (typeof window !== "undefined" && window.location?.origin) {
+                  const o = window.location.origin;
+                  urls.push(`${o}/api/orders`);
+                  urls.push(`${o}/.netlify/functions/orders`);
+                }
+                for (const url of urls) {
+                  try {
+                    const r = await fetch(url, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ orders: [] }),
+                      cache: "no-store",
+                    });
+                    const data = await r.json().catch(() => ({}));
+                    if (r.ok && data && data.ok !== false) break;
+                  } catch (e) {}
+                }
+              } catch (e) {}
+
+              // 2) Локальный стейт
+              setAdminOrders([]);
+              setOrderHistory([]);
+              setOrders(0);
+              setBonusBalance(0);
+              setReferralCount(0);
+              setReferralEarnings(0);
+              setReferralNotified(false);
+              setCart([]);
+              setLastOrderNumber(0);
+              setUsedFreeDelivery([]);
+
+              // 3) CloudStorage + localStorage
+              const keys = [
+                CLOUD_KEYS.orders,
+                CLOUD_KEYS.bonus,
+                CLOUD_KEYS.orderHistory,
+                CLOUD_KEYS.adminOrders,
+                CLOUD_KEYS.referralCount,
+                CLOUD_KEYS.referralEarnings,
+                CLOUD_KEYS.referralNotified,
+                CLOUD_KEYS.lastOrderNumber,
+                CLOUD_KEYS.usedFreeDelivery,
+                CLOUD_KEYS.refEvents,
+                CLOUD_KEYS.cart,
+                CLOUD_KEYS.referredBy,
+              ];
+              const zeroKeys = new Set([
+                CLOUD_KEYS.bonus,
+                CLOUD_KEYS.referralCount,
+                CLOUD_KEYS.referralEarnings,
+                CLOUD_KEYS.lastOrderNumber,
+              ]);
+              const falseKeys = new Set([CLOUD_KEYS.referralNotified]);
+              for (const k of keys) {
+                try {
+                  let val = [];
+                  if (zeroKeys.has(k)) val = 0;
+                  else if (falseKeys.has(k)) val = false;
+                  await saveToCloud(k, val);
+                } catch (e) {}
+                try {
+                  localStorage.removeItem(k);
+                  localStorage.removeItem("krost_" + k);
+                } catch (e) {}
+              }
+              // Явно чистим известные ключи localStorage
+              [
+                "krost_bonus",
+                "krost_orderHistory",
+                "krost_adminOrders",
+                "krost_orders",
+                "krost_referralCount",
+                "krost_referralEarnings",
+                "krost_referralNotified",
+                "krost_lastOrderNumber",
+                "krost_usedFreeDelivery",
+                "krost_refEvents",
+                "krost_referredBy",
+                "krost_cart",
+              ].forEach((k) => {
+                try {
+                  localStorage.removeItem(k);
+                } catch (e) {}
+              });
+              const cs =
+                typeof window !== "undefined" &&
+                window.Telegram?.WebApp?.CloudStorage
+                  ? window.Telegram.WebApp.CloudStorage
+                  : null;
+              if (cs && typeof cs.removeItem === "function") {
+                [
+                  "krost_bonus",
+                  "krost_orderHistory",
+                  "krost_adminOrders",
+                  "krost_orders",
+                  "krost_referralCount",
+                  "krost_referralEarnings",
+                  "krost_referralNotified",
+                  "krost_lastOrderNumber",
+                  "krost_usedFreeDelivery",
+                  "krost_refEvents",
+                  "krost_referredBy",
+                  "krost_cart",
+                ].forEach((k) => {
+                  try {
+                    cs.removeItem(k);
+                  } catch (e) {}
+                });
+              }
+
+              showToast("✅ Данные очищены");
+              Alert.alert(
+                "Готово",
+                "Заказы, бонусы и рефералы обнулены. Закройте и снова откройте мини-апп."
+              );
+            } catch (e) {
+              Alert.alert("Ошибка", String(e?.message || e));
+            }
+          },
+        },
+      ]
+    );
+  };
+
   // Сохранить постоянную ссылку на Google Таблицу (CSV)
   const saveGsheetUrl = async () => {
     const url = (gsheetUrl || "").trim();
@@ -4888,6 +5105,29 @@ export default function App() {
                       🌐 Опубликовать каталог для всех
                     </Text>
                   </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.addBtn,
+                      {
+                        marginTop: 10,
+                        marginBottom: 0,
+                        backgroundColor: "#FEE2E2",
+                        paddingVertical: 14,
+                        paddingHorizontal: 18,
+                      },
+                    ]}
+                    onPress={resetAllTestData}
+                    activeOpacity={0.85}
+                  >
+                    <Text
+                      style={[
+                        styles.buttonText,
+                        { color: "#991B1B", fontSize: 15, fontWeight: "800" },
+                      ]}
+                    >
+                      🗑 Очистить все тестовые данные
+                    </Text>
+                  </TouchableOpacity>
                 </View>
 
                 <Text style={[styles.sectionTitle, theme === "dark" && styles.textDark]}>Заказы</Text>
@@ -4937,6 +5177,8 @@ export default function App() {
                     <Text style={[styles.productAdminBtnText, { fontSize: 16 }]}>⛶</Text>
                   </TouchableOpacity>
                 </View>
+
+                {ordersStatsBar}
 
                 {/* Фильтры заказов — сворачиваемые */}
                 <View style={{ marginBottom: 12 }}>
