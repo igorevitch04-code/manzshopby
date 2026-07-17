@@ -161,8 +161,15 @@ const preloadImages = (list) => {
 const getBrands = (products) => [...new Set(products.map(p => p.brand))];
 
 const ADMIN_IDS = [778715828, 987654321];
-// Пуши о заказах идут через Netlify /api/notify (BOT_TOKEN только в Env Netlify)
-// Группа Manz / тема «Пуши» настроены в notify.mjs + Env
+// Секрет админ-API (тот же в Netlify Env: ADMIN_API_SECRET)
+// Нужен для публикации каталога, смены статусов, рассылки.
+// Новый заказ пушится с сервера без этого секрета.
+const ADMIN_API_SECRET = "mz_adm_7f3k9q2x_manzshop";
+const adminHeaders = () => ({
+  "Content-Type": "application/json",
+  "X-Admin-Secret": ADMIN_API_SECRET,
+});
+// Пуши о заказах: сервер /api/orders сам шлёт в группу (PUSH_BOT_TOKEN в Env)
 
 const compactOrderForBot = (o) => ({
   id: o.id,
@@ -208,7 +215,7 @@ const tgSendMessage = async (text) => {
     try {
       const r = await fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: adminHeaders(),
         body: JSON.stringify({ text: t }),
         cache: "no-store",
       });
@@ -1046,7 +1053,7 @@ const netlifyOrdersSave = async (orders) => {
     try {
       const r = await fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: adminHeaders(),
         body,
         cache: "no-store",
       });
@@ -1208,7 +1215,7 @@ const sendBotBroadcast = async ({ text, photo, buttonText, buttonUrl }) => {
     try {
       const r = await fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: adminHeaders(),
         body,
         cache: "no-store",
       });
@@ -1228,7 +1235,7 @@ const netlifyOrdersPatch = async (orderId, patch) => {
     try {
       const r = await fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: adminHeaders(),
         body,
         cache: "no-store",
       });
@@ -1292,7 +1299,7 @@ const netlifyCatalogSave = async (products) => {
     try {
       const r = await fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: adminHeaders(),
         body,
         cache: "no-store",
       });
