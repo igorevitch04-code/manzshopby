@@ -167,8 +167,9 @@ const BOT_TOKEN = "8912775566:AAHEExxwO5Ub39DU0tDT97Hlppw1IfLwjvU";
 // Куда слать пуши о заказах:
 // — личка админу: ADMIN_IDS[0]
 // — группа с темами: chat_id группы (например -1001234567890) + message_thread_id темы
-const ADMIN_NOTIFY_CHAT_ID = ADMIN_IDS[0]; // 778715828  ← замените на chat_id группы
-const ADMIN_NOTIFY_THREAD_ID = null; // ← ID темы «Пуши об новых заказах», например 3 (null = без темы)
+// Группа Manz → тема «Пуши»
+const ADMIN_NOTIFY_CHAT_ID = -1004319683257;
+const ADMIN_NOTIFY_THREAD_ID = 2;
 
 const compactOrderForBot = (o) => ({
   id: o.id,
