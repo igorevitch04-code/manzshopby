@@ -1,10 +1,10 @@
 /**
- * POST /api/notify  { text: "..." }
- * Только PUSH_BOT_TOKEN — не путаем с BOT_TOKEN рассылки.
+ * POST /api/notify { text } — только с X-Admin-Secret
+ * (новые заказы шлют пуш сами через /api/orders)
  */
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "Content-Type",
+  "Access-Control-Allow-Headers": "Content-Type, X-Admin-Secret",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Content-Type": "application/json; charset=utf-8",
   "Cache-Control": "no-store",
@@ -12,6 +12,16 @@ const corsHeaders = {
 
 const json = (status, data) =>
   new Response(JSON.stringify(data), { status, headers: corsHeaders });
+
+function checkAdmin(req) {
+  const secret = (process.env.ADMIN_API_SECRET || "").trim();
+  if (!secret) return false;
+  const got =
+    req.headers.get("x-admin-secret") ||
+    req.headers.get("X-Admin-Secret") ||
+    "";
+  return String(got) === secret;
+}
 
 export default async (req) => {
   if (req.method === "OPTIONS") {
@@ -31,9 +41,7 @@ export default async (req) => {
       ok: true,
       service: "notify",
       hasPushToken: !!PUSH,
-      pushTokenPrefix: PUSH ? PUSH.slice(0, 10) + "…" : null,
-      chatId: CHAT_ID,
-      threadId: THREAD_RAW,
+      protected: true,
     });
   }
 
@@ -41,11 +49,12 @@ export default async (req) => {
     return json(405, { ok: false, error: "method_not_allowed" });
   }
 
+  if (!checkAdmin(req)) {
+    return json(401, { ok: false, error: "unauthorized" });
+  }
+
   if (!PUSH) {
-    return json(500, {
-      ok: false,
-      error: "PUSH_BOT_TOKEN not set in Netlify Env. Add it and redeploy.",
-    });
+    return json(500, { ok: false, error: "PUSH_BOT_TOKEN not set" });
   }
 
   let body = {};
@@ -56,33 +65,27 @@ export default async (req) => {
   }
 
   const text = String(body.text || "").slice(0, 3500);
-  if (!text) {
-    return json(400, { ok: false, error: "text required" });
-  }
+  if (!text) return json(400, { ok: false, error: "text required" });
 
   try {
     const payload = {
       chat_id: CHAT_ID,
-      text: text,
+      text,
       disable_web_page_preview: true,
     };
     if (THREAD_ID && !isNaN(THREAD_ID)) {
       payload.message_thread_id = THREAD_ID;
     }
-
     const r = await fetch(
       "https://api.telegram.org/bot" + PUSH + "/sendMessage",
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
-        cache: "no-store",
       }
     );
     const data = await r.json().catch(() => ({}));
-    if (data && data.ok) {
-      return json(200, { ok: true });
-    }
+    if (data && data.ok) return json(200, { ok: true });
     return json(502, {
       ok: false,
       error: (data && data.description) || "telegram_error",
@@ -96,6 +99,4 @@ export default async (req) => {
   }
 };
 
-export const config = {
-  path: "/api/notify",
-};
+export const config = { path: "/api/notify" };
