@@ -1,11 +1,11 @@
 /**
- * Серверная отправка пушей в Telegram (токен только на Netlify)
  * POST /api/notify  { text: "..." }
+ * Только PUSH_BOT_TOKEN — не путаем с BOT_TOKEN рассылки.
  */
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "Content-Type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Content-Type": "application/json; charset=utf-8",
   "Cache-Control": "no-store",
 };
@@ -17,26 +17,35 @@ export default async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("", { status: 204, headers: corsHeaders });
   }
-  if (req.method !== "POST") {
-    return json(405, { ok: false, error: "method_not_allowed" });
-  }
 
-  const BOT_TOKEN = (process.env.BOT_TOKEN || "").trim();
+  const PUSH = (process.env.PUSH_BOT_TOKEN || "").trim();
   const CHAT_ID = (
     process.env.ADMIN_NOTIFY_CHAT_ID ||
     "-1004319683257"
   ).trim();
-  const THREAD_RAW = (
-    process.env.ADMIN_NOTIFY_THREAD_ID ||
-    "2"
-  ).trim();
+  const THREAD_RAW = (process.env.ADMIN_NOTIFY_THREAD_ID || "2").trim();
   const THREAD_ID = THREAD_RAW ? Number(THREAD_RAW) : null;
 
-  if (!BOT_TOKEN) {
-    return json(500, { ok: false, error: "BOT_TOKEN not set in Netlify Env" });
+  if (req.method === "GET") {
+    return json(200, {
+      ok: true,
+      service: "notify",
+      hasPushToken: !!PUSH,
+      pushTokenPrefix: PUSH ? PUSH.slice(0, 10) + "…" : null,
+      chatId: CHAT_ID,
+      threadId: THREAD_RAW,
+    });
   }
-  if (!CHAT_ID) {
-    return json(500, { ok: false, error: "ADMIN_NOTIFY_CHAT_ID not set" });
+
+  if (req.method !== "POST") {
+    return json(405, { ok: false, error: "method_not_allowed" });
+  }
+
+  if (!PUSH) {
+    return json(500, {
+      ok: false,
+      error: "PUSH_BOT_TOKEN not set in Netlify Env. Add it and redeploy.",
+    });
   }
 
   let body = {};
@@ -54,7 +63,7 @@ export default async (req) => {
   try {
     const payload = {
       chat_id: CHAT_ID,
-      text,
+      text: text,
       disable_web_page_preview: true,
     };
     if (THREAD_ID && !isNaN(THREAD_ID)) {
@@ -62,7 +71,7 @@ export default async (req) => {
     }
 
     const r = await fetch(
-      "https://api.telegram.org/bot" + BOT_TOKEN + "/sendMessage",
+      "https://api.telegram.org/bot" + PUSH + "/sendMessage",
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
