@@ -3074,6 +3074,7 @@ export default function App() {
     new Promise((resolve) => {
       try {
         const img = new Image();
+        img.crossOrigin = "anonymous";
         img.onload = () => {
           try {
             const SIZE = 1000;
@@ -3084,8 +3085,8 @@ export default function App() {
             // белый фон
             ctx.fillStyle = "#FFFFFF";
             ctx.fillRect(0, 0, SIZE, SIZE);
-            // вписать с отступами ~8%
-            const pad = SIZE * 0.08;
+            // вписать с отступами ~10%
+            const pad = SIZE * 0.1;
             const maxW = SIZE - pad * 2;
             const maxH = SIZE - pad * 2;
             const scale = Math.min(maxW / img.width, maxH / img.height);
@@ -3094,8 +3095,34 @@ export default function App() {
             const x = (SIZE - w) / 2;
             const y = (SIZE - h) / 2;
             ctx.drawImage(img, x, y, w, h);
-            // JPEG компактнее base64
-            const out = canvas.toDataURL("image/jpeg", 0.88);
+
+            // Осветляем почти-белый / серый фон → чисто белый
+            // (помогает для студийных фото; сложный фон улицы не уберёт)
+            try {
+              const imageData = ctx.getImageData(0, 0, SIZE, SIZE);
+              const d = imageData.data;
+              for (let i = 0; i < d.length; i += 4) {
+                const r = d[i];
+                const g = d[i + 1];
+                const b = d[i + 2];
+                const maxc = Math.max(r, g, b);
+                const minc = Math.min(r, g, b);
+                const avg = (r + g + b) / 3;
+                // светлый и малонасыщенный пиксель → белый
+                if (avg > 210 && maxc - minc < 35) {
+                  d[i] = 255;
+                  d[i + 1] = 255;
+                  d[i + 2] = 255;
+                } else if (avg > 235) {
+                  d[i] = 255;
+                  d[i + 1] = 255;
+                  d[i + 2] = 255;
+                }
+              }
+              ctx.putImageData(imageData, 0, 0);
+            } catch (e) {}
+
+            const out = canvas.toDataURL("image/jpeg", 0.9);
             resolve(out || dataUrl);
           } catch (e) {
             resolve(dataUrl);
@@ -3107,6 +3134,33 @@ export default function App() {
         resolve(dataUrl);
       }
     });
+
+  // Скачать картинку по URL и привести к 1000×1000 (для импорта из таблицы)
+  const processImageFromUrl = async (url) => {
+    if (!url || !/^https?:\/\//i.test(url)) return url;
+    const candidates = [
+      url,
+      `https://corsproxy.io/?${encodeURIComponent(url)}`,
+      `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+    ];
+    for (const src of candidates) {
+      try {
+        const r = await fetch(src, { cache: "no-store", mode: "cors" });
+        if (!r.ok) continue;
+        const blob = await r.blob();
+        if (!blob || !String(blob.type || "").startsWith("image/")) continue;
+        const dataUrl = await new Promise((res, rej) => {
+          const reader = new FileReader();
+          reader.onload = () => res(String(reader.result || ""));
+          reader.onerror = rej;
+          reader.readAsDataURL(blob);
+        });
+        if (!dataUrl) continue;
+        return await processProductImage(dataUrl);
+      } catch (e) {}
+    }
+    return url; // если не удалось — оставляем исходную ссылку
+  };
 
   const pickProductImage = (onPicked) => {
     try {
@@ -3509,16 +3563,16 @@ export default function App() {
       <View
         style={{
           flex: 1,
-          backgroundColor: "#DBEAFE",
+          backgroundColor: "#BBF7D0",
           borderRadius: 12,
           paddingVertical: 8,
           paddingHorizontal: 8,
         }}
       >
-        <Text style={{ color: "rgba(30,64,175,0.75)", fontSize: 9, fontWeight: "600", marginBottom: 2 }} numberOfLines={1}>
-          Забрать $
+        <Text style={{ color: "rgba(22,101,52,0.8)", fontSize: 9, fontWeight: "600", marginBottom: 2 }} numberOfLines={1}>
+          Забрать деньги
         </Text>
-        <Text style={{ color: "#1E40AF", fontSize: 13, fontWeight: "900" }} numberOfLines={1}>
+        <Text style={{ color: "#166534", fontSize: 13, fontWeight: "900" }} numberOfLines={1}>
           {collectMoneySum.toLocaleString("ru-RU")}
         </Text>
       </View>
@@ -4709,6 +4763,23 @@ export default function App() {
         existingKeys.add(key);
       }
 
+      // Обработка фото: 1000×1000 + белый фон (если ссылка доступна)
+      if (newProducts.length > 0) {
+        showToast(`Обработка фото 0/${newProducts.length}…`);
+        for (let i = 0; i < newProducts.length; i++) {
+          const imgUrl = newProducts[i].image;
+          if (imgUrl && /^https?:\/\//i.test(imgUrl) && !imgUrl.includes("placeholder")) {
+            try {
+              const processed = await processImageFromUrl(imgUrl);
+              if (processed) newProducts[i].image = processed;
+            } catch (e) {}
+          }
+          if (i % 3 === 0 || i === newProducts.length - 1) {
+            showToast(`Обработка фото ${i + 1}/${newProducts.length}…`);
+          }
+        }
+      }
+
       if (newProducts.length === 0) {
         const parts = [];
         if (skipped) parts.push(`уже есть в каталоге: ${skipped}`);
@@ -5726,18 +5797,6 @@ export default function App() {
                     </TouchableOpacity>
                   </View>
 
-                  <Text
-                    style={{
-                      fontSize: 12,
-                      color: "#888",
-                      marginTop: 10,
-                      lineHeight: 17,
-                    }}
-                  >
-                    Добавляются только товары, которых ещё нет в каталоге
-                    (сравнение по бренду + названию). Существующие не
-                    перезаписываются.
-                  </Text>
                 </View>
 
                 <TextInput
@@ -5970,7 +6029,7 @@ export default function App() {
 
                 <Text style={[styles.sectionTitle, theme === "dark" && styles.textDark]}>Рассылка</Text>
                 <Text style={[styles.crmMuted, theme === "dark" && styles.textDark, { marginBottom: 8 }]}>
-                  База: {broadcastAudience} чел. (кто открывал мини-апп). Нужен /start у @manzshop_bot, иначе Telegram не доставит.
+                  База: {broadcastAudience} чел.
                 </Text>
                 <TextInput
                   style={[styles.broadcastInput, theme === "dark" && styles.inputDark]}
