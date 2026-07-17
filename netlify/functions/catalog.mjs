@@ -1,11 +1,9 @@
 /**
- * Каталог товаров
- * GET/POST /api/catalog
- *
- * Blob ID:
- *  1) Netlify Env CATALOG_BLOB_ID (предпочтительно)
- *  2) fallback: mz:… из short_description бота (только чтение, не перезаписываем)
+ * Каталог — Netlify Blobs
+ * Работает и как Functions 2.0 (/api/catalog), и как classic handler
  */
+import { getStore, connectLambda } from "@netlify/blobs";
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "Content-Type",
@@ -14,38 +12,36 @@ const corsHeaders = {
   "Cache-Control": "no-store",
 };
 
-const BOT_TOKEN =
-  process.env.BOT_TOKEN ||
-  process.env.PUSH_BOT_TOKEN ||
-  "8912775566:AAHEExxwO5Ub39DU0tDT97Hlppw1IfLwjvU";
-
-const json = (status, data) =>
-  new Response(JSON.stringify(data), { status, headers: corsHeaders });
-
-const normalizeProducts = (list) =>
-  (Array.isArray(list) ? list : []).map((p) => {
-    const image =
-      p && typeof p.image === "string" && p.image.startsWith("data:")
+function normalizeProducts(list) {
+  return (Array.isArray(list) ? list : []).map(function (p) {
+    var image =
+      p && typeof p.image === "string" && String(p.image).indexOf("data:") === 0
         ? ""
         : (p && p.image) || "";
-    const images = Array.isArray(p.images)
+    var images = Array.isArray(p.images)
       ? p.images
-          .filter((u) => typeof u === "string" && !u.startsWith("data:"))
-          .map((u) => String(u).slice(0, 400))
+          .filter(function (u) {
+            return typeof u === "string" && String(u).indexOf("data:") !== 0;
+          })
+          .map(function (u) {
+            return String(u).slice(0, 400);
+          })
           .slice(0, 8)
       : image
         ? [image]
         : [];
-    const ratings = Array.isArray(p.ratings)
-      ? p.ratings.slice(-40).map((r) => ({
-          userId: r.userId,
-          userName: String(r.userName || "").slice(0, 40),
-          rating: Number(r.rating) || 0,
-          comment: String(r.comment || "").slice(0, 400),
-          date: r.date || null,
-          approved: r.approved === true,
-          adminReply: r.adminReply ? String(r.adminReply).slice(0, 300) : null,
-        }))
+    var ratings = Array.isArray(p.ratings)
+      ? p.ratings.slice(-40).map(function (r) {
+          return {
+            userId: r.userId,
+            userName: String(r.userName || "").slice(0, 40),
+            rating: Number(r.rating) || 0,
+            comment: String(r.comment || "").slice(0, 400),
+            date: r.date || null,
+            approved: r.approved === true,
+            adminReply: r.adminReply ? String(r.adminReply).slice(0, 300) : null,
+          };
+        })
       : [];
     return {
       id: p.id,
@@ -54,7 +50,7 @@ const normalizeProducts = (list) =>
       price: Number(p.price) || 0,
       oldPrice: p.oldPrice != null ? Number(p.oldPrice) : null,
       image: images[0] || image || "",
-      images,
+      images: images,
       description: String(p.description || "").slice(0, 500),
       sizes: Array.isArray(p.sizes) ? p.sizes : [],
       sales: Number(p.sales) || 0,
@@ -62,180 +58,157 @@ const normalizeProducts = (list) =>
       pinned: !!p.pinned,
       hidden: !!p.hidden,
       createdAt: p.createdAt || null,
-      ratings,
+      ratings: ratings,
     };
   });
-
-async function blobRead(id) {
-  if (!id) return null;
-  try {
-    const r = await fetch("https://jsonblob.com/api/jsonBlob/" + id, {
-      headers: { Accept: "application/json" },
-      cache: "no-store",
-    });
-    if (!r.ok) return null;
-    return await r.json();
-  } catch (e) {
-    return null;
-  }
 }
 
-async function blobWrite(id, payload) {
-  const body = JSON.stringify(payload);
-  if (id) {
-    try {
-      const r = await fetch("https://jsonblob.com/api/jsonBlob/" + id, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-        body: body,
-      });
-      if (r.ok || r.status === 200 || r.status === 201) return id;
-    } catch (e) {}
-  }
+async function readProducts(store) {
+  var products = [];
+  var updatedAt = null;
   try {
-    const r = await fetch("https://jsonblob.com/api/jsonBlob", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body: body,
-    });
-    if (r.ok || r.status === 201) {
-      const x =
-        r.headers.get("X-jsonblob") ||
-        r.headers.get("x-jsonblob") ||
-        r.headers.get("X-Jsonblob");
-      if (x) return String(x).trim();
-      const loc = r.headers.get("Location") || r.headers.get("location") || "";
-      const parts = loc.split("/").filter(Boolean);
-      if (parts.length) return parts[parts.length - 1];
+    var raw = await store.get("products");
+    if (raw) {
+      var data = typeof raw === "string" ? JSON.parse(raw) : raw;
+      if (data && Array.isArray(data.products)) {
+        products = data.products;
+        updatedAt = data.updatedAt || null;
+      } else if (Array.isArray(data)) {
+        products = data;
+      }
     }
-  } catch (e) {}
-  return null;
+  } catch (e) {
+    console.error("[catalog] read", e);
+  }
+  return { products: products, updatedAt: updatedAt };
 }
 
-/** Только чтение short_description — не перезаписываем описание бота */
-async function blobIdFromBotDescription() {
+async function handle(method, bodyObj) {
+  var store = getStore("catalog");
+  var current = await readProducts(store);
+
+  if (method === "GET") {
+    return {
+      statusCode: 200,
+      headers: corsHeaders,
+      body: JSON.stringify({
+        ok: true,
+        products: current.products,
+        updatedAt: current.updatedAt,
+        storage: "netlify-blobs",
+        count: current.products.length,
+      }),
+    };
+  }
+
+  if (method === "POST") {
+    var next = normalizeProducts(bodyObj && bodyObj.products);
+    if (!next.length && current.products.length > 0) {
+      return {
+        statusCode: 400,
+        headers: corsHeaders,
+        body: JSON.stringify({
+          ok: false,
+          error: "refuse_empty_overwrite",
+          count: current.products.length,
+        }),
+      };
+    }
+    var payload = {
+      products: next,
+      updatedAt: new Date().toISOString(),
+      v: 3,
+    };
+    await store.set("products", JSON.stringify(payload));
+    var verify = await readProducts(store);
+    return {
+      statusCode: 200,
+      headers: corsHeaders,
+      body: JSON.stringify({
+        ok: true,
+        count: next.length,
+        verified: verify.products.length,
+        updatedAt: payload.updatedAt,
+        storage: "netlify-blobs",
+      }),
+    };
+  }
+
+  return {
+    statusCode: 405,
+    headers: corsHeaders,
+    body: JSON.stringify({ ok: false, error: "method_not_allowed" }),
+  };
+}
+
+// Classic Netlify Function
+export async function handler(event) {
   try {
-    const r = await fetch(
-      "https://api.telegram.org/bot" + BOT_TOKEN + "/getMyShortDescription",
-      { cache: "no-store" }
-    );
-    const data = await r.json();
-    const desc =
-      (data && data.result && data.result.short_description) || "";
-    const m = String(desc).match(/mz:([A-Za-z0-9_-]+)/);
-    return m ? m[1] : null;
+    connectLambda(event);
+  } catch (e) {}
+
+  if (event.httpMethod === "OPTIONS") {
+    return { statusCode: 200, headers: corsHeaders, body: "" };
+  }
+
+  var bodyObj = {};
+  if (event.httpMethod === "POST") {
+    try {
+      bodyObj = JSON.parse(event.body || "{}");
+    } catch (e) {
+      return {
+        statusCode: 400,
+        headers: corsHeaders,
+        body: JSON.stringify({ ok: false, error: "invalid_json" }),
+      };
+    }
+  }
+
+  try {
+    return await handle(event.httpMethod, bodyObj);
   } catch (e) {
-    return null;
+    console.error("[catalog] handler", e);
+    return {
+      statusCode: 500,
+      headers: corsHeaders,
+      body: JSON.stringify({
+        ok: false,
+        error: String(e && e.message ? e.message : e),
+        products: [],
+      }),
+    };
   }
 }
 
-async function resolveCatalogBlobId() {
-  const fromEnv = (process.env.CATALOG_BLOB_ID || "").trim();
-  if (fromEnv) return fromEnv;
-  return await blobIdFromBotDescription();
-}
-
+// Functions 2.0 /api/catalog
 export default async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("", { status: 204, headers: corsHeaders });
   }
-
+  var bodyObj = {};
+  if (req.method === "POST") {
+    try {
+      bodyObj = await req.json();
+    } catch (e) {
+      return new Response(JSON.stringify({ ok: false, error: "invalid_json" }), {
+        status: 400,
+        headers: corsHeaders,
+      });
+    }
+  }
   try {
-    let blobId = await resolveCatalogBlobId();
-
-    if (req.method === "GET") {
-      const data = blobId ? await blobRead(blobId) : null;
-      let products = [];
-      if (data && Array.isArray(data.products)) products = data.products;
-      else if (Array.isArray(data)) products = data;
-      return json(200, {
-        ok: true,
-        products: products,
-        updatedAt: (data && data.updatedAt) || null,
-        storage: blobId ? "jsonblob" : "empty",
-        blobId: blobId || null,
-      });
-    }
-
-    if (req.method === "POST") {
-      let body = {};
-      try {
-        body = await req.json();
-      } catch (e) {
-        return json(400, { ok: false, error: "invalid_json" });
-      }
-
-      const products = normalizeProducts(body.products);
-
-      // Защита: не затираем каталог пустым массивом, если на сервере уже есть товары
-      if (!products.length) {
-        const existing = blobId ? await blobRead(blobId) : null;
-        const existingList =
-          existing && Array.isArray(existing.products)
-            ? existing.products
-            : Array.isArray(existing)
-              ? existing
-              : [];
-        if (existingList.length > 0) {
-          return json(400, {
-            ok: false,
-            error: "refuse_empty_overwrite",
-            message:
-              "Отклонён пустой каталог: на сервере уже есть " +
-              existingList.length +
-              " товаров. Сначала загрузите товары локально.",
-            count: existingList.length,
-          });
-        }
-      }
-
-      const payload = {
-        products: products,
-        updatedAt: new Date().toISOString(),
-        v: 2,
-      };
-
-      const written = await blobWrite(blobId, payload);
-      if (!written) {
-        return json(500, {
-          ok: false,
-          error: "blob_write_failed",
-          products: [],
-        });
-      }
-
-      const needEnvUpdate =
-        !(process.env.CATALOG_BLOB_ID || "").trim() || written !== blobId;
-      const verify = await blobRead(written);
-
-      return json(200, {
-        ok: true,
-        count: products.length,
-        updatedAt: payload.updatedAt,
-        storage: "jsonblob",
-        blobId: written,
-        needEnvUpdate,
-        hint: needEnvUpdate
-          ? "Добавьте в Netlify Env: CATALOG_BLOB_ID=" + written
-          : undefined,
-        verified: !!(verify && (verify.products || Array.isArray(verify))),
-      });
-    }
-
-    return json(405, { ok: false, error: "method_not_allowed" });
+    var res = await handle(req.method, bodyObj);
+    return new Response(res.body, { status: res.statusCode, headers: corsHeaders });
   } catch (e) {
-    console.error("[catalog]", e);
-    return json(500, {
-      ok: false,
-      error: String(e && e.message ? e.message : e),
-      products: [],
-    });
+    console.error("[catalog] default", e);
+    return new Response(
+      JSON.stringify({
+        ok: false,
+        error: String(e && e.message ? e.message : e),
+        products: [],
+      }),
+      { status: 500, headers: corsHeaders }
+    );
   }
 };
 
