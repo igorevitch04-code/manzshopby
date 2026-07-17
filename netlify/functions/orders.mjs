@@ -2,13 +2,9 @@
  * Общие заказы + статусы (для CRM и клиента)
  * GET/POST /api/orders
  *
- * Blob ID берётся из Netlify Env: ORDERS_BLOB_ID
- * (больше НЕ пишем в short_description бота)
- *
- * POST body:
- *  { orders: [...] }           — полная замена
- *  { order: {...} }            — добавить/обновить один
- *  { patch: { id, ...fields } } — обновить поля одного
+ * Blob ID:
+ *  1) Netlify Env ORDERS_BLOB_ID
+ *  2) fallback: ord:… из short_description (только чтение)
  */
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -17,6 +13,11 @@ const corsHeaders = {
   "Content-Type": "application/json; charset=utf-8",
   "Cache-Control": "no-store",
 };
+
+const BOT_TOKEN =
+  process.env.BOT_TOKEN ||
+  process.env.PUSH_BOT_TOKEN ||
+  "8912775566:AAHEExxwO5Ub39DU0tDT97Hlppw1IfLwjvU";
 
 const json = (status, data) =>
   new Response(JSON.stringify(data), { status, headers: corsHeaders });
@@ -53,7 +54,7 @@ const compact = (o) => ({
 async function blobRead(id) {
   if (!id) return null;
   try {
-    const r = await fetch(`https://jsonblob.com/api/jsonBlob/${id}`, {
+    const r = await fetch("https://jsonblob.com/api/jsonBlob/" + id, {
       headers: { Accept: "application/json" },
       cache: "no-store",
     });
@@ -68,13 +69,13 @@ async function blobWrite(id, payload) {
   const body = JSON.stringify(payload);
   if (id) {
     try {
-      const r = await fetch(`https://jsonblob.com/api/jsonBlob/${id}`, {
+      const r = await fetch("https://jsonblob.com/api/jsonBlob/" + id, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
           Accept: "application/json",
         },
-        body,
+        body: body,
       });
       if (r.ok || r.status === 200 || r.status === 201) return id;
     } catch (e) {}
@@ -86,7 +87,7 @@ async function blobWrite(id, payload) {
         "Content-Type": "application/json",
         Accept: "application/json",
       },
-      body,
+      body: body,
     });
     if (r.ok || r.status === 201) {
       const x =
@@ -102,9 +103,26 @@ async function blobWrite(id, payload) {
   return null;
 }
 
-/** Только чтение env. Описание бота больше не трогаем. */
-function getOrdersBlobId() {
-  return (process.env.ORDERS_BLOB_ID || "").trim() || null;
+async function blobIdFromBotDescription() {
+  try {
+    const r = await fetch(
+      "https://api.telegram.org/bot" + BOT_TOKEN + "/getMyShortDescription",
+      { cache: "no-store" }
+    );
+    const data = await r.json();
+    const desc =
+      (data && data.result && data.result.short_description) || "";
+    const m = String(desc).match(/ord:([A-Za-z0-9_-]+)/);
+    return m ? m[1] : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+async function resolveOrdersBlobId() {
+  const fromEnv = (process.env.ORDERS_BLOB_ID || "").trim();
+  if (fromEnv) return fromEnv;
+  return await blobIdFromBotDescription();
 }
 
 export default async (req) => {
@@ -113,7 +131,7 @@ export default async (req) => {
   }
 
   try {
-    let blobId = getOrdersBlobId();
+    let blobId = await resolveOrdersBlobId();
 
     if (req.method === "GET") {
       const data = blobId ? await blobRead(blobId) : null;
@@ -125,10 +143,10 @@ export default async (req) => {
             : [];
       return json(200, {
         ok: true,
-        orders,
+        orders: orders,
         updatedAt: (data && data.updatedAt) || null,
         blobId: blobId || null,
-        storage: blobId ? "jsonblob+env" : "empty",
+        storage: blobId ? "jsonblob" : "empty",
       });
     }
 
@@ -151,26 +169,28 @@ export default async (req) => {
         const patch = body.patch;
         const map = new Map(existing.map((o) => [String(o.id), o]));
         const cur = map.get(String(patch.id)) || { id: patch.id };
-        map.set(String(patch.id), compact({ ...cur, ...patch }));
+        map.set(String(patch.id), compact(Object.assign({}, cur, patch)));
         orders = Array.from(map.values());
       } else if (Array.isArray(body.orders)) {
         orders = body.orders.map(compact);
       } else if (body.order && body.order.id != null) {
         const c = compact(body.order);
-        const without = existing.filter((o) => String(o.id) !== String(c.id));
-        orders = [c, ...without].slice(0, 80);
+        const without = existing.filter(function (o) {
+          return String(o.id) !== String(c.id);
+        });
+        orders = [c].concat(without).slice(0, 80);
       } else {
         return json(400, { ok: false, error: "need orders, order, or patch" });
       }
 
-      orders.sort((a, b) => {
+      orders.sort(function (a, b) {
         const da = a.date ? new Date(a.date).getTime() : 0;
         const db = b.date ? new Date(b.date).getTime() : 0;
         return db - da;
       });
 
       const payload = {
-        orders,
+        orders: orders,
         updatedAt: new Date().toISOString(),
         v: 1,
       };
@@ -180,18 +200,18 @@ export default async (req) => {
         return json(500, { ok: false, error: "blob_write_failed" });
       }
 
-      // Если ID новый — клиенту нужно прописать ORDERS_BLOB_ID в Netlify Env
-      const needEnvUpdate = !blobId || written !== blobId;
+      const needEnvUpdate =
+        !(process.env.ORDERS_BLOB_ID || "").trim() || written !== blobId;
 
       return json(200, {
         ok: true,
         count: orders.length,
         blobId: written,
         updatedAt: payload.updatedAt,
-        storage: "jsonblob+env",
-        needEnvUpdate,
+        storage: "jsonblob",
+        needEnvUpdate: needEnvUpdate,
         hint: needEnvUpdate
-          ? `Добавьте в Netlify Env: ORDERS_BLOB_ID=${written}`
+          ? "Добавьте в Netlify Env: ORDERS_BLOB_ID=" + written
           : undefined,
       });
     }
