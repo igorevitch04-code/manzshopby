@@ -2,8 +2,9 @@
  * Каталог товаров
  * GET/POST /api/catalog
  *
- * Blob ID берётся из Netlify Env: CATALOG_BLOB_ID
- * (больше НЕ пишем в short_description бота)
+ * Blob ID:
+ *  1) Netlify Env CATALOG_BLOB_ID (предпочтительно)
+ *  2) fallback: mz:… из short_description бота (только чтение, не перезаписываем)
  */
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -12,6 +13,11 @@ const corsHeaders = {
   "Content-Type": "application/json; charset=utf-8",
   "Cache-Control": "no-store",
 };
+
+const BOT_TOKEN =
+  process.env.BOT_TOKEN ||
+  process.env.PUSH_BOT_TOKEN ||
+  "8912775566:AAHEExxwO5Ub39DU0tDT97Hlppw1IfLwjvU";
 
 const json = (status, data) =>
   new Response(JSON.stringify(data), { status, headers: corsHeaders });
@@ -112,8 +118,27 @@ async function blobWrite(id, payload) {
   return null;
 }
 
-function getCatalogBlobId() {
-  return (process.env.CATALOG_BLOB_ID || "").trim() || null;
+/** Только чтение short_description — не перезаписываем описание бота */
+async function blobIdFromBotDescription() {
+  try {
+    const r = await fetch(
+      "https://api.telegram.org/bot" + BOT_TOKEN + "/getMyShortDescription",
+      { cache: "no-store" }
+    );
+    const data = await r.json();
+    const desc =
+      (data && data.result && data.result.short_description) || "";
+    const m = String(desc).match(/mz:([A-Za-z0-9_-]+)/);
+    return m ? m[1] : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+async function resolveCatalogBlobId() {
+  const fromEnv = (process.env.CATALOG_BLOB_ID || "").trim();
+  if (fromEnv) return fromEnv;
+  return await blobIdFromBotDescription();
 }
 
 export default async (req) => {
@@ -122,7 +147,7 @@ export default async (req) => {
   }
 
   try {
-    let blobId = getCatalogBlobId();
+    let blobId = await resolveCatalogBlobId();
 
     if (req.method === "GET") {
       const data = blobId ? await blobRead(blobId) : null;
@@ -133,7 +158,7 @@ export default async (req) => {
         ok: true,
         products: products,
         updatedAt: (data && data.updatedAt) || null,
-        storage: blobId ? "jsonblob+env" : "empty",
+        storage: blobId ? "jsonblob" : "empty",
         blobId: blobId || null,
       });
     }
@@ -162,18 +187,19 @@ export default async (req) => {
         });
       }
 
-      const needEnvUpdate = !blobId || written !== blobId;
+      const needEnvUpdate =
+        !(process.env.CATALOG_BLOB_ID || "").trim() || written !== blobId;
       const verify = await blobRead(written);
 
       return json(200, {
         ok: true,
         count: products.length,
         updatedAt: payload.updatedAt,
-        storage: "jsonblob+env",
+        storage: "jsonblob",
         blobId: written,
         needEnvUpdate,
         hint: needEnvUpdate
-          ? `Добавьте в Netlify Env: CATALOG_BLOB_ID=${written}`
+          ? "Добавьте в Netlify Env: CATALOG_BLOB_ID=" + written
           : undefined,
         verified: !!(verify && (verify.products || Array.isArray(verify))),
       });
