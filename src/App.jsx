@@ -3069,6 +3069,45 @@ export default function App() {
     setProductDraft((d) => (d ? { ...d, [field]: value } : d));
   };
 
+  // Приводит фото к 1000×1000, белый фон, кроссовок по центру
+  const processProductImage = (dataUrl) =>
+    new Promise((resolve) => {
+      try {
+        const img = new Image();
+        img.onload = () => {
+          try {
+            const SIZE = 1000;
+            const canvas = document.createElement("canvas");
+            canvas.width = SIZE;
+            canvas.height = SIZE;
+            const ctx = canvas.getContext("2d");
+            // белый фон
+            ctx.fillStyle = "#FFFFFF";
+            ctx.fillRect(0, 0, SIZE, SIZE);
+            // вписать с отступами ~8%
+            const pad = SIZE * 0.08;
+            const maxW = SIZE - pad * 2;
+            const maxH = SIZE - pad * 2;
+            const scale = Math.min(maxW / img.width, maxH / img.height);
+            const w = img.width * scale;
+            const h = img.height * scale;
+            const x = (SIZE - w) / 2;
+            const y = (SIZE - h) / 2;
+            ctx.drawImage(img, x, y, w, h);
+            // JPEG компактнее base64
+            const out = canvas.toDataURL("image/jpeg", 0.88);
+            resolve(out || dataUrl);
+          } catch (e) {
+            resolve(dataUrl);
+          }
+        };
+        img.onerror = () => resolve(dataUrl);
+        img.src = dataUrl;
+      } catch (e) {
+        resolve(dataUrl);
+      }
+    });
+
   const pickProductImage = (onPicked) => {
     try {
       if (typeof document === "undefined") {
@@ -3078,19 +3117,21 @@ export default function App() {
       const input = document.createElement("input");
       input.type = "file";
       input.accept = "image/*";
-      input.onchange = (e) => {
+      input.onchange = async (e) => {
         const file = e.target?.files?.[0];
         if (!file) return;
-        if (file.size > 2.5 * 1024 * 1024) {
-          Alert.alert("Файл слишком большой", "Максимум 2.5 МБ. Сожмите фото или укажите URL.");
+        if (file.size > 8 * 1024 * 1024) {
+          Alert.alert("Файл слишком большой", "Максимум 8 МБ.");
           return;
         }
+        showToast("Обрабатываю фото…");
         const reader = new FileReader();
-        reader.onload = () => {
-          const dataUrl = String(reader.result || "");
-          // Обновляем и глобальный draft, и локальную форму (через callback)
+        reader.onload = async () => {
+          const raw = String(reader.result || "");
+          const dataUrl = await processProductImage(raw);
           updateProductDraft("image", dataUrl);
           if (typeof onPicked === "function") onPicked(dataUrl);
+          showToast("✅ Фото готово 1000×1000");
         };
         reader.readAsDataURL(file);
       };
@@ -3393,15 +3434,15 @@ export default function App() {
   const periodOrdersForStats = adminOrders.filter((o) =>
     orderInPeriod(o.date, orderFilterPeriod)
   );
-  // Завершённые продажи = «Деньги получены» (+ «Забрать деньги» как почти завершённые)
+  // Всего продаж = только «Деньги получены»
   const salesCompletedSum = periodOrdersForStats
-    .filter((o) => {
-      const st = o.status || "";
-      return st === "Деньги получены" || st === "Забрать деньги";
-    })
+    .filter((o) => (o.status || "") === "Деньги получены")
     .reduce((s, o) => s + (Number(o.finalTotal) || 0), 0);
   const deliveringSum = periodOrdersForStats
     .filter((o) => (o.status || "") === "Доставляется")
+    .reduce((s, o) => s + (Number(o.finalTotal) || 0), 0);
+  const collectMoneySum = periodOrdersForStats
+    .filter((o) => (o.status || "") === "Забрать деньги")
     .reduce((s, o) => s + (Number(o.finalTotal) || 0), 0);
 
   const PERIOD_OPTIONS = [
@@ -3429,43 +3470,56 @@ export default function App() {
     <View
       style={{
         flexDirection: "row",
-        flexWrap: "wrap",
-        gap: 8,
+        gap: 6,
         marginBottom: 10,
       }}
     >
       <View
         style={{
           flex: 1,
-          minWidth: 140,
           backgroundColor: "#111",
-          borderRadius: 16,
-          paddingVertical: 12,
-          paddingHorizontal: 14,
+          borderRadius: 12,
+          paddingVertical: 8,
+          paddingHorizontal: 8,
         }}
       >
-        <Text style={{ color: "rgba(255,255,255,0.65)", fontSize: 11, fontWeight: "600", marginBottom: 4 }}>
-          Всего продаж
+        <Text style={{ color: "rgba(255,255,255,0.65)", fontSize: 9, fontWeight: "600", marginBottom: 2 }} numberOfLines={1}>
+          Продажи
         </Text>
-        <Text style={{ color: "#fff", fontSize: 18, fontWeight: "900" }}>
-          {salesCompletedSum.toLocaleString("ru-RU")} BYN
+        <Text style={{ color: "#fff", fontSize: 13, fontWeight: "900" }} numberOfLines={1}>
+          {salesCompletedSum.toLocaleString("ru-RU")}
         </Text>
       </View>
       <View
         style={{
           flex: 1,
-          minWidth: 140,
           backgroundColor: "#FACC15",
-          borderRadius: 16,
-          paddingVertical: 12,
-          paddingHorizontal: 14,
+          borderRadius: 12,
+          paddingVertical: 8,
+          paddingHorizontal: 8,
         }}
       >
-        <Text style={{ color: "rgba(113,63,18,0.75)", fontSize: 11, fontWeight: "600", marginBottom: 4 }}>
+        <Text style={{ color: "rgba(113,63,18,0.75)", fontSize: 9, fontWeight: "600", marginBottom: 2 }} numberOfLines={1}>
           Доставляется
         </Text>
-        <Text style={{ color: "#713F12", fontSize: 18, fontWeight: "900" }}>
-          {deliveringSum.toLocaleString("ru-RU")} BYN
+        <Text style={{ color: "#713F12", fontSize: 13, fontWeight: "900" }} numberOfLines={1}>
+          {deliveringSum.toLocaleString("ru-RU")}
+        </Text>
+      </View>
+      <View
+        style={{
+          flex: 1,
+          backgroundColor: "#DBEAFE",
+          borderRadius: 12,
+          paddingVertical: 8,
+          paddingHorizontal: 8,
+        }}
+      >
+        <Text style={{ color: "rgba(30,64,175,0.75)", fontSize: 9, fontWeight: "600", marginBottom: 2 }} numberOfLines={1}>
+          Забрать $
+        </Text>
+        <Text style={{ color: "#1E40AF", fontSize: 13, fontWeight: "900" }} numberOfLines={1}>
+          {collectMoneySum.toLocaleString("ru-RU")}
         </Text>
       </View>
     </View>
@@ -5116,29 +5170,6 @@ export default function App() {
                       🌐 Опубликовать каталог для всех
                     </Text>
                   </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[
-                      styles.addBtn,
-                      {
-                        marginTop: 10,
-                        marginBottom: 0,
-                        backgroundColor: "#FEE2E2",
-                        paddingVertical: 14,
-                        paddingHorizontal: 18,
-                      },
-                    ]}
-                    onPress={resetAllTestData}
-                    activeOpacity={0.85}
-                  >
-                    <Text
-                      style={[
-                        styles.buttonText,
-                        { color: "#991B1B", fontSize: 15, fontWeight: "800" },
-                      ]}
-                    >
-                      🗑 Очистить все тестовые данные
-                    </Text>
-                  </TouchableOpacity>
                 </View>
 
                 <Text style={[styles.sectionTitle, theme === "dark" && styles.textDark]}>Заказы</Text>
@@ -5226,19 +5257,6 @@ export default function App() {
                         </View>
                       )}
                     </TouchableOpacity>
-                    <Text
-                      style={[
-                        { fontSize: 12, color: "#888" },
-                        theme === "dark" && styles.textDark,
-                      ]}
-                    >
-                      {filteredAdminOrders.length}
-                      {filteredAdminOrders.length !== adminOrders.length
-                        ? ` / ${adminOrders.length}`
-                        : ""}
-                      {" · "}
-                      {filteredOrdersSum.toLocaleString("ru-RU")} BYN
-                    </Text>
                   </View>
 
                   {showOrderFilters && (
@@ -6115,19 +6133,6 @@ export default function App() {
                       </View>
                     )}
                   </TouchableOpacity>
-                  <Text
-                    style={[
-                      { fontSize: 12, color: "#888" },
-                      theme === "dark" && styles.textDark,
-                    ]}
-                  >
-                    {filteredAdminOrders.length}
-                    {filteredAdminOrders.length !== adminOrders.length
-                      ? ` / ${adminOrders.length}`
-                      : ""}
-                    {" · "}
-                    {filteredOrdersSum.toLocaleString("ru-RU")} BYN
-                  </Text>
                 </View>
 
                 {showOrderFilters && (
