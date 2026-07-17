@@ -1,17 +1,29 @@
 import { getStore, connectLambda } from "@netlify/blobs";
 
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "Content-Type, X-Admin-Secret",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Content-Type": "application/json",
+};
+
+function checkAdmin(event) {
+  const secret = (process.env.ADMIN_API_SECRET || "").trim();
+  if (!secret) return false;
+  const h = event.headers || {};
+  const got =
+    h["x-admin-secret"] ||
+    h["X-Admin-Secret"] ||
+    h["X-ADMIN-SECRET"] ||
+    "";
+  return String(got) === secret;
+}
+
 export async function handler(event) {
-  // Нужно для работы Blobs в Netlify Functions
   connectLambda(event);
 
-  const headers = {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "Content-Type",
-    "Content-Type": "application/json",
-  };
-
   if (event.httpMethod === "OPTIONS") {
-    return { statusCode: 200, headers, body: "" };
+    return { statusCode: 200, headers: corsHeaders, body: "" };
   }
 
   const store = getStore("bot-users");
@@ -25,13 +37,17 @@ export async function handler(event) {
     const list = Object.values(users);
     return {
       statusCode: 200,
-      headers,
+      headers: corsHeaders,
       body: JSON.stringify({ ok: true, count: list.length, users: list }),
     };
   }
 
   if (event.httpMethod !== "POST") {
-    return { statusCode: 405, headers, body: JSON.stringify({ ok: false }) };
+    return {
+      statusCode: 405,
+      headers: corsHeaders,
+      body: JSON.stringify({ ok: false }),
+    };
   }
 
   let body = {};
@@ -39,6 +55,7 @@ export async function handler(event) {
     body = JSON.parse(event.body || "{}");
   } catch (e) {}
 
+  // register — публично (мини-апп)
   if (body.action === "register" && body.id) {
     const id = String(body.id);
     if (!users[id]) {
@@ -53,17 +70,25 @@ export async function handler(event) {
     }
     return {
       statusCode: 200,
-      headers,
+      headers: corsHeaders,
       body: JSON.stringify({ ok: true, count: Object.keys(users).length }),
     };
   }
 
+  // broadcast — только админ
   if (body.action === "broadcast" && body.text) {
+    if (!checkAdmin(event)) {
+      return {
+        statusCode: 401,
+        headers: corsHeaders,
+        body: JSON.stringify({ ok: false, error: "unauthorized" }),
+      };
+    }
     const BOT_TOKEN = process.env.BOT_TOKEN;
     if (!BOT_TOKEN) {
       return {
         statusCode: 500,
-        headers,
+        headers: corsHeaders,
         body: JSON.stringify({ ok: false, error: "BOT_TOKEN not set" }),
       };
     }
@@ -80,7 +105,9 @@ export async function handler(event) {
         }
         if (body.buttonText && body.buttonUrl) {
           payload.reply_markup = {
-            inline_keyboard: [[{ text: body.buttonText, url: body.buttonUrl }]],
+            inline_keyboard: [
+              [{ text: body.buttonText, url: body.buttonUrl }],
+            ],
           };
         }
         const r = await fetch(
@@ -101,14 +128,19 @@ export async function handler(event) {
     }
     return {
       statusCode: 200,
-      headers,
-      body: JSON.stringify({ ok: true, sent, failed, total: list.length }),
+      headers: corsHeaders,
+      body: JSON.stringify({
+        ok: true,
+        sent,
+        failed,
+        total: list.length,
+      }),
     };
   }
 
   return {
     statusCode: 400,
-    headers,
+    headers: corsHeaders,
     body: JSON.stringify({ ok: false, error: "unknown action" }),
   };
 }
