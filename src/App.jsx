@@ -4291,143 +4291,154 @@ export default function App() {
   };
 
   // Полная очистка тестовых данных (локально + сервер заказов)
-  const resetAllTestData = () => {
-    Alert.alert(
-      "Очистить все данные?",
-      "Будут обнулены: заказы (CRM), история заказов, бонусы, рефералы, корзина. Каталог товаров не трогаем.",
-      [
-        { text: "Отмена", style: "cancel" },
-        {
-          text: "Очистить",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              showToast("Очищаю…");
-              // 1) Сервер заказов
-              try {
-                const urls = [];
-                if (typeof window !== "undefined" && window.location?.origin) {
-                  const o = window.location.origin;
-                  urls.push(`${o}/api/orders`);
-                  urls.push(`${o}/.netlify/functions/orders`);
-                }
-                for (const url of urls) {
-                  try {
-                    const r = await fetch(url, {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ orders: [] }),
-                      cache: "no-store",
-                    });
-                    const data = await r.json().catch(() => ({}));
-                    if (r.ok && data && data.ok !== false) break;
-                  } catch (e) {}
-                }
-              } catch (e) {}
-
-              // 2) Локальный стейт
-              setAdminOrders([]);
-              setOrderHistory([]);
-              setOrders(0);
-              setBonusBalance(0);
-              setReferralCount(0);
-              setReferralEarnings(0);
-              setReferralNotified(false);
-              setCart([]);
-              setLastOrderNumber(0);
-              setUsedFreeDelivery([]);
-
-              // 3) CloudStorage + localStorage
-              const keys = [
-                CLOUD_KEYS.orders,
-                CLOUD_KEYS.bonus,
-                CLOUD_KEYS.orderHistory,
-                CLOUD_KEYS.adminOrders,
-                CLOUD_KEYS.referralCount,
-                CLOUD_KEYS.referralEarnings,
-                CLOUD_KEYS.referralNotified,
-                CLOUD_KEYS.lastOrderNumber,
-                CLOUD_KEYS.usedFreeDelivery,
-                CLOUD_KEYS.refEvents,
-                CLOUD_KEYS.cart,
-                CLOUD_KEYS.referredBy,
-              ];
-              const zeroKeys = new Set([
-                CLOUD_KEYS.bonus,
-                CLOUD_KEYS.referralCount,
-                CLOUD_KEYS.referralEarnings,
-                CLOUD_KEYS.lastOrderNumber,
-              ]);
-              const falseKeys = new Set([CLOUD_KEYS.referralNotified]);
-              for (const k of keys) {
-                try {
-                  let val = [];
-                  if (zeroKeys.has(k)) val = 0;
-                  else if (falseKeys.has(k)) val = false;
-                  await saveToCloud(k, val);
-                } catch (e) {}
-                try {
-                  localStorage.removeItem(k);
-                  localStorage.removeItem("krost_" + k);
-                } catch (e) {}
-              }
-              // Явно чистим известные ключи localStorage
-              [
-                "krost_bonus",
-                "krost_orderHistory",
-                "krost_adminOrders",
-                "krost_orders",
-                "krost_referralCount",
-                "krost_referralEarnings",
-                "krost_referralNotified",
-                "krost_lastOrderNumber",
-                "krost_usedFreeDelivery",
-                "krost_refEvents",
-                "krost_referredBy",
-                "krost_cart",
-              ].forEach((k) => {
-                try {
-                  localStorage.removeItem(k);
-                } catch (e) {}
-              });
-              const cs =
-                typeof window !== "undefined" &&
-                window.Telegram?.WebApp?.CloudStorage
-                  ? window.Telegram.WebApp.CloudStorage
-                  : null;
-              if (cs && typeof cs.removeItem === "function") {
-                [
-                  "krost_bonus",
-                  "krost_orderHistory",
-                  "krost_adminOrders",
-                  "krost_orders",
-                  "krost_referralCount",
-                  "krost_referralEarnings",
-                  "krost_referralNotified",
-                  "krost_lastOrderNumber",
-                  "krost_usedFreeDelivery",
-                  "krost_refEvents",
-                  "krost_referredBy",
-                  "krost_cart",
-                ].forEach((k) => {
-                  try {
-                    cs.removeItem(k);
-                  } catch (e) {}
-                });
-              }
-
-              showToast("✅ Данные очищены");
-              Alert.alert(
-                "Готово",
-                "Заказы, бонусы и рефералы обнулены. Закройте и снова откройте мини-апп."
-              );
-            } catch (e) {
-              Alert.alert("Ошибка", String(e?.message || e));
+  const doResetAllTestData = async () => {
+    try {
+      showToast("Очищаю…");
+      // 1) Сервер заказов
+      try {
+        const urls = [];
+        if (typeof window !== "undefined" && window.location?.origin) {
+          const o = window.location.origin;
+          urls.push(`${o}/api/orders`);
+          urls.push(`${o}/.netlify/functions/orders`);
+        }
+        for (const url of urls) {
+          try {
+            const r = await fetch(url, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ orders: [] }),
+              cache: "no-store",
+            });
+            const data = await r.json().catch(() => ({}));
+            if (r.ok && data && data.ok !== false) {
+              console.log("[Reset] server orders cleared", data);
+              break;
             }
-          },
-        },
-      ]
-    );
+          } catch (e) {
+            console.warn("[Reset] orders clear fail", url, e);
+          }
+        }
+      } catch (e) {}
+
+      // 2) Локальный стейт
+      setAdminOrders([]);
+      setOrderHistory([]);
+      setOrders(0);
+      setBonusBalance(0);
+      setReferralCount(0);
+      setReferralEarnings(0);
+      setReferralNotified(false);
+      setCart([]);
+      setLastOrderNumber(0);
+      setUsedFreeDelivery([]);
+
+      // 3) CloudStorage + localStorage
+      const keys = [
+        CLOUD_KEYS.orders,
+        CLOUD_KEYS.bonus,
+        CLOUD_KEYS.orderHistory,
+        CLOUD_KEYS.adminOrders,
+        CLOUD_KEYS.referralCount,
+        CLOUD_KEYS.referralEarnings,
+        CLOUD_KEYS.referralNotified,
+        CLOUD_KEYS.lastOrderNumber,
+        CLOUD_KEYS.usedFreeDelivery,
+        CLOUD_KEYS.refEvents,
+        CLOUD_KEYS.cart,
+        CLOUD_KEYS.referredBy,
+      ];
+      const zeroKeys = new Set([
+        CLOUD_KEYS.bonus,
+        CLOUD_KEYS.referralCount,
+        CLOUD_KEYS.referralEarnings,
+        CLOUD_KEYS.lastOrderNumber,
+      ]);
+      const falseKeys = new Set([CLOUD_KEYS.referralNotified]);
+      for (const k of keys) {
+        try {
+          let val = [];
+          if (zeroKeys.has(k)) val = 0;
+          else if (falseKeys.has(k)) val = false;
+          await saveToCloud(k, val);
+        } catch (e) {}
+        try {
+          localStorage.removeItem(k);
+          localStorage.removeItem("krost_" + k);
+        } catch (e) {}
+      }
+      [
+        "krost_bonus",
+        "krost_orderHistory",
+        "krost_adminOrders",
+        "krost_orders",
+        "krost_referralCount",
+        "krost_referralEarnings",
+        "krost_referralNotified",
+        "krost_lastOrderNumber",
+        "krost_usedFreeDelivery",
+        "krost_refEvents",
+        "krost_referredBy",
+        "krost_cart",
+      ].forEach((k) => {
+        try {
+          localStorage.removeItem(k);
+        } catch (e) {}
+      });
+      const cs =
+        typeof window !== "undefined" && window.Telegram?.WebApp?.CloudStorage
+          ? window.Telegram.WebApp.CloudStorage
+          : null;
+      if (cs && typeof cs.removeItem === "function") {
+        [
+          "krost_bonus",
+          "krost_orderHistory",
+          "krost_adminOrders",
+          "krost_orders",
+          "krost_referralCount",
+          "krost_referralEarnings",
+          "krost_referralNotified",
+          "krost_lastOrderNumber",
+          "krost_usedFreeDelivery",
+          "krost_refEvents",
+          "krost_referredBy",
+          "krost_cart",
+        ].forEach((k) => {
+          try {
+            cs.removeItem(k);
+          } catch (e) {}
+        });
+      }
+
+      showToast("✅ Данные очищены. Перезапустите мини-апп");
+      console.log("[Reset] done");
+    } catch (e) {
+      console.warn("[Reset] error", e);
+      showToast("Ошибка очистки");
+    }
+  };
+
+  const resetAllTestData = () => {
+    const msg =
+      "Очистить заказы, бонусы, рефералы и корзину? Каталог не трогаем.";
+    // Telegram Mini App — нативный confirm
+    const tg =
+      typeof window !== "undefined" && window.Telegram?.WebApp
+        ? window.Telegram.WebApp
+        : null;
+    if (tg && typeof tg.showConfirm === "function") {
+      tg.showConfirm(msg, (ok) => {
+        if (ok) doResetAllTestData();
+      });
+      return;
+    }
+    // Браузер
+    if (typeof window !== "undefined" && typeof window.confirm === "function") {
+      if (window.confirm(msg)) doResetAllTestData();
+      return;
+    }
+    // Fallback — без подтверждения
+    doResetAllTestData();
   };
 
   // Сохранить постоянную ссылку на Google Таблицу (CSV)
