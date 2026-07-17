@@ -1,8 +1,14 @@
 /**
  * Общие заказы + статусы (для CRM и клиента)
  * GET/POST /api/orders
- * POST body: { orders: [...] }  — полная замена списка
- * PATCH-like: POST body: { patch: { id, ...fields } } — обновить один заказ
+ *
+ * Blob ID берётся из Netlify Env: ORDERS_BLOB_ID
+ * (больше НЕ пишем в short_description бота)
+ *
+ * POST body:
+ *  { orders: [...] }           — полная замена
+ *  { order: {...} }            — добавить/обновить один
+ *  { patch: { id, ...fields } } — обновить поля одного
  */
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -11,8 +17,6 @@ const corsHeaders = {
   "Content-Type": "application/json; charset=utf-8",
   "Cache-Control": "no-store",
 };
-
-const BOT_TOKEN = "8912775566:AAHEExxwO5Ub39DU0tDT97Hlppw1IfLwjvU";
 
 const json = (status, data) =>
   new Response(JSON.stringify(data), { status, headers: corsHeaders });
@@ -34,6 +38,7 @@ const compact = (o) => ({
   cashbackCredited: !!o.cashbackCredited,
   askReview: !!o.askReview,
   reviewDone: !!o.reviewDone,
+  utmSource: o.utmSource || null,
   items: Array.isArray(o.items)
     ? o.items.slice(0, 10).map((i) => ({
         id: i.id,
@@ -44,58 +49,6 @@ const compact = (o) => ({
       }))
     : [],
 });
-
-async function tgGetDesc() {
-  try {
-    const r = await fetch(
-      `https://api.telegram.org/bot${BOT_TOKEN}/getMyShortDescription`,
-      { cache: "no-store" }
-    );
-    const data = await r.json();
-    return (data && data.result && data.result.short_description) || "";
-  } catch (e) {
-    return "";
-  }
-}
-
-async function tgSetDesc(text) {
-  try {
-    const body = `short_description=${encodeURIComponent(String(text).slice(0, 120))}`;
-    const r = await fetch(
-      `https://api.telegram.org/bot${BOT_TOKEN}/setMyShortDescription`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body,
-        cache: "no-store",
-      }
-    );
-    const data = await r.json();
-    return !!(data && data.ok);
-  } catch (e) {
-    return false;
-  }
-}
-
-function parsePointers(desc) {
-  const s = String(desc || "");
-  const mz = s.match(/mz:([A-Za-z0-9_-]+)/);
-  const ord = s.match(/ord:([A-Za-z0-9_-]+)/);
-  const u = s.match(/u:([A-Za-z0-9_-]+)/);
-  return {
-    mz: mz ? mz[1] : null,
-    ord: ord ? ord[1] : null,
-    u: u ? u[1] : null,
-  };
-}
-
-function buildDesc(mz, ord, u) {
-  const parts = [];
-  if (mz) parts.push("mz:" + mz);
-  if (ord) parts.push("ord:" + ord);
-  if (u) parts.push("u:" + u);
-  return parts.join(";");
-}
 
 async function blobRead(id) {
   if (!id) return null;
@@ -117,7 +70,10 @@ async function blobWrite(id, payload) {
     try {
       const r = await fetch(`https://jsonblob.com/api/jsonBlob/${id}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
         body,
       });
       if (r.ok || r.status === 200 || r.status === 201) return id;
@@ -126,7 +82,10 @@ async function blobWrite(id, payload) {
   try {
     const r = await fetch("https://jsonblob.com/api/jsonBlob", {
       method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
       body,
     });
     if (r.ok || r.status === 201) {
@@ -143,17 +102,21 @@ async function blobWrite(id, payload) {
   return null;
 }
 
+/** Только чтение env. Описание бота больше не трогаем. */
+function getOrdersBlobId() {
+  return (process.env.ORDERS_BLOB_ID || "").trim() || null;
+}
+
 export default async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("", { status: 204, headers: corsHeaders });
   }
 
   try {
-    const desc = await tgGetDesc();
-    const ptr = parsePointers(desc);
+    let blobId = getOrdersBlobId();
 
     if (req.method === "GET") {
-      const data = ptr.ord ? await blobRead(ptr.ord) : null;
+      const data = blobId ? await blobRead(blobId) : null;
       const orders =
         data && Array.isArray(data.orders)
           ? data.orders
@@ -164,7 +127,8 @@ export default async (req) => {
         ok: true,
         orders,
         updatedAt: (data && data.updatedAt) || null,
-        blobId: ptr.ord || null,
+        blobId: blobId || null,
+        storage: blobId ? "jsonblob+env" : "empty",
       });
     }
 
@@ -177,7 +141,7 @@ export default async (req) => {
       }
 
       let orders = [];
-      const existingData = ptr.ord ? await blobRead(ptr.ord) : null;
+      const existingData = blobId ? await blobRead(blobId) : null;
       const existing =
         existingData && Array.isArray(existingData.orders)
           ? existingData.orders
@@ -192,7 +156,6 @@ export default async (req) => {
       } else if (Array.isArray(body.orders)) {
         orders = body.orders.map(compact);
       } else if (body.order && body.order.id != null) {
-        // push one order
         const c = compact(body.order);
         const without = existing.filter((o) => String(o.id) !== String(c.id));
         orders = [c, ...without].slice(0, 80);
@@ -206,20 +169,30 @@ export default async (req) => {
         return db - da;
       });
 
-      const payload = { orders, updatedAt: new Date().toISOString(), v: 1 };
-      const written = await blobWrite(ptr.ord, payload);
+      const payload = {
+        orders,
+        updatedAt: new Date().toISOString(),
+        v: 1,
+      };
+
+      const written = await blobWrite(blobId, payload);
       if (!written) {
         return json(500, { ok: false, error: "blob_write_failed" });
       }
-      if (written !== ptr.ord) {
-        await tgSetDesc(buildDesc(ptr.mz, written, ptr.u));
-      }
+
+      // Если ID новый — клиенту нужно прописать ORDERS_BLOB_ID в Netlify Env
+      const needEnvUpdate = !blobId || written !== blobId;
 
       return json(200, {
         ok: true,
         count: orders.length,
         blobId: written,
         updatedAt: payload.updatedAt,
+        storage: "jsonblob+env",
+        needEnvUpdate,
+        hint: needEnvUpdate
+          ? `Добавьте в Netlify Env: ORDERS_BLOB_ID=${written}`
+          : undefined,
       });
     }
 
