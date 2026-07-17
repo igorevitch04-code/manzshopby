@@ -1270,7 +1270,7 @@ const compactProduct = (p) => {
 };
 
 // --- Netlify API ---
-const netlifyCatalogLoad = async () => {
+const netlifyCatalogLoadFull = async () => {
   for (const url of getCatalogApiUrls()) {
     try {
       const r = await fetch(url, { method: "GET", cache: "no-store" });
@@ -1278,7 +1278,7 @@ const netlifyCatalogLoad = async () => {
       const data = await r.json();
       if (data && Array.isArray(data.products)) {
         console.log("[Products] netlify load OK", data.products.length, url);
-        return data.products;
+        return data;
       }
     } catch (e) {
       console.warn("[Products] netlify load fail", url, e && e.message);
@@ -1287,10 +1287,18 @@ const netlifyCatalogLoad = async () => {
   return null;
 };
 
-const netlifyCatalogSave = async (products) => {
-  const body = JSON.stringify({
+const netlifyCatalogLoad = async () => {
+  const data = await netlifyCatalogLoadFull();
+  if (!data) return null;
+  return Array.isArray(data.products) ? data.products : [];
+};
+
+const netlifyCatalogSave = async (products, promoCodes) => {
+  const bodyObj = {
     products: (products || []).map(compactProduct),
-  });
+  };
+  if (Array.isArray(promoCodes)) bodyObj.promoCodes = promoCodes;
+  const body = JSON.stringify(bodyObj);
   for (const url of getCatalogApiUrls()) {
     try {
       const r = await fetch(url, {
@@ -1301,7 +1309,7 @@ const netlifyCatalogSave = async (products) => {
       });
       const data = await r.json().catch(() => ({}));
       if (r.ok && data && data.ok === true) {
-        console.log("[Products] netlify save OK", data.count, data.blobId, url);
+        console.log("[Products] netlify save OK", data.count, data.promoCount, url);
         return true;
       }
       console.warn("[Products] netlify save response", url, r.status, data);
@@ -1313,26 +1321,45 @@ const netlifyCatalogSave = async (products) => {
 };
 
 const sharedProductsLoad = async () => {
-  // 1) Netlify (главное)
   const fromApi = await netlifyCatalogLoad();
   if (Array.isArray(fromApi) && fromApi.length > 0) return fromApi;
-
-  // 2) Если API ответил пустым массивом — это валидный пустой каталог (не fallback)
-  //    Отличить «нет API» от «пустой каталог»: netlifyCatalogLoad returns null on fail, [] on empty
-  if (Array.isArray(fromApi) && fromApi.length === 0) {
-    // API работает, каталог пока пуст
-    return [];
-  }
-
+  if (Array.isArray(fromApi) && fromApi.length === 0) return [];
   console.warn("[Products] Netlify API недоступен, пробуем fallback");
   return null;
 };
 
-const sharedProductsSave = async (products) => {
-  // Только Netlify — надёжное хранилище для всех пользователей
-  const ok = await netlifyCatalogSave(products);
+const sharedProductsSave = async (products, promoCodes) => {
+  const ok = await netlifyCatalogSave(products, promoCodes);
   console.log("[Products] shared save", ok ? "OK" : "FAIL", (products || []).length);
   return ok;
+};
+
+const sharedPromoCodesSave = async (promoCodes, products) => {
+  // сохраняем промокоды, не затирая товары
+  const bodyObj = { promoCodes: promoCodes || [] };
+  if (Array.isArray(products)) {
+    bodyObj.products = products.map(compactProduct);
+  }
+  const body = JSON.stringify(bodyObj);
+  for (const url of getCatalogApiUrls()) {
+    try {
+      const r = await fetch(url, {
+        method: "POST",
+        headers: adminHeaders(),
+        body,
+        cache: "no-store",
+      });
+      const data = await r.json().catch(() => ({}));
+      if (r.ok && data && data.ok === true) {
+        console.log("[Promo] save OK", data.promoCount);
+        return true;
+      }
+      console.warn("[Promo] save fail", url, data);
+    } catch (e) {
+      console.warn("[Promo] save error", e && e.message);
+    }
+  }
+  return false;
 };
 
 // Слить локальный каталог с общим (общий приоритетнее)
@@ -1718,11 +1745,18 @@ export default function App() {
           if (Array.isArray(sharedProds) && sharedProds.length > 0) {
             list = applyServerCatalog(list, sharedProds);
           } else if (Array.isArray(sharedProds) && sharedProds.length === 0) {
-            // сервер пуст — показываем только локальное облако (без демо)
             console.log("[Products] server catalog empty");
           } else {
             console.warn("[Products] server unavailable, using cloud only");
           }
+          // промокоды с сервера (общие для всех)
+          try {
+            const full = await netlifyCatalogLoadFull();
+            if (full && Array.isArray(full.promoCodes) && full.promoCodes.length) {
+              setPromoCodes(full.promoCodes);
+              console.log("[Promo] loaded from server", full.promoCodes.length);
+            }
+          } catch (e) {}
         } catch (e) {
           console.warn("shared products merge", e);
         }
@@ -2435,17 +2469,20 @@ export default function App() {
     // Увеличиваем счётчик использований промокода; если лимит исчерпан — удаляем
     if (promoCode) {
       const codeUp = promoCode.toUpperCase();
-      setPromoCodes((prev) =>
-        prev
+      setPromoCodes((prev) => {
+        const next = prev
           .map((p) => {
             if (p.code.toUpperCase() !== codeUp) return p;
             const used = (Number(p.usedCount) || 0) + 1;
             const maxU = p.maxUses != null ? Number(p.maxUses) : 999999;
-            if (used >= maxU) return null; // лимит исчерпан — удалить
+            if (used >= maxU) return null;
             return { ...p, usedCount: used };
           })
-          .filter(Boolean)
-      );
+          .filter(Boolean);
+        // общий usedCount для всех клиентов
+        sharedPromoCodesSave(next, products).catch(() => {});
+        return next;
+      });
     }
     // Списываем только использованные бонусы; кэшбэк — после доставки
     if (usedBonus > 0) {
@@ -3260,25 +3297,29 @@ export default function App() {
       showToast("Такой промокод уже есть");
       return;
     }
-    setPromoCodes((prev) => [
-      ...prev,
-      {
-        code,
-        discount,
-        description: (src.description || "").trim(),
-        maxUses: maxUses > 0 ? maxUses : 999999,
-        usedCount: 0,
-        active: true,
-      },
-    ]);
+    const entry = {
+      code,
+      discount,
+      description: (src.description || "").trim(),
+      maxUses: maxUses > 0 ? maxUses : 999999,
+      usedCount: 0,
+      active: true,
+    };
+    const nextPromos = [...promoCodes, entry];
+    setPromoCodes(nextPromos);
     setPromoForm({ code: "", discount: "", maxUses: "", description: "" });
     setLocalPromo({ code: "", discount: "", maxUses: "", description: "" });
     showToast(`✅ Промокод ${code} добавлен (−${discount}%)`);
+    sharedPromoCodesSave(nextPromos, products).then((ok) => {
+      if (!ok) showToast("⚠️ Промокод локально — сервер не принял");
+    });
   };
 
   const deletePromoCode = (code) => {
     if (!confirmAction(`Удалить промокод ${code}?`)) return;
-    setPromoCodes((prev) => prev.filter((p) => p.code !== code));
+    const nextPromos = promoCodes.filter((p) => p.code !== code);
+    setPromoCodes(nextPromos);
+    sharedPromoCodesSave(nextPromos, products).catch(() => {});
   };
 
   let adminRevenue = 0;
@@ -4801,11 +4842,58 @@ export default function App() {
     }
     const { product, orderId } = reviewPrompt;
     addRating(product.id, reviewRating, reviewComment || "");
+
+    // Есть ли ещё товары в заказе без отзыва?
+    const order = orderHistory.find((o) => String(o.id) === String(orderId));
+    const items = (order && order.items) || [];
+    const ratedIds = new Set([String(product.id)]);
+    // уже оценённые этим пользователем
+    items.forEach((item) => {
+      const p = products.find((x) => String(x.id) === String(item.id));
+      if (!p) return;
+      const already = (p.ratings || []).some((r) => String(r.userId) === String(user.id));
+      if (already) ratedIds.add(String(p.id));
+    });
+    ratedIds.add(String(product.id));
+
+    let nextProduct = null;
+    for (const item of items) {
+      const p = products.find((x) => String(x.id) === String(item.id));
+      if (!p) continue;
+      if (!ratedIds.has(String(p.id))) {
+        nextProduct = p;
+        break;
+      }
+    }
+
+    if (nextProduct) {
+      // ещё есть товары — не закрываем заказ, просим следующий отзыв
+      setReviewPrompt({
+        orderId,
+        product: nextProduct,
+        rating: 0,
+        comment: "",
+      });
+      setReviewRating(0);
+      setReviewComment("");
+      showToast("Спасибо! Оцените следующий товар");
+      return;
+    }
+
+    // все товары заказа оценены
     setOrderHistory((prev) =>
-      prev.map((o) => (o.id === orderId ? { ...o, reviewDone: true, askReview: false } : o))
+      prev.map((o) =>
+        String(o.id) === String(orderId)
+          ? { ...o, reviewDone: true, askReview: false }
+          : o
+      )
     );
     setAdminOrders((prev) =>
-      prev.map((o) => (o.id === orderId ? { ...o, reviewDone: true, askReview: false } : o))
+      prev.map((o) =>
+        String(o.id) === String(orderId)
+          ? { ...o, reviewDone: true, askReview: false }
+          : o
+      )
     );
     setReviewPrompt(null);
     showToast("Спасибо за отзыв!");
@@ -4864,7 +4952,7 @@ export default function App() {
         return;
       }
       const found = promoCodes.find((p) => {
-        if (p.code.toUpperCase() !== code.toUpperCase()) return false;
+        if (String(p.code || "").trim().toUpperCase() !== code.toUpperCase()) return false;
         if (p.active === false) return false;
         const maxU = p.maxUses != null ? Number(p.maxUses) : 999999;
         const used = Number(p.usedCount) || 0;
