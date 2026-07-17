@@ -116,7 +116,7 @@ const LOGO_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAARgAAAC1CAYAAACE
 
 // Быстрая картинка: серый placeholder + мгновенный показ (без fade)
 // highQuality=true — для страницы товара (w=700)
-const SmartImage = ({ uri, style, resizeMode = "contain", highQuality = false }) => {
+const SmartImage = ({ uri, style, resizeMode = "cover", highQuality = false }) => {
   const [error, setError] = useState(false);
   const bg = { backgroundColor: "#FFFFFF" };
   const w = highQuality ? 700 : 400;
@@ -2842,20 +2842,26 @@ export default function App() {
     return true;
   };
 
-  const deleteProduct = (id) => {
+  const deleteProduct = async (id) => {
     if (!confirmAction("Удалить этот товар?")) return;
-    setProducts((prev) => {
-      const next = prev.filter((p) => p.id !== id);
-      // сразу публикуем каталог без удалённого — у всех исчезнет после pull
-      sharedProductsSave(next).then((ok) => {
-        if (ok) showToast("🗑 Удалено у всех");
-        else showToast("⚠️ Удалено локально, сервер не обновился");
-      });
-      return next;
-    });
+    const next = (products || []).filter((p) => String(p.id) !== String(id));
+    setProducts(next);
     setEditingProduct((cur) => (cur === id ? null : cur));
     setProductDraft((d) => (d && d.id === id ? null : d));
     setLocalProduct((d) => (d && d.id === id ? null : d));
+    showToast("Удаляю…");
+    const ok = await sharedProductsSave(next);
+    if (ok) {
+      showToast("🗑 Удалено у всех");
+      // проверка
+      try {
+        const check = await sharedProductsLoad();
+        const still = (check || []).some((p) => String(p.id) === String(id));
+        if (still) showToast("⚠️ На сервере ещё есть — нажми «Опубликовать»");
+      } catch (e) {}
+    } else {
+      showToast("⚠️ Сервер не принял удаление — нажми «Опубликовать каталог»");
+    }
   };
 
   // Закрепить / открепить товар (закреплённые всегда сверху в каталоге)
@@ -3801,7 +3807,7 @@ export default function App() {
           return (
             <View style={styles.bigImageWrap}>
               {imgs.length === 1 ? (
-                <SmartImage uri={imgs[0]} style={styles.bigImage} highQuality />
+                <SmartImage uri={imgs[0]} style={styles.bigImage} highQuality resizeMode="contain" />
               ) : (
                 <ScrollView
                   horizontal
@@ -3819,6 +3825,7 @@ export default function App() {
                       uri={uri}
                       style={[styles.bigImage, { width: slideW }]}
                       highQuality
+                      resizeMode="contain"
                     />
                   ))}
                 </ScrollView>
@@ -6631,7 +6638,7 @@ const styles = StyleSheet.create({
     position: "relative",
     marginTop: 8,
   },
-  bigImage: { width: "100%", height: 250, borderRadius: 24, backgroundColor: "#E8E8E6" },
+  bigImage: { width: "100%", height: 250, borderRadius: 24, backgroundColor: "#FFFFFF" },
   favorite: { position: "absolute", right: 12, top: 12 },
   favoriteText: { fontSize: 20 },
   // Белый круг с чёрной обводкой + чёрное сердце
@@ -6880,7 +6887,7 @@ const styles = StyleSheet.create({
     color: "#fff",
     textAlign: "center",
   },
-  cartImage: { width: 70, height: 70, borderRadius: 16, marginRight: 12, backgroundColor: "#E8E8E6" },
+  cartImage: { width: 70, height: 70, borderRadius: 16, marginRight: 12, backgroundColor: "#FFFFFF" },
   remove: { color: "red", marginTop: 6, fontSize: 13 },
   total: { fontSize: 24, fontWeight: "900" },
   finalTotal: { fontSize: 20, fontWeight: "900", marginTop: 4 },
