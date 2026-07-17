@@ -956,29 +956,19 @@ const sharedOrdersUpdate = async (orderId, patch) => {
       console.log("[Orders] patch netlify OK", orderId, patch);
       return true;
     }
-    // fallback KV
-    let cur = null;
-    try {
-      const raw = await kvGetString(orderItemKey(orderId));
-      if (raw) cur = JSON.parse(raw);
-    } catch (e) {}
-    if (!cur) {
-      const all = await sharedOrdersLoad();
-      cur = all.find((o) => String(o.id) === String(orderId)) || { id: orderId };
-    }
-    const next = { ...cur, ...patch };
-    let raw = JSON.stringify(compactOrder(next));
-    if (raw.length > 1400) raw = JSON.stringify(ultraCompactOrder(next));
-    await kvSetString(orderItemKey(orderId), raw);
-
-    // pantry merge
+    // fallback: полная перезапись списка на Netlify (с админ-секретом)
     const list = await sharedOrdersLoad();
-    const merged = list.map((o) => (String(o.id) === String(orderId) ? { ...o, ...patch } : o));
-    await pantryPutBasket("orders", { orders: merged.map(compactOrder), updatedAt: new Date().toISOString() });
-    return merged;
+    const merged = (list || []).map((o) =>
+      String(o.id) === String(orderId) ? { ...o, ...patch } : o
+    );
+    const has = merged.some((o) => String(o.id) === String(orderId));
+    if (!has) merged.unshift({ id: orderId, ...patch });
+    const okSave = await netlifyOrdersSave(merged);
+    console.log("[Orders] patch via full save", okSave, orderId);
+    return !!okSave;
   } catch (e) {
     console.warn("sharedOrdersUpdate", e);
-    return null;
+    return false;
   }
 };
 
@@ -1240,8 +1230,14 @@ const netlifyOrdersPatch = async (orderId, patch) => {
         cache: "no-store",
       });
       const data = await r.json().catch(() => ({}));
-      if (r.ok && data && data.ok !== false) return true;
-    } catch (e) {}
+      if (r.ok && data && data.ok === true) {
+        console.log("[Orders] patch OK", orderId, patch, data.count);
+        return true;
+      }
+      console.warn("[Orders] patch fail", url, r.status, data);
+    } catch (e) {
+      console.warn("[Orders] patch error", url, e && e.message);
+    }
   }
   return false;
 };
@@ -2432,17 +2428,8 @@ export default function App() {
       if (!pushed) {
         console.warn("[Orders] Не удалось сохранить заказ в общее хранилище после 3 попыток");
       } else {
-        console.log("[Orders] shared storage OK", order.id);
-      }
-      let notified = false;
-      for (let attempt = 0; attempt < 3 && !notified; attempt++) {
-        notified = await notifyAdminNewOrder(order);
-        if (!notified) await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
-      }
-      if (!notified) {
-        console.warn("[Orders] push в Telegram не дошёл. Проверьте /api/notify и BOT_TOKEN в Netlify Env");
-      } else {
-        console.log("[Orders] Telegram notify OK", order.id);
+        // Пуш в Telegram шлёт сервер (/api/orders) — второй раз с клиента не вызываем
+        console.log("[Orders] shared storage OK (notify on server)", order.id);
       }
     })();
     // Увеличиваем счётчик использований промокода; если лимит исчерпан — удаляем
@@ -3193,11 +3180,15 @@ export default function App() {
       })
     );
     // cashbackCredited на сервер НЕ ставим — клиент начислит бонусы сам при синхронизации статуса
-    sharedOrdersUpdate(orderId, {
-      status: newStatus,
-      ...(askReview ? { askReview: true } : {}),
-      ...(isCancelled ? { pendingCashback: 0, askReview: false } : {}),
-    }).catch(() => {});
+    (async () => {
+      const ok = await sharedOrdersUpdate(orderId, {
+        status: newStatus,
+        ...(askReview ? { askReview: true } : {}),
+        ...(isCancelled ? { pendingCashback: 0, askReview: false } : {}),
+      });
+      if (ok) showToast("Статус: " + newStatus);
+      else showToast("⚠️ Статус не сохранился на сервере");
+    })();
   };
 
   const updateTracking = (orderId, trackingNumber) => {
