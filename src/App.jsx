@@ -4866,33 +4866,7 @@ export default function App() {
         existingKeys.add(key);
       }
 
-      // Обработка фото: 1000×1000 + белый фон (если ссылка доступна)
-      if (newProducts.length > 0) {
-        showToast(`Обработка фото 0/${newProducts.length}…`);
-        for (let i = 0; i < newProducts.length; i++) {
-          const list = getProductImages(newProducts[i]);
-          const nextImgs = [];
-          for (const imgUrl of list) {
-            if (imgUrl && /^https?:\/\//i.test(imgUrl) && !imgUrl.includes("placeholder")) {
-              try {
-                const processed = await processImageFromUrl(imgUrl);
-                nextImgs.push(processed || imgUrl);
-              } catch (e) {
-                nextImgs.push(imgUrl);
-              }
-            } else if (imgUrl) {
-              nextImgs.push(imgUrl);
-            }
-          }
-          if (nextImgs.length) {
-            newProducts[i].images = nextImgs;
-            newProducts[i].image = nextImgs[0];
-          }
-          if (i % 2 === 0 || i === newProducts.length - 1) {
-            showToast(`Обработка фото ${i + 1}/${newProducts.length}…`);
-          }
-        }
-      }
+      // Фото из таблицы оставляем как URL (без тяжёлой обработки — иначе импорт зависает)
 
       if (newProducts.length === 0) {
         const parts = [];
