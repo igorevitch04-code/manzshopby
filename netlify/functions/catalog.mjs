@@ -172,6 +172,29 @@ export default async (req) => {
       }
 
       const products = normalizeProducts(body.products);
+
+      // Защита: не затираем каталог пустым массивом, если на сервере уже есть товары
+      if (!products.length) {
+        const existing = blobId ? await blobRead(blobId) : null;
+        const existingList =
+          existing && Array.isArray(existing.products)
+            ? existing.products
+            : Array.isArray(existing)
+              ? existing
+              : [];
+        if (existingList.length > 0) {
+          return json(400, {
+            ok: false,
+            error: "refuse_empty_overwrite",
+            message:
+              "Отклонён пустой каталог: на сервере уже есть " +
+              existingList.length +
+              " товаров. Сначала загрузите товары локально.",
+            count: existingList.length,
+          });
+        }
+      }
+
       const payload = {
         products: products,
         updatedAt: new Date().toISOString(),
