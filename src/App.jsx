@@ -457,6 +457,16 @@ const LEVELS = [
   { name: "Постоянный клиент", min: 5, max: 14, cashback: 5 },
   { name: "VIP клиент", min: 15, max: 999, cashback: 10 }
 ];
+const getProductImages = (p) => {
+  if (!p) return [];
+  if (Array.isArray(p.images) && p.images.length) {
+    return p.images.map((u) => String(u || "").trim()).filter(Boolean);
+  }
+  if (p.image) return [String(p.image).trim()].filter(Boolean);
+  return [];
+};
+const getProductMainImage = (p) => getProductImages(p)[0] || "";
+
 const ORDER_STATUSES = ["Новый", "Отправить", "Ждем поставку", "Доставляется", "Забрать деньги", "Деньги получены"];
 
 // Маппинг статуса для клиента
@@ -1397,9 +1407,13 @@ const netlifyOrdersPatch = async (orderId, patch) => {
 };
 
 const compactProduct = (p) => {
-  const image = (p.image || "").startsWith("data:")
-    ? ""
-    : String(p.image || "").slice(0, 400);
+  const imgs = getProductImages(p)
+    .filter((u) => u && !String(u).startsWith("data:"))
+    .map((u) => String(u).slice(0, 400))
+    .slice(0, 8);
+  const image = imgs[0] || (
+    (p.image || "").startsWith("data:") ? "" : String(p.image || "").slice(0, 400)
+  );
   return {
     id: p.id,
     brand: (p.brand || "").slice(0, 40),
@@ -1407,6 +1421,7 @@ const compactProduct = (p) => {
     price: Number(p.price) || 0,
     oldPrice: p.oldPrice != null ? Number(p.oldPrice) : null,
     image,
+    images: imgs,
     description: (p.description || "").slice(0, 220),
     sizes: Array.isArray(p.sizes) ? p.sizes.slice(0, 12) : [],
     sales: Number(p.sales) || 0,
@@ -3044,6 +3059,7 @@ export default function App() {
       price: "",
       oldPrice: "",
       image: "",
+      images: [],
       description: "",
       sizes: "40, 41, 42",
     });
@@ -3052,13 +3068,15 @@ export default function App() {
 
   const startEditProduct = (p) => {
     setIsNewProduct(false);
+    const imgs = getProductImages(p);
     setProductDraft({
       id: p.id,
       brand: p.brand || "",
       name: p.name || "",
       price: String(p.price ?? ""),
       oldPrice: p.oldPrice != null ? String(p.oldPrice) : "",
-      image: p.image || "",
+      image: imgs[0] || p.image || "",
+      images: imgs,
       description: p.description || "",
       sizes: Array.isArray(p.sizes) ? p.sizes.join(", ") : "",
     });
@@ -3206,7 +3224,17 @@ export default function App() {
     const price = parseInt(String(draft.price).replace(/\D/g, ""), 10) || 0;
     const oldRaw = String(draft.oldPrice || "").replace(/\D/g, "");
     const oldPrice = oldRaw ? parseInt(oldRaw, 10) : null;
-    const image = (draft.image || "").trim() || "https://via.placeholder.com/400?text=Photo";
+    let images = Array.isArray(draft.images)
+      ? draft.images.map((u) => String(u || "").trim()).filter(Boolean)
+      : [];
+    // если в поле image вручную вставили URL — добавим
+    const single = (draft.image || "").trim();
+    if (single && !images.includes(single)) {
+      // если images пустой — single главный; если есть — single может быть устаревшим первым
+      if (!images.length) images = [single];
+    }
+    if (!images.length) images = ["https://via.placeholder.com/400?text=Photo"];
+    const image = images[0];
     const description = (draft.description || "").trim();
     const sizes = String(draft.sizes || "")
       .split(",")
@@ -3226,6 +3254,7 @@ export default function App() {
       price,
       oldPrice,
       image,
+      images,
       description,
       sizes: sizes.length ? sizes : ["40", "41", "42"],
     };
@@ -3252,7 +3281,7 @@ export default function App() {
     setProductDraft(null);
     setIsNewProduct(false);
 
-    const hasDataImage = String(payload.image || "").startsWith("data:");
+    const hasDataImage = getProductImages(payload).some((u) => String(u).startsWith("data:"));
     // Публикуем в ОБЩЕЕ хранилище (все устройства + все пользователи)
     (async () => {
       let ok = false;
@@ -3602,7 +3631,7 @@ export default function App() {
               setPage("product"); 
             }}
           >
-            <SmartImage uri={item.image} style={styles.image} />
+            <SmartImage uri={getProductMainImage(item)} style={styles.image} />
           </TouchableOpacity>
           
           {/* Кнопка избранного на фото */}
@@ -3914,18 +3943,54 @@ export default function App() {
           </TouchableOpacity>
         </View>
 
-        <View style={styles.bigImageWrap}>
-          <SmartImage uri={selectedProduct.image} style={styles.bigImage} highQuality />
-          <TouchableOpacity
-            style={[styles.favoriteBtn, styles.favoriteBtnOnImage, isFav && styles.favoriteBtnActive]}
-            onPress={() => {
-              toggleFavorite(selectedProduct);
-              showToast(isFav ? "Удалено из избранного" : "❤️ Добавлено в избранное");
-            }}
-          >
-            <Text style={[styles.favoriteBtnText, isFav && styles.favoriteBtnTextActive]}>{isFav ? "♥" : "♡"}</Text>
-          </TouchableOpacity>
-        </View>
+        {(() => {
+          const gallery = getProductImages(selectedProduct);
+          const imgs = gallery.length ? gallery : ["https://via.placeholder.com/400?text=Photo"];
+          return (
+            <View style={styles.bigImageWrap}>
+              <ScrollView
+                horizontal
+                pagingEnabled
+                showsHorizontalScrollIndicator={false}
+                style={{ width: "100%" }}
+              >
+                {imgs.map((uri, idx) => (
+                  <SmartImage
+                    key={`${selectedProduct.id}-img-${idx}`}
+                    uri={uri}
+                    style={styles.bigImage}
+                    highQuality
+                  />
+                ))}
+              </ScrollView>
+              {imgs.length > 1 && (
+                <View style={{ flexDirection: "row", justifyContent: "center", gap: 6, marginTop: 8 }}>
+                  {imgs.map((_, idx) => (
+                    <View
+                      key={`dot-${idx}`}
+                      style={{
+                        width: 7,
+                        height: 7,
+                        borderRadius: 4,
+                        backgroundColor: "#111",
+                        opacity: 0.25,
+                      }}
+                    />
+                  ))}
+                </View>
+              )}
+              <TouchableOpacity
+                style={[styles.favoriteBtn, styles.favoriteBtnOnImage, isFav && styles.favoriteBtnActive]}
+                onPress={() => {
+                  toggleFavorite(selectedProduct);
+                  showToast(isFav ? "Удалено из избранного" : "❤️ Добавлено в избранное");
+                }}
+              >
+                <Text style={[styles.favoriteBtnText, isFav && styles.favoriteBtnTextActive]}>{isFav ? "♥" : "♡"}</Text>
+              </TouchableOpacity>
+            </View>
+          );
+        })()}
         
         <Text style={[styles.productBrand, isDark && styles.textDark]}>{selectedProduct.brand}</Text>
         <Text style={[styles.productTitle, isDark && styles.textDark]}>{selectedProduct.name}</Text>
@@ -4741,7 +4806,11 @@ export default function App() {
           .map((s) => s.trim())
           .filter(Boolean);
 
-        const image = idx.image >= 0 ? (row[idx.image] || "").trim() : "";
+        const imageRaw = idx.image >= 0 ? (row[idx.image] || "").trim() : "";
+        const images = imageRaw
+          ? imageRaw.split(/[|;]/).map((s) => s.trim()).filter(Boolean)
+          : [];
+        const image = images[0] || "https://via.placeholder.com/400?text=Photo";
 
         newProducts.push({
           id: Date.now() + i + Math.floor(Math.random() * 900),
@@ -4749,7 +4818,8 @@ export default function App() {
           name,
           price,
           oldPrice,
-          image: image || "https://via.placeholder.com/400?text=Photo",
+          image,
+          images: images.length ? images : [image],
           description,
           sizes: sizes.length ? sizes : ["40", "41", "42"],
           sales: 0,
@@ -4767,14 +4837,25 @@ export default function App() {
       if (newProducts.length > 0) {
         showToast(`Обработка фото 0/${newProducts.length}…`);
         for (let i = 0; i < newProducts.length; i++) {
-          const imgUrl = newProducts[i].image;
-          if (imgUrl && /^https?:\/\//i.test(imgUrl) && !imgUrl.includes("placeholder")) {
-            try {
-              const processed = await processImageFromUrl(imgUrl);
-              if (processed) newProducts[i].image = processed;
-            } catch (e) {}
+          const list = getProductImages(newProducts[i]);
+          const nextImgs = [];
+          for (const imgUrl of list) {
+            if (imgUrl && /^https?:\/\//i.test(imgUrl) && !imgUrl.includes("placeholder")) {
+              try {
+                const processed = await processImageFromUrl(imgUrl);
+                nextImgs.push(processed || imgUrl);
+              } catch (e) {
+                nextImgs.push(imgUrl);
+              }
+            } else if (imgUrl) {
+              nextImgs.push(imgUrl);
+            }
           }
-          if (i % 3 === 0 || i === newProducts.length - 1) {
+          if (nextImgs.length) {
+            newProducts[i].images = nextImgs;
+            newProducts[i].image = nextImgs[0];
+          }
+          if (i % 2 === 0 || i === newProducts.length - 1) {
             showToast(`Обработка фото ${i + 1}/${newProducts.length}…`);
           }
         }
@@ -5865,28 +5946,85 @@ export default function App() {
                       placeholderTextColor="#999"
                       blurOnSubmit={false}
                     />
+                    <Text style={[{ fontSize: 13, fontWeight: "700", marginBottom: 6, color: "#111" }, theme === "dark" && styles.textDark]}>
+                      Фото ({(localProduct.images || (localProduct.image ? [localProduct.image] : [])).length})
+                    </Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
+                      {(localProduct.images && localProduct.images.length
+                        ? localProduct.images
+                        : localProduct.image
+                        ? [localProduct.image]
+                        : []
+                      ).map((uri, idx) => (
+                        <View key={`draft-img-${idx}`} style={{ marginRight: 8, width: 100 }}>
+                          <SmartImage uri={uri} style={{ width: 100, height: 100, borderRadius: 12 }} />
+                          <TouchableOpacity
+                            onPress={() =>
+                              setLocalProduct((d) => {
+                                if (!d) return d;
+                                const list = (d.images && d.images.length
+                                  ? [...d.images]
+                                  : d.image
+                                  ? [d.image]
+                                  : []
+                                ).filter((_, i) => i !== idx);
+                                return { ...d, images: list, image: list[0] || "" };
+                              })
+                            }
+                            style={{
+                              marginTop: 4,
+                              backgroundColor: "#FEE2E2",
+                              borderRadius: 8,
+                              paddingVertical: 4,
+                              alignItems: "center",
+                            }}
+                          >
+                            <Text style={{ color: "#991B1B", fontSize: 11, fontWeight: "700" }}>Удалить</Text>
+                          </TouchableOpacity>
+                        </View>
+                      ))}
+                    </ScrollView>
                     <TextInput
                       style={[styles.editInput, theme === "dark" && styles.inputDark]}
-                      value={localProduct.image || ""}
-                      onChangeText={(t) => setLocalProduct((d) => ({ ...d, image: t }))}
-                      placeholder="URL картинки или загрузите фото"
+                      value={localProduct._imageUrlInput || ""}
+                      onChangeText={(t) => setLocalProduct((d) => ({ ...d, _imageUrlInput: t }))}
+                      placeholder="Вставить URL фото и нажать +"
                       placeholderTextColor="#999"
                       blurOnSubmit={false}
                       autoCapitalize="none"
                     />
-                    <TouchableOpacity
-                      style={[styles.addBtn, { marginTop: 4 }]}
-                      onPress={() =>
-                        pickProductImage((dataUrl) => {
-                          setLocalProduct((d) => (d ? { ...d, image: dataUrl } : d));
-                        })
-                      }
-                    >
-                      <Text style={styles.buttonText}>📷 Загрузить своё фото</Text>
-                    </TouchableOpacity>
-                    {!!localProduct.image && (
-                      <SmartImage uri={localProduct.image} style={{ width: "100%", height: 140, borderRadius: 12, marginBottom: 8 }} />
-                    )}
+                    <View style={{ flexDirection: "row", gap: 8, marginBottom: 8 }}>
+                      <TouchableOpacity
+                        style={[styles.addBtn, { flex: 1, marginTop: 0 }]}
+                        onPress={() => {
+                          const url = (localProduct._imageUrlInput || "").trim();
+                          if (!url) return;
+                          setLocalProduct((d) => {
+                            if (!d) return d;
+                            const list = d.images && d.images.length ? [...d.images] : d.image ? [d.image] : [];
+                            if (!list.includes(url)) list.push(url);
+                            return { ...d, images: list, image: list[0] || "", _imageUrlInput: "" };
+                          });
+                        }}
+                      >
+                        <Text style={styles.buttonText}>+ URL</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.addBtn, { flex: 1, marginTop: 0 }]}
+                        onPress={() =>
+                          pickProductImage((dataUrl) => {
+                            setLocalProduct((d) => {
+                              if (!d) return d;
+                              const list = d.images && d.images.length ? [...d.images] : d.image ? [d.image] : [];
+                              list.push(dataUrl);
+                              return { ...d, images: list, image: list[0] || "" };
+                            });
+                          })
+                        }
+                      >
+                        <Text style={styles.buttonText}>📷 Файл</Text>
+                      </TouchableOpacity>
+                    </View>
                     <View style={{ flexDirection: "row", gap: 8 }}>
                       <TouchableOpacity
                         style={[styles.saveBtn, { flex: 1 }]}
