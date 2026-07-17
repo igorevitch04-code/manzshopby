@@ -1297,8 +1297,8 @@ const netlifyCatalogSave = async (products) => {
         cache: "no-store",
       });
       const data = await r.json().catch(() => ({}));
-      if (r.ok && data && data.ok !== false) {
-        console.log("[Products] netlify save OK", data.count, url);
+      if (r.ok && data && data.ok === true) {
+        console.log("[Products] netlify save OK", data.count, data.blobId, url);
         return true;
       }
       console.warn("[Products] netlify save response", url, r.status, data);
@@ -2821,8 +2821,8 @@ export default function App() {
         // или локально есть товары, которых нет на сервере (удаление)
         setProducts((prev) => {
           if (sharedProds.length === 0) {
-            // сервер явно пуст после публикации — очищаем каталог
-            return prev.length ? [] : prev;
+            // Пустой сервер НЕ затирает локальный каталог (защита от потери после импорта)
+            return prev;
           }
           const merged = applyServerCatalog(prev, sharedProds);
           const prevKey = prev.map((p) => `${p.id}:${p.price}:${p.name}:${p.pinned ? 1 : 0}`).join("|");
@@ -4341,11 +4341,25 @@ export default function App() {
     showToast("Публикация каталога…");
     const ok = await sharedProductsSave(products);
     if (ok) {
-      showToast("✅ Каталог опубликован для всех (" + products.length + ")");
+      // проверка, что на сервере реально лежит
+      try {
+        const check = await sharedProductsLoad();
+        const n = Array.isArray(check) ? check.length : 0;
+        if (n > 0) {
+          showToast("✅ Каталог на сервере: " + n + " тов.");
+        } else {
+          Alert.alert(
+            "Сохранено, но сервер пуст",
+            "Попробуйте ещё раз «Опубликовать». Если не поможет — откройте консоль (F12) и пришлите красные ошибки."
+          );
+        }
+      } catch (e) {
+        showToast("✅ Отправлено (" + products.length + ")");
+      }
     } else {
       Alert.alert(
         "Не удалось опубликовать",
-        "Сервер Netlify не ответил. Убедитесь, что задеплоены netlify/functions/catalog.mjs и сайт открыт с вашего netlify.app домена."
+        "Сервер не принял каталог. Откройте F12 → Console и посмотрите строки [Products] netlify save."
       );
     }
   };
