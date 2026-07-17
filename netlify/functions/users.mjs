@@ -1,6 +1,9 @@
-import { getStore } from "@netlify/blobs";
+import { getStore, connectLambda } from "@netlify/blobs";
 
 export async function handler(event) {
+  // Нужно для работы Blobs в Netlify Functions
+  connectLambda(event);
+
   const headers = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Headers": "Content-Type",
@@ -18,7 +21,6 @@ export async function handler(event) {
     if (raw) users = JSON.parse(raw);
   } catch (e) {}
 
-  // Список / счётчик
   if (event.httpMethod === "GET") {
     const list = Object.values(users);
     return {
@@ -37,7 +39,6 @@ export async function handler(event) {
     body = JSON.parse(event.body || "{}");
   } catch (e) {}
 
-  // Регистрация из мини-аппа
   if (body.action === "register" && body.id) {
     const id = String(body.id);
     if (!users[id]) {
@@ -57,7 +58,6 @@ export async function handler(event) {
     };
   }
 
-  // Рассылка
   if (body.action === "broadcast" && body.text) {
     const BOT_TOKEN = process.env.BOT_TOKEN;
     if (!BOT_TOKEN) {
