@@ -4331,10 +4331,17 @@ export default function App() {
 
   // Принудительно опубликовать каталог для всех аккаунтов/устройств
   const publishCatalogToAll = async () => {
+    if (!products || products.length === 0) {
+      Alert.alert(
+        "Каталог пуст",
+        "Нельзя опубликовать пустой каталог. Сначала импортируйте товары из Google Таблицы или добавьте вручную."
+      );
+      return;
+    }
     showToast("Публикация каталога…");
     const ok = await sharedProductsSave(products);
     if (ok) {
-      showToast("✅ Каталог опубликован для всех");
+      showToast("✅ Каталог опубликован для всех (" + products.length + ")");
     } else {
       Alert.alert(
         "Не удалось опубликовать",
