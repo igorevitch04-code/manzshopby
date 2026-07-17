@@ -6,11 +6,20 @@ import { getStore, connectLambda } from "@netlify/blobs";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "Content-Type",
+  "Access-Control-Allow-Headers": "Content-Type, X-Admin-Secret",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Content-Type": "application/json; charset=utf-8",
   "Cache-Control": "no-store",
 };
+
+function checkAdmin(headers) {
+  var secret = (process.env.ADMIN_API_SECRET || "").trim();
+  if (!secret) return false;
+  var h = headers || {};
+  var got = h["x-admin-secret"] || h["X-Admin-Secret"] || h["X-ADMIN-SECRET"] || "";
+  return String(got) === secret;
+}
+
 
 function normalizeProducts(list) {
   return (Array.isArray(list) ? list : []).map(function (p) {
@@ -165,6 +174,16 @@ export async function handler(event) {
   }
 
   try {
+    if (event.httpMethod === "POST") {
+      var hdrs = event.headers || {};
+      if (!checkAdmin(hdrs)) {
+        return {
+          statusCode: 401,
+          headers: corsHeaders,
+          body: JSON.stringify({ ok: false, error: "unauthorized" }),
+        };
+      }
+    }
     return await handle(event.httpMethod, bodyObj);
   } catch (e) {
     console.error("[catalog] handler", e);
@@ -197,6 +216,16 @@ export default async (req) => {
     }
   }
   try {
+    if (req.method === "POST") {
+      var hdrs2 = {};
+      try { req.headers.forEach(function(v,k){ hdrs2[k]=v; }); } catch(e) { hdrs2 = req.headers || {}; }
+      if (!checkAdmin(hdrs2)) {
+        return new Response(JSON.stringify({ ok: false, error: "unauthorized" }), {
+          status: 401,
+          headers: corsHeaders,
+        });
+      }
+    }
     var res = await handle(req.method, bodyObj);
     return new Response(res.body, { status: res.statusCode, headers: corsHeaders });
   } catch (e) {
