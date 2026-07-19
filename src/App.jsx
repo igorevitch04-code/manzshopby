@@ -4228,15 +4228,13 @@ export default function App() {
     const isDark = theme === "dark";
     return (
       <View style={[styles.homePage, isDark && styles.pageDark]}>
-        {/* Мазок — только угол, не в потоке контента */}
         <Image
           source={{ uri: BRUSH_TOP_URI }}
           style={styles.homeBrushTopImg}
           resizeMode="contain"
         />
 
-        {/* Блок по центру экрана (как на макете) */}
-        <View style={styles.homeBlock} pointerEvents="box-none">
+        <View style={styles.homeCenter}>
           <Image
             source={{ uri: LOGO_URI }}
             style={styles.homeLogoImg}
@@ -8393,29 +8391,25 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "#fff",
     position: "relative",
-    overflow: "hidden",
   },
-  // Самый верхний левый угол, под шапкой Telegram
   homeBrushTopImg: {
     position: "absolute",
-    top: 4,
+    top: 6,
     left: 0,
-    width: 130,
-    height: 44,
+    width: 120,
+    height: 40,
     zIndex: 1,
-  },
-  // Центр экрана: логотип чуть выше середины
-  homeBlock: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    top: "34%",
-    alignItems: "center",
-    paddingHorizontal: 28,
-    zIndex: 2,
   },
   homeCenter: {
     flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 28,
+    paddingBottom: 100,
+    paddingTop: 40,
+  },
+  homeBlock: {
+    alignItems: "center",
   },
   homeLogoImg: {
     width: 236,
