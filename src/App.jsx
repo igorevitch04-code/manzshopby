@@ -2064,11 +2064,27 @@ export default function App() {
             if (uid && /^\d+$/.test(uid)) {
               const sharedUser = await loadUserStateFromShared(uid);
               if (sharedUser && typeof sharedUser === "object") {
-                if (Array.isArray(sharedUser.cart) && sharedUser.cart.length) {
+                // Важно: применяем даже ПУСТЫЕ массивы (удаление на другом устройстве)
+                if (Array.isArray(sharedUser.cart)) {
                   setCart(sharedUser.cart);
+                  cartRef.current = sharedUser.cart;
                 }
-                if (Array.isArray(sharedUser.favorites) && sharedUser.favorites.length) {
+                if (Array.isArray(sharedUser.favorites)) {
                   setFavorites(sharedUser.favorites);
+                  favoritesRef.current = sharedUser.favorites;
+                }
+                if (sharedUser.updatedAt) {
+                  const ts = Date.parse(sharedUser.updatedAt) || 0;
+                  if (ts) {
+                    // localWriteAtRef / appliedRemoteAtRef могут быть ещё не объявлены на этом этапе loadAll —
+                    // ставим через try на window-подобные refs после объявления; здесь помечаем в shared meta
+                    try {
+                      if (typeof localWriteAtRef !== "undefined") {
+                        localWriteAtRef.current = ts;
+                        appliedRemoteAtRef.current = sharedUser.updatedAt;
+                      }
+                    } catch (e) {}
+                  }
                 }
                 if (typeof sharedUser.bonusBalance === "number") {
                   setBonusBalance((prev) => Math.max(Number(prev) || 0, sharedUser.bonusBalance || 0));
@@ -2374,8 +2390,8 @@ export default function App() {
       }
     };
 
-    const t0 = setTimeout(pull, 1200);
-    const interval = setInterval(pull, 5000);
+    const t0 = setTimeout(pull, 400);
+    const interval = setInterval(pull, 2500);
     const onVis = () => {
       if (typeof document !== "undefined" && document.visibilityState === "visible") pull();
     };
