@@ -854,38 +854,71 @@ const compactCartItem = (i) => ({
 const loadUserStateFromShared = async (tgId) => {
   if (!tgId || String(tgId) === "guest" || !/^\d+$/.test(String(tgId))) return null;
 
-  // 1) Pantry
-  try {
-    const data = await pantryGetBasket(userStateBasket(tgId));
-    if (data && typeof data === "object" && (data.cart || data.favorites || data.updatedAt)) {
-      console.log("[UserState] pantry load OK", tgId, {
-        cart: (data.cart || []).length,
-        fav: (data.favorites || []).length,
-      });
-      return data;
-    }
-  } catch (e) {
-    console.warn("[UserState] pantry load fail", e);
-  }
+  const candidates = [];
 
-  // 2) keyvalue fallback (компактный JSON)
+  // 1) keyvalue
   try {
     const raw = await kvGetString(userStateKvKey(tgId));
     if (raw) {
       const data = JSON.parse(raw);
       if (data && typeof data === "object") {
+        candidates.push(data);
         console.log("[UserState] kv load OK", tgId, {
           cart: (data.cart || []).length,
           fav: (data.favorites || []).length,
+          at: data.updatedAt,
         });
-        return data;
       }
     }
   } catch (e) {
     console.warn("[UserState] kv load fail", e);
   }
 
-  return null;
+  // 2) Pantry
+  try {
+    const data = await pantryGetBasket(userStateBasket(tgId));
+    if (data && typeof data === "object" && (data.cart || data.favorites || data.updatedAt)) {
+      candidates.push(data);
+      console.log("[UserState] pantry load OK", tgId, {
+        cart: (data.cart || []).length,
+        fav: (data.favorites || []).length,
+        at: data.updatedAt,
+      });
+    }
+  } catch (e) {
+    console.warn("[UserState] pantry load fail", e);
+  }
+
+  // 3) Netlify users API
+  try {
+    const body = JSON.stringify({ action: "getState", id: String(tgId) });
+    for (const url of getUsersApiUrls()) {
+      try {
+        const r = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body,
+          cache: "no-store",
+        });
+        const data = await r.json().catch(() => ({}));
+        if (r.ok && data && data.ok && data.state && typeof data.state === "object") {
+          candidates.push(data.state);
+          console.log("[UserState] netlify load OK", tgId);
+          break;
+        }
+      } catch (e) {}
+    }
+  } catch (e) {}
+
+  if (!candidates.length) return null;
+
+  // Берём самый свежий по updatedAt
+  candidates.sort((a, b) => {
+    const ta = Date.parse(a.updatedAt || 0) || 0;
+    const tb = Date.parse(b.updatedAt || 0) || 0;
+    return tb - ta;
+  });
+  return candidates[0];
 };
 
 const saveUserStateToShared = async (tgId, state) => {
@@ -899,20 +932,12 @@ const saveUserStateToShared = async (tgId, state) => {
     referralCount: Number(state.referralCount) || 0,
     referralEarnings: Number(state.referralEarnings) || 0,
     orders: Number(state.orders) || 0,
-    updatedAt: new Date().toISOString(),
+    updatedAt: state.updatedAt || new Date().toISOString(),
   };
 
   let ok = false;
 
-  // 1) Pantry
-  try {
-    ok = !!(await pantryPutBasket(userStateBasket(tgId), payload));
-    if (ok) console.log("[UserState] pantry save OK", tgId, payload.cart.length);
-  } catch (e) {
-    console.warn("[UserState] pantry save fail", e);
-  }
-
-  // 2) keyvalue всегда как backup (если влезает)
+  // 1) keyvalue — быстрый и относительно стабильный (компактный JSON)
   try {
     const compact = {
       cart: payload.cart,
@@ -925,14 +950,69 @@ const saveUserStateToShared = async (tgId, state) => {
       const kvOk = await kvSetString(userStateKvKey(tgId), json);
       if (kvOk) {
         ok = true;
-        console.log("[UserState] kv save OK", tgId, payload.cart.length);
+        console.log("[UserState] kv save OK", tgId, "cart", payload.cart.length, "fav", payload.favorites.length);
+      } else {
+        console.warn("[UserState] kv save returned false", tgId);
       }
     } else {
-      console.warn("[UserState] kv too long", json.length);
+      // Если не влезает — режем images
+      compact.cart = compact.cart.map((x) => ({ ...x, image: "" }));
+      compact.favorites = compact.favorites.map((x) => ({ ...x, image: "" }));
+      const json2 = JSON.stringify(compact);
+      if (json2.length <= 1400) {
+        const kvOk = await kvSetString(userStateKvKey(tgId), json2);
+        if (kvOk) {
+          ok = true;
+          console.log("[UserState] kv save OK (no images)", tgId);
+        }
+      } else {
+        console.warn("[UserState] kv too long even without images", json2.length);
+      }
     }
   } catch (e) {
     console.warn("[UserState] kv save fail", e);
   }
+
+  // 2) Pantry — параллельный канал
+  try {
+    const pantryOk = !!(await pantryPutBasket(userStateBasket(tgId), payload));
+    if (pantryOk) {
+      ok = true;
+      console.log("[UserState] pantry save OK", tgId, payload.cart.length);
+    }
+  } catch (e) {
+    console.warn("[UserState] pantry save fail", e);
+  }
+
+  // 3) Netlify users API (если бэкенд поддерживает action setState — отлично; если нет — просто ignore)
+  try {
+    const body = JSON.stringify({
+      action: "setState",
+      id: String(tgId),
+      state: {
+        cart: payload.cart,
+        favorites: payload.favorites,
+        bonusBalance: payload.bonusBalance,
+        updatedAt: payload.updatedAt,
+      },
+    });
+    for (const url of getUsersApiUrls()) {
+      try {
+        const r = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body,
+          cache: "no-store",
+        });
+        const data = await r.json().catch(() => ({}));
+        if (r.ok && data && data.ok) {
+          ok = true;
+          console.log("[UserState] netlify save OK", tgId);
+          break;
+        }
+      } catch (e) {}
+    }
+  } catch (e) {}
 
   return ok;
 };
@@ -2157,112 +2237,130 @@ export default function App() {
   useEffect(() => { if (!dataReady) return; saveToCloud(CLOUD_KEYS.referralNotified, referralNotified); }, [referralNotified, dataReady]);
   useEffect(() => { if (!dataReady) return; if (utmSource) saveToCloud(CLOUD_KEYS.utmSource, utmSource); }, [utmSource, dataReady]);
 
-  // Сохраняем персональные данные в shared storage (для синхронизации ПК ↔ телефон)
+  // Метка времени последней ЛОКАЛЬНОЙ записи (удаление/добавление).
+  // Remote применяем ТОЛЬКО если он строго новее этой метки — иначе удалённые товары «возвращаются».
+  const localWriteAtRef = React.useRef(0);
+  const appliedRemoteAtRef = React.useRef("");
+  // Не пишем пустой стейт на сервер, пока не сделали хотя бы один pull (иначе ПК затрёт телефон)
+  const allowPersistRef = React.useRef(false);
+
+  const persistUserState = React.useCallback(
+    async (override = {}, opts = {}) => {
+      const uid = String(user?.id || "");
+      if (!uid || !/^\d+$/.test(uid)) return false;
+
+      const nextCart = override.cart !== undefined ? override.cart : cart;
+      const nextFav = override.favorites !== undefined ? override.favorites : favorites;
+      const isEmpty =
+        (!nextCart || nextCart.length === 0) && (!nextFav || nextFav.length === 0);
+
+      // Пользовательское действие (add/remove) всегда можно писать.
+      // Фоновый debounce — только после первого pull, и не затираем remote пустотой на старте.
+      if (!opts.force && !allowPersistRef.current && isEmpty) {
+        console.log("[UserState] skip persist empty before first pull");
+        return false;
+      }
+
+      const nowIso = new Date().toISOString();
+      localWriteAtRef.current = Date.parse(nowIso) || Date.now();
+      const payload = {
+        cart: nextCart,
+        favorites: nextFav,
+        bonusBalance: override.bonusBalance !== undefined ? override.bonusBalance : bonusBalance,
+        orderHistory: (override.orderHistory !== undefined
+          ? override.orderHistory
+          : orderHistory || []
+        ).slice(0, 40),
+        referralCount: override.referralCount !== undefined ? override.referralCount : referralCount,
+        referralEarnings:
+          override.referralEarnings !== undefined ? override.referralEarnings : referralEarnings,
+        orders: override.orders !== undefined ? override.orders : orders,
+        updatedAt: nowIso,
+      };
+      appliedRemoteAtRef.current = nowIso;
+      allowPersistRef.current = true;
+      const ok = await saveUserStateToShared(uid, payload);
+      if (!ok) console.warn("[UserState] persist FAILED", uid);
+      else console.log("[UserState] persist OK", uid, "cart", (nextCart || []).length, "fav", (nextFav || []).length);
+      return ok;
+    },
+    [user?.id, cart, favorites, bonusBalance, orderHistory, referralCount, referralEarnings, orders]
+  );
+
+  // Автосохранение при изменениях (debounce) — не на самом первом кадре
   useEffect(() => {
     if (!dataReady || !user?.id || !/^\d+$/.test(String(user.id))) return;
+    if (!allowPersistRef.current) return;
     const t = setTimeout(() => {
-      saveUserStateToShared(user.id, {
-        cart,
-        favorites,
-        bonusBalance,
-        orderHistory: (orderHistory || []).slice(0, 40),
-        referralCount,
-        referralEarnings,
-        orders,
-      }).catch(() => {});
-    }, 400); // debounce
+      persistUserState().catch(() => {});
+    }, 500);
     return () => clearTimeout(t);
-  }, [dataReady, user?.id, cart, favorites, bonusBalance, orderHistory, referralCount, referralEarnings, orders]);
+  }, [dataReady, user?.id, cart, favorites, bonusBalance, orderHistory, referralCount, referralEarnings, orders, persistUserState]);
 
-  // Постоянный polling корзины/избранного с других устройств (каждые 6 сек)
+  // Polling: применяем remote ТОЛЬКО если updatedAt новее нашей последней локальной записи
   useEffect(() => {
     if (!dataReady || !user?.id || !/^\d+$/.test(String(user.id))) return;
     let stopped = false;
-    let lastRemoteAt = "";
+
+    const enrich = (items) =>
+      (items || []).map((it) => {
+        const p = (products || []).find((x) => String(x.id) === String(it.id));
+        if (!p) return it;
+        return {
+          ...it,
+          name: it.name || p.name,
+          brand: it.brand || p.brand,
+          price: it.price != null ? it.price : p.price,
+          image: it.image || p.image,
+          oldPrice: it.oldPrice != null ? it.oldPrice : p.oldPrice,
+        };
+      });
 
     const pull = async () => {
       if (stopped) return;
       try {
         const remote = await loadUserStateFromShared(user.id);
+        // После первой попытки pull разрешаем фоновые persist
+        allowPersistRef.current = true;
+
         if (!remote || stopped) return;
 
-        // Не применяем свой же только что записанный стейт повторно без изменений
         const remoteAt = remote.updatedAt || "";
-        if (remoteAt && remoteAt === lastRemoteAt) return;
+        if (!remoteAt) return;
+        if (remoteAt === appliedRemoteAtRef.current) return;
+
+        const remoteTs = Date.parse(remoteAt) || 0;
+        // Remote старше или равен нашей последней записи — игнорируем (не откатываем удаления)
+        if (remoteTs && localWriteAtRef.current && remoteTs <= localWriteAtRef.current) {
+          console.log("[UserState] skip older remote", remoteAt, "localWrite", localWriteAtRef.current);
+          return;
+        }
+
+        appliedRemoteAtRef.current = remoteAt;
+        localWriteAtRef.current = remoteTs;
 
         const remoteCart = Array.isArray(remote.cart) ? remote.cart : [];
         const remoteFav = Array.isArray(remote.favorites) ? remote.favorites : [];
 
-        // Обогащаем товары из текущего каталога (картинки и т.д.)
-        const enrich = (items) =>
-          (items || []).map((it) => {
-            const p = (products || []).find((x) => String(x.id) === String(it.id));
-            if (!p) return it;
-            return {
-              ...it,
-              name: it.name || p.name,
-              brand: it.brand || p.brand,
-              price: it.price != null ? it.price : p.price,
-              image: it.image || p.image,
-              oldPrice: it.oldPrice != null ? it.oldPrice : p.oldPrice,
-            };
-          });
-
-        // Корзина: если remote новее или локальная пустая — берём remote
-        setCart((local) => {
-          const localLen = (local || []).length;
-          const remoteLen = remoteCart.length;
-          if (remoteLen === 0 && localLen === 0) return local;
-          if (remoteLen > 0 && localLen === 0) {
-            lastRemoteAt = remoteAt;
-            console.log("[UserState] pull cart from remote", remoteLen);
-            return enrich(remoteCart);
-          }
-          if (remoteAt && remoteLen > 0) {
-            const localKey = (local || [])
-              .map((x) => `${x.id}:${x.size || ""}`)
-              .sort()
-              .join("|");
-            const remoteKey = remoteCart
-              .map((x) => `${x.id}:${x.size || ""}`)
-              .sort()
-              .join("|");
-            if (localKey !== remoteKey && remoteLen >= localLen) {
-              lastRemoteAt = remoteAt;
-              console.log("[UserState] pull cart merge", localLen, "→", remoteLen);
-              return enrich(remoteCart);
-            }
-          }
-          return local;
+        console.log("[UserState] apply remote", {
+          cart: remoteCart.length,
+          fav: remoteFav.length,
+          at: remoteAt,
         });
 
-        setFavorites((local) => {
-          const localLen = (local || []).length;
-          const remoteLen = remoteFav.length;
-          if (remoteLen > 0 && localLen === 0) {
-            lastRemoteAt = remoteAt;
-            return remoteFav;
-          }
-          if (remoteAt && remoteLen > 0) {
-            const localKey = (local || []).map((x) => String(x.id)).sort().join("|");
-            const remoteKey = remoteFav.map((x) => String(x.id)).sort().join("|");
-            if (localKey !== remoteKey && remoteLen >= localLen) {
-              lastRemoteAt = remoteAt;
-              return remoteFav;
-            }
-          }
-          return local;
-        });
+        setCart(enrich(remoteCart));
+        setFavorites(enrich(remoteFav));
 
         if (typeof remote.bonusBalance === "number") {
           setBonusBalance((b) => Math.max(Number(b) || 0, remote.bonusBalance || 0));
         }
-      } catch (e) {}
+      } catch (e) {
+        allowPersistRef.current = true;
+      }
     };
 
-    // Первый pull чуть позже, чтобы не конфликтовать со стартовой загрузкой
-    const t0 = setTimeout(pull, 2000);
-    const interval = setInterval(pull, 6000);
+    const t0 = setTimeout(pull, 1200);
+    const interval = setInterval(pull, 5000);
     const onVis = () => {
       if (typeof document !== "undefined" && document.visibilityState === "visible") pull();
     };
@@ -2277,7 +2375,7 @@ export default function App() {
         document.removeEventListener("visibilitychange", onVis);
       }
     };
-  }, [dataReady, user?.id]);
+  }, [dataReady, user?.id, products]);
 
   // Если referredBy уже есть, а Telegram ID стал числовым — дорегистрируем реферала
   useEffect(() => {
@@ -2636,29 +2734,16 @@ export default function App() {
     ? `https://t.me/manzshop_bot/manzshopbyapp?startapp=ref_${user.id}`
     : `https://t.me/manzshop_bot/manzshopbyapp?startapp=ref_${user.id}`;
 
-  const pushUserStateNow = (nextCart, nextFav) => {
-    const uid = String(user?.id || "");
-    if (!uid || !/^\d+$/.test(uid)) return;
-    saveUserStateToShared(uid, {
-      cart: nextCart != null ? nextCart : cart,
-      favorites: nextFav != null ? nextFav : favorites,
-      bonusBalance,
-      orderHistory: (orderHistory || []).slice(0, 40),
-      referralCount,
-      referralEarnings,
-      orders,
-    }).catch(() => {});
-  };
-
   const addCart = (item) => {
     const next = [...cart, item];
     setCart(next);
-    pushUserStateNow(next, null);
+    persistUserState({ cart: next }, { force: true }).catch(() => {});
   };
   const removeCart = (idx) => {
     const next = cart.filter((_, i) => i !== idx);
     setCart(next);
-    pushUserStateNow(next, null);
+    // force: true — даже пустую корзину пишем сразу, чтобы товар не «вернулся»
+    persistUserState({ cart: next }, { force: true }).catch(() => {});
   };
 
   const toggleFavorite = (item) => {
@@ -2666,14 +2751,13 @@ export default function App() {
     if (isAlreadyFav) {
       const nextFav = favorites.filter((x) => x.id !== item.id);
       setFavorites(nextFav);
-      pushUserStateNow(null, nextFav);
+      persistUserState({ favorites: nextFav }, { force: true }).catch(() => {});
     } else {
       const nextFav = [...favorites, item];
       const nextCart = cart.filter((c) => c.id !== item.id);
       setFavorites(nextFav);
-      // При добавлении в избранное — убираем товар из корзины
       setCart(nextCart);
-      pushUserStateNow(nextCart, nextFav);
+      persistUserState({ cart: nextCart, favorites: nextFav }, { force: true }).catch(() => {});
     }
   };
 
