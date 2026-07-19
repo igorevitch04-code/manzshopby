@@ -855,8 +855,9 @@ const getUserStateApiUrls = () => {
   try {
     if (typeof window !== "undefined" && window.location?.origin) {
       const origin = window.location.origin;
-      urls.push(`${origin}/api/userstate`);
+      // functions path first ( /api/* redirect may 404 for new functions )
       urls.push(`${origin}/.netlify/functions/userstate`);
+      urls.push(`${origin}/api/userstate`);
     }
   } catch (e) {}
   return urls;
@@ -2221,57 +2222,84 @@ export default function App() {
   const appliedRemoteAtRef = React.useRef("");
   // Не пишем пустой стейт на сервер, пока не сделали хотя бы один pull (иначе ПК затрёт телефон)
   const allowPersistRef = React.useRef(false);
+  // Актуальные значения без stale closure (важно при быстрых add cart + fav)
+  const cartRef = React.useRef(cart);
+  const favoritesRef = React.useRef(favorites);
+  const bonusRef = React.useRef(bonusBalance);
+  const orderHistoryRef = React.useRef(orderHistory);
+  const referralCountRef = React.useRef(referralCount);
+  const referralEarningsRef = React.useRef(referralEarnings);
+  const ordersCountRef = React.useRef(orders);
+  cartRef.current = cart;
+  favoritesRef.current = favorites;
+  bonusRef.current = bonusBalance;
+  orderHistoryRef.current = orderHistory;
+  referralCountRef.current = referralCount;
+  referralEarningsRef.current = referralEarnings;
+  ordersCountRef.current = orders;
+
+  // Очередь записи — чтобы два быстрых save не перезаписали друг друга устаревшими данными
+  const persistChainRef = React.useRef(Promise.resolve());
 
   const persistUserState = React.useCallback(
-    async (override = {}, opts = {}) => {
-      const uid = String(user?.id || "");
-      if (!uid || !/^\d+$/.test(uid)) return false;
+    (override = {}, opts = {}) => {
+      const run = async () => {
+        const uid = String(user?.id || "");
+        if (!uid || !/^\d+$/.test(uid)) return false;
 
-      const nextCart = override.cart !== undefined ? override.cart : cart;
-      const nextFav = override.favorites !== undefined ? override.favorites : favorites;
-      const isEmpty =
-        (!nextCart || nextCart.length === 0) && (!nextFav || nextFav.length === 0);
+        // Всегда берём самые свежие значения из ref + override
+        const nextCart = override.cart !== undefined ? override.cart : cartRef.current;
+        const nextFav = override.favorites !== undefined ? override.favorites : favoritesRef.current;
+        const isEmpty =
+          (!nextCart || nextCart.length === 0) && (!nextFav || nextFav.length === 0);
 
-      // Пользовательское действие (add/remove) всегда можно писать.
-      // Фоновый debounce — только после первого pull, и не затираем remote пустотой на старте.
-      if (!opts.force && !allowPersistRef.current && isEmpty) {
-        console.log("[UserState] skip persist empty before first pull");
-        return false;
-      }
-
-      const nowIso = new Date().toISOString();
-      localWriteAtRef.current = Date.parse(nowIso) || Date.now();
-      const payload = {
-        cart: nextCart,
-        favorites: nextFav,
-        bonusBalance: override.bonusBalance !== undefined ? override.bonusBalance : bonusBalance,
-        orderHistory: (override.orderHistory !== undefined
-          ? override.orderHistory
-          : orderHistory || []
-        ).slice(0, 40),
-        referralCount: override.referralCount !== undefined ? override.referralCount : referralCount,
-        referralEarnings:
-          override.referralEarnings !== undefined ? override.referralEarnings : referralEarnings,
-        orders: override.orders !== undefined ? override.orders : orders,
-        updatedAt: nowIso,
-      };
-      appliedRemoteAtRef.current = nowIso;
-      allowPersistRef.current = true;
-      const ok = await saveUserStateToShared(uid, payload);
-      if (!ok) {
-        console.warn("[UserState] persist FAILED", uid);
-        if (opts.force) showToast("⚠️ Синхронизация не удалась — проверь деплой userstate");
-      } else {
-        console.log("[UserState] persist OK", uid, "cart", (nextCart || []).length, "fav", (nextFav || []).length);
-        if (opts.force) {
-          const n = (nextCart || []).length;
-          const f = (nextFav || []).length;
-          showToast(`☁️ Сохранено (корзина: ${n}, избранное: ${f})`);
+        if (!opts.force && !allowPersistRef.current && isEmpty) {
+          console.log("[UserState] skip persist empty before first pull");
+          return false;
         }
-      }
-      return ok;
+
+        // Обновляем refs сразу, чтобы следующий save в очереди видел актуальные данные
+        if (override.cart !== undefined) cartRef.current = nextCart;
+        if (override.favorites !== undefined) favoritesRef.current = nextFav;
+
+        const nowIso = new Date().toISOString();
+        localWriteAtRef.current = Date.parse(nowIso) || Date.now();
+        const payload = {
+          cart: nextCart || [],
+          favorites: nextFav || [],
+          bonusBalance: override.bonusBalance !== undefined ? override.bonusBalance : bonusRef.current,
+          orderHistory: (override.orderHistory !== undefined
+            ? override.orderHistory
+            : orderHistoryRef.current || []
+          ).slice(0, 40),
+          referralCount: override.referralCount !== undefined ? override.referralCount : referralCountRef.current,
+          referralEarnings:
+            override.referralEarnings !== undefined ? override.referralEarnings : referralEarningsRef.current,
+          orders: override.orders !== undefined ? override.orders : ordersCountRef.current,
+          updatedAt: nowIso,
+        };
+        appliedRemoteAtRef.current = nowIso;
+        allowPersistRef.current = true;
+
+        const ok = await saveUserStateToShared(uid, payload);
+        if (!ok) {
+          console.warn("[UserState] persist FAILED", uid);
+          if (opts.force) showToast("⚠️ Синхронизация не удалась — проверь деплой userstate");
+        } else {
+          console.log("[UserState] persist OK", uid, "cart", payload.cart.length, "fav", payload.favorites.length);
+          if (opts.force) {
+            showToast(`☁️ Сохранено (корзина: ${payload.cart.length}, избранное: ${payload.favorites.length})`);
+          }
+        }
+        return ok;
+      };
+
+      // Сериализуем записи
+      const p = persistChainRef.current.then(run, run);
+      persistChainRef.current = p.then(() => {}, () => {});
+      return p;
     },
-    [user?.id, cart, favorites, bonusBalance, orderHistory, referralCount, referralEarnings, orders]
+    [user?.id]
   );
 
   // Автосохранение при изменениях (debounce) — не на самом первом кадре
@@ -2280,7 +2308,7 @@ export default function App() {
     if (!allowPersistRef.current) return;
     const t = setTimeout(() => {
       persistUserState().catch(() => {});
-    }, 500);
+    }, 600);
     return () => clearTimeout(t);
   }, [dataReady, user?.id, cart, favorites, bonusBalance, orderHistory, referralCount, referralEarnings, orders, persistUserState]);
 
@@ -2722,26 +2750,33 @@ export default function App() {
     : `https://t.me/manzshop_bot/manzshopbyapp?startapp=ref_${user.id}`;
 
   const addCart = (item) => {
-    const next = [...cart, item];
+    const next = [...cartRef.current, item];
+    cartRef.current = next;
     setCart(next);
-    persistUserState({ cart: next }, { force: true }).catch(() => {});
+    // Всегда пишем корзину + избранное вместе — чтобы не затереть одно другим
+    persistUserState({ cart: next, favorites: favoritesRef.current }, { force: true }).catch(() => {});
   };
   const removeCart = (idx) => {
-    const next = cart.filter((_, i) => i !== idx);
+    const next = cartRef.current.filter((_, i) => i !== idx);
+    cartRef.current = next;
     setCart(next);
-    // force: true — даже пустую корзину пишем сразу, чтобы товар не «вернулся»
-    persistUserState({ cart: next }, { force: true }).catch(() => {});
+    persistUserState({ cart: next, favorites: favoritesRef.current }, { force: true }).catch(() => {});
   };
 
   const toggleFavorite = (item) => {
-    const isAlreadyFav = favorites.some((x) => x.id === item.id);
+    const curFav = favoritesRef.current || [];
+    const curCart = cartRef.current || [];
+    const isAlreadyFav = curFav.some((x) => String(x.id) === String(item.id));
     if (isAlreadyFav) {
-      const nextFav = favorites.filter((x) => x.id !== item.id);
+      const nextFav = curFav.filter((x) => String(x.id) !== String(item.id));
+      favoritesRef.current = nextFav;
       setFavorites(nextFav);
-      persistUserState({ favorites: nextFav }, { force: true }).catch(() => {});
+      persistUserState({ cart: curCart, favorites: nextFav }, { force: true }).catch(() => {});
     } else {
-      const nextFav = [...favorites, item];
-      const nextCart = cart.filter((c) => c.id !== item.id);
+      const nextFav = [...curFav, item];
+      const nextCart = curCart.filter((c) => String(c.id) !== String(item.id));
+      favoritesRef.current = nextFav;
+      cartRef.current = nextCart;
       setFavorites(nextFav);
       setCart(nextCart);
       persistUserState({ cart: nextCart, favorites: nextFav }, { force: true }).catch(() => {});
@@ -4136,7 +4171,6 @@ export default function App() {
             onPress={(e) => {
               e?.stopPropagation?.();
               toggleFavorite(item);
-              setCart(prev => prev.filter(c => c.id !== item.id));
               showToast(isFav ? "Удалено из избранного" : "❤️ Добавлено в избранное");
             }}
             activeOpacity={0.7}
@@ -4440,9 +4474,17 @@ export default function App() {
         showToast("⚠️ Выберите размер");
         return;
       }
-      addCart({ ...selectedProduct, size: selectedSize });
-      // При добавлении в корзину — убираем из избранного
-      setFavorites(prev => prev.filter(x => x.id !== selectedProduct.id));
+      // В корзину + сразу убрать из избранного одним сохранением
+      const item = { ...selectedProduct, size: selectedSize };
+      const nextCart = [...(cartRef.current || []), item];
+      const nextFav = (favoritesRef.current || []).filter(
+        (x) => String(x.id) !== String(selectedProduct.id)
+      );
+      cartRef.current = nextCart;
+      favoritesRef.current = nextFav;
+      setCart(nextCart);
+      setFavorites(nextFav);
+      persistUserState({ cart: nextCart, favorites: nextFav }, { force: true }).catch(() => {});
       showToast(`✅ ${selectedProduct.name} добавлен в корзину`);
     };
 
