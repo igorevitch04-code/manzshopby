@@ -832,31 +832,109 @@ const pantryPutBasket = async (basket, payload) => {
 };
 
 // ==============================
-// Персональные данные пользователя в shared storage (Pantry)
-// Нужно для надёжной синхронизации корзины / избранного / бонусов между устройствами
-// (CloudStorage Telegram иногда не успевает / не синхронизируется Desktop ↔ Mobile)
+// Персональные данные пользователя в shared storage
+// CloudStorage Telegram НЕ синхронизируется между Desktop и Mobile —
+// поэтому корзина/избранное/бонусы пишем во внешнее хранилище по tgId.
+// Каналы: 1) Pantry  2) keyvalue (компактный fallback)
 // ==============================
 const userStateBasket = (tgId) => `u_${String(tgId || "").replace(/[^0-9]/g, "")}`;
+const userStateKvKey = (tgId) => `ustate_${String(tgId || "").replace(/[^0-9]/g, "")}`;
+
+// Компактная версия корзины/избранного (без тяжёлых полей) для KV
+const compactCartItem = (i) => ({
+  id: i.id,
+  name: i.name,
+  brand: i.brand,
+  price: i.price,
+  oldPrice: i.oldPrice || null,
+  size: i.size || null,
+  image: typeof i.image === "string" && i.image.startsWith("data:") ? "" : (i.image || ""),
+});
 
 const loadUserStateFromShared = async (tgId) => {
   if (!tgId || String(tgId) === "guest" || !/^\d+$/.test(String(tgId))) return null;
+
+  // 1) Pantry
   try {
     const data = await pantryGetBasket(userStateBasket(tgId));
-    if (data && typeof data === "object") return data;
-  } catch (e) {}
+    if (data && typeof data === "object" && (data.cart || data.favorites || data.updatedAt)) {
+      console.log("[UserState] pantry load OK", tgId, {
+        cart: (data.cart || []).length,
+        fav: (data.favorites || []).length,
+      });
+      return data;
+    }
+  } catch (e) {
+    console.warn("[UserState] pantry load fail", e);
+  }
+
+  // 2) keyvalue fallback (компактный JSON)
+  try {
+    const raw = await kvGetString(userStateKvKey(tgId));
+    if (raw) {
+      const data = JSON.parse(raw);
+      if (data && typeof data === "object") {
+        console.log("[UserState] kv load OK", tgId, {
+          cart: (data.cart || []).length,
+          fav: (data.favorites || []).length,
+        });
+        return data;
+      }
+    }
+  } catch (e) {
+    console.warn("[UserState] kv load fail", e);
+  }
+
   return null;
 };
 
 const saveUserStateToShared = async (tgId, state) => {
   if (!tgId || String(tgId) === "guest" || !/^\d+$/.test(String(tgId))) return false;
+
+  const payload = {
+    cart: Array.isArray(state.cart) ? state.cart.map(compactCartItem) : [],
+    favorites: Array.isArray(state.favorites) ? state.favorites.map(compactCartItem) : [],
+    bonusBalance: Number(state.bonusBalance) || 0,
+    orderHistory: Array.isArray(state.orderHistory) ? state.orderHistory.slice(0, 30) : [],
+    referralCount: Number(state.referralCount) || 0,
+    referralEarnings: Number(state.referralEarnings) || 0,
+    orders: Number(state.orders) || 0,
+    updatedAt: new Date().toISOString(),
+  };
+
+  let ok = false;
+
+  // 1) Pantry
   try {
-    return await pantryPutBasket(userStateBasket(tgId), {
-      ...state,
-      updatedAt: new Date().toISOString(),
-    });
+    ok = !!(await pantryPutBasket(userStateBasket(tgId), payload));
+    if (ok) console.log("[UserState] pantry save OK", tgId, payload.cart.length);
   } catch (e) {
-    return false;
+    console.warn("[UserState] pantry save fail", e);
   }
+
+  // 2) keyvalue всегда как backup (если влезает)
+  try {
+    const compact = {
+      cart: payload.cart,
+      favorites: payload.favorites,
+      bonusBalance: payload.bonusBalance,
+      updatedAt: payload.updatedAt,
+    };
+    const json = JSON.stringify(compact);
+    if (json.length <= 1400) {
+      const kvOk = await kvSetString(userStateKvKey(tgId), json);
+      if (kvOk) {
+        ok = true;
+        console.log("[UserState] kv save OK", tgId, payload.cart.length);
+      }
+    } else {
+      console.warn("[UserState] kv too long", json.length);
+    }
+  } catch (e) {
+    console.warn("[UserState] kv save fail", e);
+  }
+
+  return ok;
 };
 
 // Глобальный epoch для принудительного сброса данных у ВСЕХ пользователей
@@ -2092,9 +2170,114 @@ export default function App() {
         referralEarnings,
         orders,
       }).catch(() => {});
-    }, 800); // debounce
+    }, 400); // debounce
     return () => clearTimeout(t);
   }, [dataReady, user?.id, cart, favorites, bonusBalance, orderHistory, referralCount, referralEarnings, orders]);
+
+  // Постоянный polling корзины/избранного с других устройств (каждые 6 сек)
+  useEffect(() => {
+    if (!dataReady || !user?.id || !/^\d+$/.test(String(user.id))) return;
+    let stopped = false;
+    let lastRemoteAt = "";
+
+    const pull = async () => {
+      if (stopped) return;
+      try {
+        const remote = await loadUserStateFromShared(user.id);
+        if (!remote || stopped) return;
+
+        // Не применяем свой же только что записанный стейт повторно без изменений
+        const remoteAt = remote.updatedAt || "";
+        if (remoteAt && remoteAt === lastRemoteAt) return;
+
+        const remoteCart = Array.isArray(remote.cart) ? remote.cart : [];
+        const remoteFav = Array.isArray(remote.favorites) ? remote.favorites : [];
+
+        // Обогащаем товары из текущего каталога (картинки и т.д.)
+        const enrich = (items) =>
+          (items || []).map((it) => {
+            const p = (products || []).find((x) => String(x.id) === String(it.id));
+            if (!p) return it;
+            return {
+              ...it,
+              name: it.name || p.name,
+              brand: it.brand || p.brand,
+              price: it.price != null ? it.price : p.price,
+              image: it.image || p.image,
+              oldPrice: it.oldPrice != null ? it.oldPrice : p.oldPrice,
+            };
+          });
+
+        // Корзина: если remote новее или локальная пустая — берём remote
+        setCart((local) => {
+          const localLen = (local || []).length;
+          const remoteLen = remoteCart.length;
+          if (remoteLen === 0 && localLen === 0) return local;
+          if (remoteLen > 0 && localLen === 0) {
+            lastRemoteAt = remoteAt;
+            console.log("[UserState] pull cart from remote", remoteLen);
+            return enrich(remoteCart);
+          }
+          if (remoteAt && remoteLen > 0) {
+            const localKey = (local || [])
+              .map((x) => `${x.id}:${x.size || ""}`)
+              .sort()
+              .join("|");
+            const remoteKey = remoteCart
+              .map((x) => `${x.id}:${x.size || ""}`)
+              .sort()
+              .join("|");
+            if (localKey !== remoteKey && remoteLen >= localLen) {
+              lastRemoteAt = remoteAt;
+              console.log("[UserState] pull cart merge", localLen, "→", remoteLen);
+              return enrich(remoteCart);
+            }
+          }
+          return local;
+        });
+
+        setFavorites((local) => {
+          const localLen = (local || []).length;
+          const remoteLen = remoteFav.length;
+          if (remoteLen > 0 && localLen === 0) {
+            lastRemoteAt = remoteAt;
+            return remoteFav;
+          }
+          if (remoteAt && remoteLen > 0) {
+            const localKey = (local || []).map((x) => String(x.id)).sort().join("|");
+            const remoteKey = remoteFav.map((x) => String(x.id)).sort().join("|");
+            if (localKey !== remoteKey && remoteLen >= localLen) {
+              lastRemoteAt = remoteAt;
+              return remoteFav;
+            }
+          }
+          return local;
+        });
+
+        if (typeof remote.bonusBalance === "number") {
+          setBonusBalance((b) => Math.max(Number(b) || 0, remote.bonusBalance || 0));
+        }
+      } catch (e) {}
+    };
+
+    // Первый pull чуть позже, чтобы не конфликтовать со стартовой загрузкой
+    const t0 = setTimeout(pull, 2000);
+    const interval = setInterval(pull, 6000);
+    const onVis = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") pull();
+    };
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", onVis);
+    }
+    return () => {
+      stopped = true;
+      clearTimeout(t0);
+      clearInterval(interval);
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", onVis);
+      }
+    };
+  }, [dataReady, user?.id]);
 
   // Если referredBy уже есть, а Telegram ID стал числовым — дорегистрируем реферала
   useEffect(() => {
@@ -2453,17 +2636,44 @@ export default function App() {
     ? `https://t.me/manzshop_bot/manzshopbyapp?startapp=ref_${user.id}`
     : `https://t.me/manzshop_bot/manzshopbyapp?startapp=ref_${user.id}`;
 
-  const addCart = (item) => setCart([...cart, item]);
-  const removeCart = (idx) => setCart(cart.filter((_, i) => i !== idx));
+  const pushUserStateNow = (nextCart, nextFav) => {
+    const uid = String(user?.id || "");
+    if (!uid || !/^\d+$/.test(uid)) return;
+    saveUserStateToShared(uid, {
+      cart: nextCart != null ? nextCart : cart,
+      favorites: nextFav != null ? nextFav : favorites,
+      bonusBalance,
+      orderHistory: (orderHistory || []).slice(0, 40),
+      referralCount,
+      referralEarnings,
+      orders,
+    }).catch(() => {});
+  };
+
+  const addCart = (item) => {
+    const next = [...cart, item];
+    setCart(next);
+    pushUserStateNow(next, null);
+  };
+  const removeCart = (idx) => {
+    const next = cart.filter((_, i) => i !== idx);
+    setCart(next);
+    pushUserStateNow(next, null);
+  };
 
   const toggleFavorite = (item) => {
-    const isAlreadyFav = favorites.some(x => x.id === item.id);
+    const isAlreadyFav = favorites.some((x) => x.id === item.id);
     if (isAlreadyFav) {
-      setFavorites(favorites.filter(x => x.id !== item.id));
+      const nextFav = favorites.filter((x) => x.id !== item.id);
+      setFavorites(nextFav);
+      pushUserStateNow(null, nextFav);
     } else {
-      setFavorites([...favorites, item]);
+      const nextFav = [...favorites, item];
+      const nextCart = cart.filter((c) => c.id !== item.id);
+      setFavorites(nextFav);
       // При добавлении в избранное — убираем товар из корзины
-      setCart(prev => prev.filter(c => c.id !== item.id));
+      setCart(nextCart);
+      pushUserStateNow(nextCart, nextFav);
     }
   };
 
