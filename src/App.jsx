@@ -8398,8 +8398,8 @@ const styles = StyleSheet.create({
     position: "absolute",
     top: 0,
     left: 0,
-    width: 140,
-    height: 48,
+    width: 200,
+    height: 72,
     zIndex: 2,
   },
   homeCenter: {
@@ -8408,16 +8408,18 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 28,
-    paddingBottom: 88,
+    paddingBottom: 96,
   },
   homeBlock: {
     width: "100%",
     alignItems: "center",
+    // чуть выше центра экрана
+    marginBottom: 56,
   },
   homeLogoImg: {
-    width: 240,
-    height: 68,
-    marginBottom: 28,
+    width: 248,
+    height: 70,
+    marginBottom: 26,
   },
   homeWelcome: {
     fontSize: 17,
@@ -8429,12 +8431,12 @@ const styles = StyleSheet.create({
   homeSub: {
     fontSize: 13,
     color: "#9a9a9a",
-    marginBottom: 28,
+    marginBottom: 26,
     textAlign: "center",
   },
   brushBtnWrap: {
-    width: 260,
-    height: 50,
+    width: 268,
+    height: 52,
     alignItems: "center",
     justifyContent: "center",
     position: "relative",
@@ -8443,8 +8445,8 @@ const styles = StyleSheet.create({
     position: "absolute",
     left: 0,
     top: 0,
-    width: 260,
-    height: 50,
+    width: 268,
+    height: 52,
   },
   brushBtnTextOverlay: {
     color: "#fff",
