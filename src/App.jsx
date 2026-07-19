@@ -2300,12 +2300,8 @@ export default function App() {
         const ok = await saveUserStateToShared(uid, payload);
         if (!ok) {
           console.warn("[UserState] persist FAILED", uid);
-          if (opts.force) showToast("⚠️ Синхронизация не удалась — проверь деплой userstate");
         } else {
           console.log("[UserState] persist OK", uid, "cart", payload.cart.length, "fav", payload.favorites.length);
-          if (opts.force) {
-            showToast(`☁️ Сохранено (корзина: ${payload.cart.length}, избранное: ${payload.favorites.length})`);
-          }
         }
         return ok;
       };
@@ -2329,13 +2325,28 @@ export default function App() {
   }, [dataReady, user?.id, cart, favorites, bonusBalance, orderHistory, referralCount, referralEarnings, orders, persistUserState]);
 
   // Polling: применяем remote ТОЛЬКО если updatedAt новее нашей последней локальной записи
+  // Не зависеть от products — иначе при обновлении каталога эффект пересоздаётся и вкладка «мигает»
+  const productsRef = React.useRef(products);
+  productsRef.current = products;
+
   useEffect(() => {
     if (!dataReady || !user?.id || !/^\d+$/.test(String(user.id))) return;
     let stopped = false;
 
+    const sameItems = (a, b) => {
+      const aa = a || [];
+      const bb = b || [];
+      if (aa.length !== bb.length) return false;
+      for (let i = 0; i < aa.length; i++) {
+        if (String(aa[i]?.id) !== String(bb[i]?.id)) return false;
+        if (String(aa[i]?.size || "") !== String(bb[i]?.size || "")) return false;
+      }
+      return true;
+    };
+
     const enrich = (items) =>
       (items || []).map((it) => {
-        const p = (products || []).find((x) => String(x.id) === String(it.id));
+        const p = (productsRef.current || []).find((x) => String(x.id) === String(it.id));
         if (!p) return it;
         return {
           ...it,
@@ -2351,7 +2362,6 @@ export default function App() {
       if (stopped) return;
       try {
         const remote = await loadUserStateFromShared(user.id);
-        // После первой попытки pull разрешаем фоновые persist
         allowPersistRef.current = true;
 
         if (!remote || stopped) return;
@@ -2361,37 +2371,35 @@ export default function App() {
         if (remoteAt === appliedRemoteAtRef.current) return;
 
         const remoteTs = Date.parse(remoteAt) || 0;
-        // Remote старше или равен нашей последней записи — игнорируем (не откатываем удаления)
         if (remoteTs && localWriteAtRef.current && remoteTs <= localWriteAtRef.current) {
-          console.log("[UserState] skip older remote", remoteAt, "localWrite", localWriteAtRef.current);
           return;
         }
 
         appliedRemoteAtRef.current = remoteAt;
         localWriteAtRef.current = remoteTs;
 
-        const remoteCart = Array.isArray(remote.cart) ? remote.cart : [];
-        const remoteFav = Array.isArray(remote.favorites) ? remote.favorites : [];
+        const remoteCart = enrich(Array.isArray(remote.cart) ? remote.cart : []);
+        const remoteFav = enrich(Array.isArray(remote.favorites) ? remote.favorites : []);
 
-        console.log("[UserState] apply remote", {
-          cart: remoteCart.length,
-          fav: remoteFav.length,
-          at: remoteAt,
-        });
-
-        setCart(enrich(remoteCart));
-        setFavorites(enrich(remoteFav));
+        // Не вызываем setState если данные те же — иначе каталог перемонтируется/прыгает
+        setCart((prev) => (sameItems(prev, remoteCart) ? prev : remoteCart));
+        setFavorites((prev) => (sameItems(prev, remoteFav) ? prev : remoteFav));
+        cartRef.current = remoteCart;
+        favoritesRef.current = remoteFav;
 
         if (typeof remote.bonusBalance === "number") {
-          setBonusBalance((b) => Math.max(Number(b) || 0, remote.bonusBalance || 0));
+          setBonusBalance((b) => {
+            const next = Math.max(Number(b) || 0, remote.bonusBalance || 0);
+            return next === b ? b : next;
+          });
         }
       } catch (e) {
         allowPersistRef.current = true;
       }
     };
 
-    const t0 = setTimeout(pull, 400);
-    const interval = setInterval(pull, 2500);
+    const t0 = setTimeout(pull, 300);
+    const interval = setInterval(pull, 2000);
     const onVis = () => {
       if (typeof document !== "undefined" && document.visibilityState === "visible") pull();
     };
@@ -2406,7 +2414,7 @@ export default function App() {
         document.removeEventListener("visibilitychange", onVis);
       }
     };
-  }, [dataReady, user?.id, products]);
+  }, [dataReady, user?.id]);
 
   // Если referredBy уже есть, а Telegram ID стал числовым — дорегистрируем реферала
   useEffect(() => {
