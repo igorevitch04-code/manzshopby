@@ -834,13 +834,12 @@ const pantryPutBasket = async (basket, payload) => {
 // ==============================
 // Персональные данные пользователя в shared storage
 // CloudStorage Telegram НЕ синхронизируется между Desktop и Mobile —
-// поэтому корзина/избранное/бонусы пишем во внешнее хранилище по tgId.
-// Каналы: 1) Pantry  2) keyvalue (компактный fallback)
+// поэтому корзина/избранное/бонусы пишем на Netlify (как заказы) + fallback.
 // ==============================
 const userStateBasket = (tgId) => `u_${String(tgId || "").replace(/[^0-9]/g, "")}`;
 const userStateKvKey = (tgId) => `ustate_${String(tgId || "").replace(/[^0-9]/g, "")}`;
 
-// Компактная версия корзины/избранного (без тяжёлых полей) для KV
+// Компактная версия корзины/избранного (без base64-картинок)
 const compactCartItem = (i) => ({
   id: i.id,
   name: i.name,
@@ -851,48 +850,27 @@ const compactCartItem = (i) => ({
   image: typeof i.image === "string" && i.image.startsWith("data:") ? "" : (i.image || ""),
 });
 
+const getUserStateApiUrls = () => {
+  const urls = [];
+  try {
+    if (typeof window !== "undefined" && window.location?.origin) {
+      const origin = window.location.origin;
+      urls.push(`${origin}/api/userstate`);
+      urls.push(`${origin}/.netlify/functions/userstate`);
+    }
+  } catch (e) {}
+  return urls;
+};
+
 const loadUserStateFromShared = async (tgId) => {
   if (!tgId || String(tgId) === "guest" || !/^\d+$/.test(String(tgId))) return null;
 
   const candidates = [];
 
-  // 1) keyvalue
+  // 1) Netlify — основной надёжный канал
   try {
-    const raw = await kvGetString(userStateKvKey(tgId));
-    if (raw) {
-      const data = JSON.parse(raw);
-      if (data && typeof data === "object") {
-        candidates.push(data);
-        console.log("[UserState] kv load OK", tgId, {
-          cart: (data.cart || []).length,
-          fav: (data.favorites || []).length,
-          at: data.updatedAt,
-        });
-      }
-    }
-  } catch (e) {
-    console.warn("[UserState] kv load fail", e);
-  }
-
-  // 2) Pantry
-  try {
-    const data = await pantryGetBasket(userStateBasket(tgId));
-    if (data && typeof data === "object" && (data.cart || data.favorites || data.updatedAt)) {
-      candidates.push(data);
-      console.log("[UserState] pantry load OK", tgId, {
-        cart: (data.cart || []).length,
-        fav: (data.favorites || []).length,
-        at: data.updatedAt,
-      });
-    }
-  } catch (e) {
-    console.warn("[UserState] pantry load fail", e);
-  }
-
-  // 3) Netlify users API
-  try {
-    const body = JSON.stringify({ action: "getState", id: String(tgId) });
-    for (const url of getUsersApiUrls()) {
+    const body = JSON.stringify({ action: "get", id: String(tgId) });
+    for (const url of getUserStateApiUrls()) {
       try {
         const r = await fetch(url, {
           method: "POST",
@@ -903,16 +881,41 @@ const loadUserStateFromShared = async (tgId) => {
         const data = await r.json().catch(() => ({}));
         if (r.ok && data && data.ok && data.state && typeof data.state === "object") {
           candidates.push(data.state);
-          console.log("[UserState] netlify load OK", tgId);
+          console.log("[UserState] netlify load OK", tgId, {
+            cart: (data.state.cart || []).length,
+            fav: (data.state.favorites || []).length,
+          });
           break;
         }
-      } catch (e) {}
+      } catch (e) {
+        console.warn("[UserState] netlify load fail", url, e && e.message);
+      }
+    }
+  } catch (e) {}
+
+  // 2) keyvalue fallback
+  try {
+    const raw = await kvGetString(userStateKvKey(tgId));
+    if (raw) {
+      const data = JSON.parse(raw);
+      if (data && typeof data === "object") {
+        candidates.push(data);
+        console.log("[UserState] kv load OK", tgId);
+      }
+    }
+  } catch (e) {}
+
+  // 3) Pantry fallback
+  try {
+    const data = await pantryGetBasket(userStateBasket(tgId));
+    if (data && typeof data === "object" && (data.cart || data.favorites || data.updatedAt)) {
+      candidates.push(data);
+      console.log("[UserState] pantry load OK", tgId);
     }
   } catch (e) {}
 
   if (!candidates.length) return null;
 
-  // Берём самый свежий по updatedAt
   candidates.sort((a, b) => {
     const ta = Date.parse(a.updatedAt || 0) || 0;
     const tb = Date.parse(b.updatedAt || 0) || 0;
@@ -937,66 +940,14 @@ const saveUserStateToShared = async (tgId, state) => {
 
   let ok = false;
 
-  // 1) keyvalue — быстрый и относительно стабильный (компактный JSON)
-  try {
-    const compact = {
-      cart: payload.cart,
-      favorites: payload.favorites,
-      bonusBalance: payload.bonusBalance,
-      updatedAt: payload.updatedAt,
-    };
-    const json = JSON.stringify(compact);
-    if (json.length <= 1400) {
-      const kvOk = await kvSetString(userStateKvKey(tgId), json);
-      if (kvOk) {
-        ok = true;
-        console.log("[UserState] kv save OK", tgId, "cart", payload.cart.length, "fav", payload.favorites.length);
-      } else {
-        console.warn("[UserState] kv save returned false", tgId);
-      }
-    } else {
-      // Если не влезает — режем images
-      compact.cart = compact.cart.map((x) => ({ ...x, image: "" }));
-      compact.favorites = compact.favorites.map((x) => ({ ...x, image: "" }));
-      const json2 = JSON.stringify(compact);
-      if (json2.length <= 1400) {
-        const kvOk = await kvSetString(userStateKvKey(tgId), json2);
-        if (kvOk) {
-          ok = true;
-          console.log("[UserState] kv save OK (no images)", tgId);
-        }
-      } else {
-        console.warn("[UserState] kv too long even without images", json2.length);
-      }
-    }
-  } catch (e) {
-    console.warn("[UserState] kv save fail", e);
-  }
-
-  // 2) Pantry — параллельный канал
-  try {
-    const pantryOk = !!(await pantryPutBasket(userStateBasket(tgId), payload));
-    if (pantryOk) {
-      ok = true;
-      console.log("[UserState] pantry save OK", tgId, payload.cart.length);
-    }
-  } catch (e) {
-    console.warn("[UserState] pantry save fail", e);
-  }
-
-  // 3) Netlify users API (если бэкенд поддерживает action setState — отлично; если нет — просто ignore)
+  // 1) Netlify — главный канал
   try {
     const body = JSON.stringify({
-      action: "setState",
+      action: "set",
       id: String(tgId),
-      state: {
-        cart: payload.cart,
-        favorites: payload.favorites,
-        bonusBalance: payload.bonusBalance,
-        updatedAt: payload.updatedAt,
-      },
+      state: payload,
     });
-    for (const url of getUsersApiUrls()) {
+    for (const url of getUserStateApiUrls()) {
       try {
         const r = await fetch(url, {
           method: "POST",
@@ -1007,11 +958,35 @@ const saveUserStateToShared = async (tgId, state) => {
         const data = await r.json().catch(() => ({}));
         if (r.ok && data && data.ok) {
           ok = true;
-          console.log("[UserState] netlify save OK", tgId);
+          console.log("[UserState] netlify save OK", tgId, "cart", payload.cart.length, "fav", payload.favorites.length);
           break;
         }
-      } catch (e) {}
+        console.warn("[UserState] netlify save response", url, r.status, data);
+      } catch (e) {
+        console.warn("[UserState] netlify save fail", url, e && e.message);
+      }
     }
+  } catch (e) {}
+
+  // 2) keyvalue backup
+  try {
+    const compact = {
+      cart: payload.cart.map((x) => ({ ...x, image: (x.image || "").slice(0, 80) })),
+      favorites: payload.favorites.map((x) => ({ ...x, image: (x.image || "").slice(0, 80) })),
+      bonusBalance: payload.bonusBalance,
+      updatedAt: payload.updatedAt,
+    };
+    const json = JSON.stringify(compact);
+    if (json.length <= 1400) {
+      const kvOk = await kvSetString(userStateKvKey(tgId), json);
+      if (kvOk) ok = true;
+    }
+  } catch (e) {}
+
+  // 3) Pantry backup
+  try {
+    const pantryOk = !!(await pantryPutBasket(userStateBasket(tgId), payload));
+    if (pantryOk) ok = true;
   } catch (e) {}
 
   return ok;
@@ -2280,8 +2255,17 @@ export default function App() {
       appliedRemoteAtRef.current = nowIso;
       allowPersistRef.current = true;
       const ok = await saveUserStateToShared(uid, payload);
-      if (!ok) console.warn("[UserState] persist FAILED", uid);
-      else console.log("[UserState] persist OK", uid, "cart", (nextCart || []).length, "fav", (nextFav || []).length);
+      if (!ok) {
+        console.warn("[UserState] persist FAILED", uid);
+        if (opts.force) showToast("⚠️ Синхронизация корзины не удалась");
+      } else {
+        console.log("[UserState] persist OK", uid, "cart", (nextCart || []).length, "fav", (nextFav || []).length);
+        if (opts.force) {
+          const n = (nextCart || []).length;
+          const f = (nextFav || []).length;
+          showToast(`☁️ Сохранено (корзина: ${n}, избранное: ${f})`);
+        }
+      }
       return ok;
     },
     [user?.id, cart, favorites, bonusBalance, orderHistory, referralCount, referralEarnings, orders]
