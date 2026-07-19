@@ -23,8 +23,9 @@ const getTelegramUser = () => {
         if (u && u.id) {
           return {
             id: String(u.id),
-            name: u.first_name || "Пользователь",
-            username: u.username || ""
+            name: [u.first_name, u.last_name].filter(Boolean).join(" ") || "Пользователь",
+            username: u.username || "",
+            photo_url: u.photo_url || ""
           };
         }
       }
@@ -42,10 +43,12 @@ const getTelegramUser = () => {
       // 1) initDataUnsafe.user (самый быстрый)
       const unsafe = tgWeb.initDataUnsafe;
       if (unsafe && unsafe.user && unsafe.user.id) {
+        const u = unsafe.user;
         return {
-          id: String(unsafe.user.id),
-          name: unsafe.user.first_name || "Пользователь",
-          username: unsafe.user.username || ""
+          id: String(u.id),
+          name: [u.first_name, u.last_name].filter(Boolean).join(" ") || "Пользователь",
+          username: u.username || "",
+          photo_url: u.photo_url || ""
         };
       }
 
@@ -3046,7 +3049,7 @@ export default function App() {
   const closeOrderModal = () => { setOrderModalVisible(false); setUseBonus(false); setPromoCode(""); };
 
   const calculateTotals = () => {
-    const total = cart.reduce((s, i) => s + i.price, 0);
+    const total = cart.reduce((s, i) => s + (Number(i.price) || 0) * (Number(i.qty) || 1), 0);
     let discount = 0;
     const foundPromo = promoCodes.find(p => {
       if (p.code.toUpperCase() !== promoCode.toUpperCase()) return false;
@@ -4198,9 +4201,11 @@ export default function App() {
             }}
             activeOpacity={0.7}
           >
-            <Text style={[styles.favoriteBtnText, isFav && styles.favoriteBtnTextActive]}>
-              {isFav ? "♥" : "♡"}
-            </Text>
+            <Image
+              source={{ uri: isFav ? MENU_ICONS.heart_black : MENU_ICONS.heart_black }}
+              style={{ width: 22, height: 22, opacity: isFav ? 1 : 0.55 }}
+              resizeMode="contain"
+            />
           </TouchableOpacity>
 
         </View>
@@ -4236,8 +4241,18 @@ export default function App() {
     cart_white: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAADlElEQVR42u2ZS4xNWRSGv3PrqgelKYpggKSSHoh0vE2uCdEDjynSKQmJpCY9kBiQ6KG3iQGJMGHgPRD0gKgIIcFEmGiPgcJAOp0mpIpyq9Rvsm6s7Jz7PPdSkrOTnbvPf/ZZZ6/HXuvf50aS+Jlbhp+8pQqkCqQKpAqkCiRq2RhsGnAQaAI+AZHhX0zhi8Dfo0WBKKYSPwJ+K/NcN3BqtIbQkTLP5IETRbw3KjwA8AvQWZjjfk8DC03xOcA/P1wDSdX0NfrWtlf5bEN6VCUb7QDe2vgl8Csw3GgbB78VhVCpdhvIASOmzGcLqXA/RUUWUgkuux4CBsxIey1xKEkIIWmdhdCAvn9bG66nlkxy3X6bzTIvzQs+s3XGeGSkROEcLpLVRqz+dNj1auBKUg8g6Z5Z5LOkSZKioGetNwW9GN5UBM9I2u88sDJcS60KdDuhuQZmmaykd/ae95Jawzm1cqFeN94Rcz8H7AvCIgL+AnqCDZsBdgKbY+QsBiba+BgwmLQOFHok6alZ5oukce5ei/PORod3OXy+w3MOnxG855S71xW3lkyC3HzIWXBJsPH+Ncqx1OFNhuWByYGV82bdAYePBf6w8WvgRb3p9CU37nHjIeCxZallLlxkWDPwys1fYNhr4IPDl7vxATNMXRV4Azyz8Xqgxd17YKlxitsHkfPAW+eVpTb3ZlCktrvxuUYcaAQcdtdzg1qRBaYbMSy8q+CBIafULJt7J6AsORvfB/6rF5kL+0y3yY47vE3SDUu3PiXukdRjSaCAr5d0W1K7wzaXqr5JyBwxfOc50AX0m+XqQe6eGlEEaA82d13PxD6M2oFVQCvQZnuiNaa3xWAtDp/rFn+h1OJrZaNhmwX0AR8t9cXxmWoNOGjKzAceVnuor6aNsSNo3i0+JGaVetk/lzGZT2r5KlFN22UMsVBs8rYfsD1xpowHmoGNto6s1Y9OYKrd3wbsrueR0vdWY6NDks479njUssenOPIV9E6jIpK01bLTGEnXXBZqLiUjiQL+5YscPtu9fF4ZGb+7uR0OX+J41tRSMpJkoWGL1RFgi8PXurDpKyPjudvoG1z8dzv5/Y0KISTdcha8IanXXfdWyPf/d89clvTAXZ8tJyOpAhMk9cWcXZ9JGl+hjNlFztd3raLTyEqM5etNwApLq1fty91gFTImAn/aR7N+I3YnK6nqUfovZapAqkCqQKpAqkCqwA9sXwHrcaEY1DnSUwAAAABJRU5ErkJggg==",
     catalog_black: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAACt0lEQVR42u2Zv2sUQRTHP7cXLxpDcnggKsHKiIUgiIUErESwEhUUWwvxD7FREGtL0UYkNmKTEIRgkSiCoDZCEMHfP9DDcF42595a7Bt8LLN7494Kju6DYXf2vfvOfN/MvDneg0oq+b+l5mg3BpwDmtJvAlPy3gZeArPA8wE4ATADHAYawG6li4AXwDxwX/qlyEHgPRA7tEtAPQNnG7DkiPMQ2FnG5I8p0BDoAV1pofrWk/cYuCee1jKVgRPm4MTDkpiUZezKM5YBbB4z+lV5nlE4dWBFbMIBOD1FMpKtOVKUwBUFpgd5DCzLMi+nSJj2Vp2vI6LvpHBWUjirKWeYcQ8VJXBHecV45oTl4LeAD2ryPXm2RH9Ted/gXLVss1E5Q5EaMwKuFyVwSxGIZJJBhu1psTXnIwb2i27R4ojxnGiXtr09KKwNCrF9sXsj7zb5bPn2Q4XH9Hh9h3CLi23wGyuynqMbyXFAMMT9M1CCknDiP2xfCoHG3/hXoqwt5AWBTb4TwHcCoa8ETBz+5isBY7Pd9xV45/sKeB+Fmr4T+OQ7gVq1haqbeDgCbd/vgS++3wO7fF+B176fge++b6GW7ysw4TuBTonjepFWiVNBwBYYimI7EYiUTR84QHbuf4Plm0l2jVomvtkx8mVhOxGYVEB9YCNwNMPugtg0FOGPon8qfY11OUXMEL2Ymnwf+Fp0L54iSfCuy8RMjnQReCU2Y8BJi+fW5NBHwF4hsSZOMDht4K4ifJwk6Wv0Ztx9wJMi+7pOUloy6e6swoRJq+sawPmUkxb4lb12KXAYu/lhD/w09tJQRzXz3RQkHlm25oTSa/s8nBjYUUaEmSYp9bgU567lHLpx4IYjzgKwtcx43ADOklQaze9MsjeU/izwzAFrD0lBpKbG3yJ/VbrAHPCAEjPYlVTyL8tP8MIs+C4Y+s0AAAAASUVORK5CYII=",
     catalog_white: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAADCUlEQVR42u2au2sUURTGf7ObbDQJMRiQiME0RgQFG1GxsFHBSlRQbC3EykLwHxAbBbG2FG1EbBQbQ0DEQhQEURtFJfhOjBqUPDbJ7GeRc9nLMLM7WVfixT0QZu6dk+/Odx73Ts5JJImQpUDg0iKw3NKWU68TOAH02rgXGLD7SWAUuAm8zGGwXcAeoARs9J7FwFtgGHhg4/oiqd7PTklflE8uSCpm4PRLepgT57Gk9TnejajOLnQAuGX3c2bBhUT4uWvFrHoP2GtjJwPA+xScQko4OxyAQeBdox5YJSmWNGNXSZrPsJh7/suuxzycoqTXplOug+Pmy6Y/KqmtUQ9cAk6bxUre/FOgbBarADs8yzkZA9YBAvZZXE9bLjl5A0x4OJuBbrsveOvutpxYsgdue1ZxljkkKUro9UkaM4vFphvbPJKue9Z3OJclFRI4HZZDsbdmLOlqLQ/U2kZnE/E5bvmQdNk34JRnNRfbg/Z8rY39tc4kPIZ59WxKXnQ1eg5EXmgUgI8pizqZSJlb8LbHtETN+16VZh1kc0s8T6Iaa0T/2kmsv6zfFAKl0L+F5kInsLL1NbrMBMqhEnD78M9QCRS8EzVoD3wO3QPB70K9oRP4GjqBqBVCrZP4zwhMhn4OfA/9HNgQugc+hJ4D06GHUF/oHugJncBUE9cNoqyixCaQtjE0ip2LQOzpVIBtQDFDtz1lzhW7OlJevCvnzpeFnYvAKg+oAqwA9mfonaNa13eEx+35cxv7WBcTxBzR84mXrwA/asZijfL6EeAG1TK3q5Hep9qs6AQOp1hu1pI+BrYYiVkzgsOZBO54hA+SXl7fCjzLDrDs0nXRWkuxVxafz2huuAbHlF1PejiRpBGbn8nZ4HB6wynl/CW1mIaAV3bvt4YqiVgveCH0BNie0OmxP4hKHk6FagU7DQcWmySfaqd4/UbakLV68sgVSe0ZON2SruXEGZG0phlNPicl4DjQ7+3jJa/gFbHYZn2RA2sTcNR+x50Hq+1TZQa4CzwiZwU7av2vRIvAf07gNxLl3pyUagR7AAAAAElFTkSuQmCC",
+    copy_black: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAACmUlEQVR42u2Zu2sUURTGfztm89iYRMEHxIgsCGIREC2sRIRYqeAfIHaWPgqtUihiYyH5Awwi2KcWkaDYiIVCCIqND0QUNCQkbsxjM2ORb8h1GLKvc80szgeXmZ2ZvXO/c8/9zj1nIEeO/xuFGvf3AueBcp3P10Kk4xowCTzTuRdil/VCn+01sMsHgVG94LfHwVecY8nShQaBr8AvYLvObwNTQNiiYQJgD3AWuAQsavD3gOtW1r8hv1wGfrRinRqIXXQZWBC5piyStnADoBN4ICv5wLhmNJSR+prppCPlWtU5n/aogIFat353WREoNCCzrWAFeOuMY8mKgJUr1kIIHHUMVU3pJ/RN4AhwEzjeBJEwYfVeJ9DFA/8IjAETjSjgXUerL27y3Ng/CHRxmwSKVlMPcAa4BswnLLpi2GLMA6eA+1YzEADfpd+rwCvgoFSkaNQ6gZ3AQ41jQcchCwJ9ia3AkGep/SRDrQFXLVyoX8dubTe+eSQQAo8lNgGw34JAKaEUPmMFctW0INuSfm9VzlKwUqHMICeQE8gJ1FdFaFsCpXYkEDlaf64dCTzX9UXtOk9nea2kJTRPgS/APpF4osTig+5PKaR3ZJXAKnBCu8CSSJTZKC8ubcF2ouFF/Jn1kt+jlIVczLoLxZhRPnCF9WpdIMuXgZGszEI9fjynFqMiMtV2jcRRlqJ4M4OYS/zXd7SOrAkEjhqVgB7PBIadRCqyWjcVNr4d3PKYVg5L1uMCwshm6VojGAXuqGbTD7wBXshK79Vvr6Nmg8AO4KeKAV3AgOo/s+qjR8FyVrN8Erjg1IhmgAMiZDILL/H/Fcft+7D19Bb5u4bk8zvaoXoy/maxW1uPY8A2g37jhTot13yXpa1Ljhw5jPEHvCQgqkegrrkAAAAASUVORK5CYII=",
+    copy_white: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAACzElEQVR42u2azWsTQRTAf7tWWzdtFGkVqyI5CCIIogdBKCIoHlQQvYqC4FHxoCcPgngSpH+AHyDePYuIH+hNsFCKRZBqEfGgxRJrSdJ0n4e8pWPYxHR3xmZlHww7m5DZ95s3772Zt/FEhCyLT8YlB1hp6fnL95uAk0BJ772Uz4scbhF4BrzQfooRReKaJyIXxb28FZHBFjp01LwWUegacBOoAH2OrD8PBHod0uuyJQ5gGPgCzAH92r8BjAOhBZ/bCBwHLhgQt4ErtpbQVRFZFJGqiHwTkSCNidu0aIlWReSniPhJxvFbOK4PrAHuJzVtB3JXLRqqFQZsRaG60Z9wHMJ9w8d6bQF4Lfq2pQa8M/SouMgDLhNiCOw1JqoeM07oGmAPcB3YnwAkbJr1gpHoIsU/AqPAo1YwaQBGgcuOdwqbgQPAc+AosGBrL3RMlS83zWjNYoukDBwC7thauz5wTx8SAG+AHdrvt9QGgA3AA6CoSfUcsNUGQEFzRV2X4CngA1BVE9toNeAHcB6Y1lAbAqdtABT12qcz89WhD4TAY50oH9hmAyBoihSeY0eutkiyqeL3v5S2iTU/UuYAOcB/DiBZBwiyCCBGrD+RRYCX+vm87jqPdLOvxJ0HngKfgS0K8UQPFlP6/bixketKgAVgBPhkFJ5KLJUXKyuwnVi2E08Dg8DDGEde3e1LKJIZ4CxwiUa1zteZLwGHu8UKnazjWW2R/FKYelYzsXRTFk+ixGzTb11na7EN4BvRKADWOgbYbRykxAbAHEsFX59GWdxzqPyIPs/XHPXncS3ha9boBUhZD/ljwCudpfcKVDCi2TCwHviuxYBeYJ1RfSiqJaf03gcOAmeMGtEMsJ2m4lZSgB7gNY2Sosu3OObYu4BJW+eBupr2lkPlo9LNGLAzTvk0FjBlSGH2AasslFoihSZU+cl2SdPL/2qQA+QA2Zbfml/+nwfhp+gAAAAASUVORK5CYII=",
     heart_black: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAADH0lEQVR42u2YS2gUQRCGvxjz0CRmlRhfIWAkQTQhigqLkggi+ECNCEEPggcFCQjqWcFD7h4CgiCImKsgCAqK6EFEEPGBHkREZJGg5qBh0U0cxvFgDRRNb3Yem50szA/DzOx0V/1V1V1dtZAiRYoUKWKgJuT4ZmAvsANYIvNd4D1wC8gBXgkZtUAXcAToUb9PA4+Be8DvchvaDlwGZoRgses+sHEWZw0Cb0vI+AVcEmeVBYctCvKAI94vyLs2bgyoVzJagLvqu57jiqy8yPbHOMBAXPIXRdiMKDUj4FqMK8jzZ/HiYuCH5XsxGY6M8X8/GpX8kFKqlVyVtbtIvNwuSt4YBDzgg1oymvhDYD/QCjSIrK3AbcMQPyKhI9GqlDrynAO6Z5mzABhRyl2DjL9UdpXQ3QdMGM4oSCQD44phQE7WcRBsN+ZqEh0BZbQA34woXAhKvl42lKvC3h0ygnssa74vpIyscoQLTAF1YTzoW/48ZgLwJOdHwSuVRDygN8ikQzJ4Su7DMc+PthjzR4VDXu7nzQELLZN2q02JZJKo+B4zjT8z3tfaMoeJldVUC9kMeCr3v3JfnSC/zcZ7LogB74xvIwkasN7g8jrIpIxx8DhAUwLkGyQT+lxc22Fmi8BP4IE8/5GNfiYBA84J4Wl5Hw9TZm+ylBLrKki+xygiPaA/rJAnSoh/kHRWgPwyYFLpdaX4C9t8sVzVMY66Vs0h+WbgqyrkfMdlogocUGWFLszWzAH5DPDFUpJn4wo+buwHPzt1lZF8mywbf8n6ddixcikYUsIdtbG3lUF2r5Kn99uJcoc4q8Kr1+e+GDJ3qrZyRjVBg3O1yTZYeteo5fIpi9fdKOkyLLpUk67z9GiEXkH/UTAZs/QOnas/WYwYK5Gva4HrFvI5YGmlj/om4KPFiPEirV+dlCgm+UdAY1LVYqOckp5q3D3gpVEAtgIvLOPuSFQS7yluWDw7IQfeCtWe6kjdLFJMJoIa/v93ahaAXpGsdXa+dngnixjhqsicnu9t6kGjGNMH1IFq6bW3WJZRP1WGDuCaXJ2kSJEiRYr5iH8YSWtHQisA6AAAAABJRU5ErkJggg==",
     heart_white: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAADoUlEQVR42u2ZTWgVVxTH/09tjJpUUzQRDUJTDFIjVarQphghKNrSYslGF4KLFopQqPsWXKS7ggtBcCWl2YpCaQuVUhciiogf2IUEkfIWKTXQtIimz2T8uTkDh8t9ybx583w+fBeGOx93zvn/7z33fMyUALVyW6IWb20CbQJtAi3eltU4vkvSAUkfSHpdUklSIumepHOSypIW88tLJQ1IGpM06O7/L+mSpF8kPcmMCMhy9AIngQoLt1+BrVVklIAR4O4iMh4DJ4CuLNiygP80ouARMAckwKxde3KngA4noxv42T337yQm65HJTtscsLteAt+YsIopDVcgiZCbtfM/bRZXAjOR59VkzNmY9P6hvAQOOqVeyRlgEFhhs9xrSu4EAAAmncl44L8BHwGrgeUmaydwISCSrsjuWgmsdkrn7LwMbF6A8BLgmFOeBGBSUxldZNW3AVPBZMzaSmYmcDogUDY7zrJnhoN3PYj+jDK6gb+DVfg6K4EO21CJW/bNGRWnx/6IzW+rUcZ7biIS4D/gtSwEhp1ygOs1Kg4dAMBYThm3nBMBGArHxCLxWuvnrf8uZ5D8VlKfpHWSzueU8ZP1T63flyUS7w3SjMk6Iv3DOjOFq8H1m1lyofWtnsxdsf6Z9RuaiG9HcF3OQuCP4NmxJhLYEmC5HQ4oRYr6NZKm7aVn7t7jFwx+uaR/JHU4At1hphpbgX8lXXS7f5mkL5sw+8clrbQ0W5Imoml2Ff+7PZJKvJXTl+c5BoMkEuCdWpO5y05IGkg2vQDwbwDTTm9iyV8pNr60wIetdZKmLKD5eLFJ0l8NMpsuSfctAM7bHuyQ1GOmXVNNPC1pVFKni4SS9EDSxgaAX2OlaQp+3sC/Xw181pLySLAf0rR4oECzWWtmk5psmocdLqKk9MVNxaXIALsKAD/k5Pn9drSomjhMb1MCqaIP6wC/x5WVFVcEjWSVUavCtyO1a950+fPIrCfV3GVRBGS2PxPx0+M5agX/oWDa9oIaTSD11Q8iJE5V89d2LAXORsCXgZ48WOrZfKuA+xESE7HSz+5djID/HejMi6NeD9JpURJXuAPcNIL+K8eNyLgfbVXULALp55TvIzM7BWwE+qwgD1fqB3tXzSaQfvc8GUkAqeK1vioqCBadiH1WhUTiVuaLInU2Ipv8xM14JQhQHxetr9Sg36zvSroWZLHbJd0pWlGjCEhSv6QTdj4eK8hfdgLtf2RtAm0CbQKvAIHnt9XEHUOvWhUAAAAASUVORK5CYII=",
+    level_newbie_black: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAAC2ElEQVR42u2YSWgUQRSGv0wSzeIMQUQDigTEuERcGA+ePARXlBG8exJE8OBBBUEQTzmJEol4EI+KN/UgKOhRJBBGhqDBBQkawgTE4E7MjO0hr/HRzIzTNd1VLc4PRRVd9V6/V8vboIkm/m+0xMCzExgANkp7AbwGxoGvSd6MJcAF4BPgVWg/gBvAqiQKv7OK0NXa0SQJv1eE+ib9NHAGyAKbgC3AcWBC5r9IfyIJwveLMLPSnwLaqqxNAbnA+v0uhW8FpuRue8DhOul2qBObBzpcKTCo7vRISNrTivaYKwXuA2VgDugKSbtYndxETOa8JtrVY7xjyOO6OoW0qSApQ7q02H2Ax4Y8RtU4Y1sBfWW+G/LwqoytKDCrxssNeSxT41+230BKHJYnMY4Jngr9HLDIhRW6LFbIk6AtDNYKXRm46cqMrlA7OCmWqV4L9lyZ0c0uvfGICDEPPKnDq3bIOt983nYdC7UDb5RAMxLvdCnn1CImNyfz/tq3LsMIjW6gEAiXy0AeuCV9MJx+KXSJQStwss5c4GyI92I9pcwA+4BDwHb1fQy4BzwAPic9J67E26OJ+E4gBfQAfVKNWCqZWioQKkwCRfEB74GP8tidYTVwLmBGw7R3wBVgne18YAPw0FDoai0vyX+saAOGK/x8CrgKHJAYp1dsfLc4NH/cK/O7gfNylYK8hqM0scEUcEyFDZ44qX7xAaZvp0+ukR9TecAz+V+kO19QHrYIbI14g9ZLeO5Ht4Ua5ZnQ0Ds0zkLtMw50Cn//hC9GwXQNf+qaMzEKr5UoqlB7ZaMM7zaQtJgiq67rtUYY9SjhH1n2MXl18sanflCZtz2WFTii/p01rUoMqnHBsgKjAQtlpIDv3kssVOFs4kMg12ioLvRTmk3o8HtbFIUt68VXhVd/87K1UJLmIswvKWtopIAn8xkHGVVJyTZtyiQNXAJ2Obo6OWDIgvdvool/Gr8BW8T5yl7jRnMAAAAASUVORK5CYII=",
+    level_newbie_white: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAADR0lEQVR42u2aTUhUURTHf28caabULKI2ElIkVpJZLQxCqE1FYNGmRbSIIIKgFhm0CGodRSC2bBdR0aIWSUEtC4KoJumDigrsE6IPLc3U+bc5Dy6DTjPvvXlPwQOXe5h37z3n/+695+uNJ4npTCmmOc0ASJrSFVgzC6wEVlh7BrwC+oBfkUuTFFWrkXRS0k9NTMOSzktqiFBmZAA6VB7tm0oANptSv63/KOmopLWSWiS1Sjog6bk9H7T+4FQA0GTKfLf+iKT0JGNTkjoLxm9NEkCVpPd2tiVpZ4nz2p0dG5WUSQrAJudM95Q5t8uZuz8MAC9EKHED2AKMAfOAoTLmzgJ+ABnghZlbxenIqoEOm99bpvIAI8AF45uBmrg9ca0j9E7ANe47fF3cAGY7/FBQHzoJHwuA7w6/MOAaCxw+HzeAYeCT8bsDrrHD+r/At7gB5IHL1reYFSmHlgHtNv+qgQhEYczoIuCzCf9kSo2WaMEeA0vMjLYCT5KKRnvMGY1KuluCV83YOJ8uJR0LVUt67Sj0xeKd2ZI8G+NZqN1pz316EzaMCOuJfZoD3ANWFdyRnHnZZqCtYM5LYA3we6okNFWSDpeYCxyznYtEthdxWaXO4qPtwDrn9wfAdeAmMBClQK+CdSEvCk+bRFJfcaWjBpAC6oFGq0bMB5oKnGQeeGd+4ynQb953PEkAi4E9wF5gaYD5/cA14JxZJcVlhZZLuqVo6aEl/xW1QmngDHCo4PcPZmF67U0OWvPvgefkELV21NYDuyaIobqBrhJDkrJ2YJakB07YIEkXrSpRFdCGpyQ1Suq29Uasf2TyIgsl0pJytvi4pM+SVkdZXZPUbPWkcZOTK1KeKRuA+4b6JGUjVt5vWVvf3+HTUdyBpcBr4I950EZLZipFWeAtMNdC7Qa7Y4ETmjNmwzPAxgor72d620xeHjge5hLXO2fydoWOzWTtoVPRLnpki+3ABmeHTsX83eKs9Zn/pavFAGxy+FzMANyaUXNQAL4DGnMcU1z01eGrwlYl/oapGkQQybZFUVbxEvyO9zJMNDpmLW7yHLn1QQHIntfFlZwUvDhft49BAZywvjeBXRiwvLoduJJUThwLzfzVYAZASPoH3hzXoBk5qJsAAAAASUVORK5CYII=",
+    level_regular_black: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAACiklEQVR42u2ZPYgTQRTHf4m5cB+iiShoJSfHcaAIKocBCwtBK6/STq655qxsFCzsbMXKVgtLLQTBThALm0OwObWzVokcIeLeZd2LzRt4DMnmYzKzWdwHww67eW/ex3/evDeBggoqqKAUuigjl1QC2kAElPNowCmgK2PZ1yI+PbOu5pt5834Z+C7eTwRG1TwZcFqUj2R0gUaeDHgsSu8Bscxf5kX5CrAj0ElEeWPEwTxs4vNADego+X/leTUPEXiq4NO1IrA17crPiuKJUt424ug0Q6gh6bLT45uB0Y1pjsALy9t6mKh8y7K2KasxB8wDC/I8aynaTYHRNYt3HphRskujKGXTKnBLHUgzMq8BxxX0xsXyfh/o/gF+y7cm8FN92xZYvgbeDVrgZooHbUjoEQ/JZyJh8w/DtzGslxaBH8LUdlhwlNHLIW359gtYGTXUCxIyU9P4UDrNGFNDvQUOuWzc20poHED5WDnr7igbOo3OqZM18qh8pJ6rk06jNeC9R0hFqtyo+2xU7lubbhJ4N9B8CBwIcag11KKJo/Jmfjn0yXwY+OgQCeP5zy4Fnksx1wK+iIz9MU/kihjQzKI2qlopzwVCc1lEYEk82HGQYXhXsjBgbQIyDO/1LErrrwOyUCKH396A35geoRTSgCMpjYvdD6e90zKOhYTQBatN1JllVzb4NnBSeoqmvNtNaTUvhYzA8x5e1fN71ok6CzzpUxQavlchL65aFoZNHbMjrWU/utKDJ/j96ZJ1bWi8+WzIfF4H3ij8xyoKZ0IYcEc81lIeXBsji60rfiPrQQgDthQMPjheVJ0QGQZGn3yn07ry2uaEFrOjUfdpQBV4hJ+/jJZFdoWCCiro/6F/s8HR0Qyae+EAAAAASUVORK5CYII=",
+    level_regular_white: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAADG0lEQVR42u2aPWgUURDHf3uu6/mdSIwfjURDiCiCETESEEUQwc9CO4lgBKOtH2hvaWmrhaWNoFiKRBGCQYKgks7OQqMxoiZ6lxsLZ2FYbu/24/ZyCzfw2Ld7O/Nm3vzfm/9bzhER8iwFci7tANoBtHgA+7RlJk6Gu5AD/ABcYCVQyVsGeoBVQBHozSOEhk1/NG8QKgCfgA0Knb/AWr3mIgPb1fl5dboIDOQJQiPGvqv9q3mBkAt8AdaYIMr6fDXws9UzMAB0KHR8+2W9HskDhC5Vse3D6GarQ6gIzKrDwcnxYbQemG7VDAwCXsh26cPoTCtD6EoAMlY8vd5YLAg52nxZZp6J0oW3WrjCJsaH0VHgpdEFKAEL2hfzPHYAe4Fz2t8BLNV+B7DRZK4r4aSFBfhbt9iCrpHP5rd3CsvHwPN6AZwFHkZ0JHjvRgyiXCWIKHC+CNyLAqEeYBzo1lkpJhwwbmaC9/PKaL8BQ8BU1EX8EdgKPFEDZfN+IaP6EbRd1rGf6YROVdUSkVrNEZHL8l8WRKQk2UtJxxIRuaY+hPoYdRfarZDyNK3FjEigb3seOABMNKoOTCo9fmEGqGTk/ASwOYrzcRfid+AQcMtkoNKgxVtWm7eB/cBM1lxoUAuRW6dwxakJB4GxZlGJcS1kb1JkoqLtgxK8saRbV1KZ1cELKQJwgfdp2GkaOu0Bv1LWBR9CK4C5ZmegV2cwzZcGX7d/Mej0yQbY8HVPNBtCjuK/v8YuVDEUxK3xTkGpy7aoFLoRAawDvhp+Xw0aXoRn9ozQrV8zmgKhPYFjYpBBesrht+iZYtrQkLCj5lAiT+qQubD2QMnWH0PCbP+6iCwx7xdF5G4IKfT1HiXxJYnzrojMGmdEROb0OiMiu2roHq6i49uZExGvGQH0mpkrmdm8LyLLI+h3ishTQ51LJgs74/qTZA0cM1h3tZ0CLkQsRjPAceC80ffXxulmrIHXBgavRKQr4TpCRDapDR9Gk/UOMGkh1GlwOxp3sBqnvmFjtzPLADwRuSMifQ1wPNj61LYbR89p/9WgHUA7gHzLP/2Q7qNFoR6bAAAAAElFTkSuQmCC",
+    level_vip_black: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAADRklEQVR42u2YTUgVURTHf5rpM7MSjIRSKSqxInCVBO2KFmJRBH2R1splHxAlREFQELUoCJKgCIIWroKKEEIKEyWCiHJTUhAiSkSIPF721GlzBv5Mz/fum/cBwhwY5s6de865/3s+ZyCiiCKKKKIcaEkBZZcAx4F64OtiPJxWwLNrbaGUlBYQwDngLzALnFxsp18BxIE5s8BYgQ8r77TbNh4HEjbesJhcqNPuMaAMmAeOFfMEV+YArhKYsVOfBH7beDwHmUttT07UbgqHQyrcK9nnMHBeYmFjCHkxA+8BbS4MPUDSGC6FUPhCACyzOuA/Xw0hr9d4k8DlbCwwZffWLJRVyWkPS0H7YXMTWVr1VGAv21yY6gRxwq5qR4VtAffx6YIAa3KUtVky2Zztx2kfZRZ8ngTjoJ1kJuoTAKtkvkHmrztacsr0++78yXEPADwNWMEDrmXgqZZNDqToi77Zu58ZerAS4/cP0D/Eu9kEzhljSgTu7Wl49gmAgynen5X3W9LI6ZbDc9X9H7WIkAG7x22ucQGeV7LBVDl7nby/maGCJ8yFPgqQxmwLma/siuT2uLlALLB+hazvT1P1x6XABd2oIZBxdgCPxJUqsm0xJox5xOZuiFX6A+nwgADY7+CaHtAs88uBabs84IjJ991nKEz5fiLKKi243kg6vCdrB2VtulS3PkVRKwdGJVh7UrhcdxgAJ0RAS6CsJyQl1sm6PgfLjtnaUQOrqfe1WFat2hoGQLMI6JL51WYFH8S0xUbSsVe5aGunxN89q9blsu6WvKsJA6BKBPSmyChJiQnf/FUOchslISRl89WBWjAiAR+qiy2x6ucBv1JkjZpA49aVhew7wvfQYmyhnupxLt8F90VR7QJragNtgyvVpnGNJtHbmQuAQyJoZxE/qI6K3q25fFK+l/GeIgLwdc0C33MRFBNffFekzWvF/pJNB7oQDUm2qSgCAG1jHuTjr0SffCfUFwHAJhm/zAeAtzLeXgQAu2T8weXrKxN9tvs80GEtbqk954vUzzskgMfzIbzM2oYZ8c1CXnOma8QlgF1caBZ4FuhTCp2FyoHnBsjZdJn+tp0G1hT4l6TvlpPAbeAPEUUUUUQRRZSG/gG68UCG6G0RPwAAAABJRU5ErkJggg==",
+    level_vip_white: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAADsklEQVR42u1ZTUhUURT+3jSNY2YqGBmZVpBiSGAtdGOromiwqE1RZLVqZ9ambBMECVGLgqBoEVEQ0SqoCCOkMDMiCCl3khRpmvYziIw1k1+LztDh9X5m3vzUwLtwuZdzzz3nfPece9575xkkUcgtgAJvPgAfgA/AB2DbDAB7AWzNJQAjh8+BFgADMq8GMFpoHjgK4AeABIADheaBIgBfAITlkEYB1ACYKxQPtAJYAGBW+jIAKwophPbLGAYQlJPfk88QKgMw7dHlxQC+AQgB+CRjOYCPcpm9yJwvHo2m4oE2MeCZRw9tEKMBoANAtxi9FMAqD/LCAN6JTZFUAEQkczQDOOFBYYea3wVwS+lp9yDvuoBPAFj/1ypJc2/j7xaVscWCx66XkPwp+54LzSD5XmjjJANpyDtosqXRzGO1qUqY4yRj0ktTVBjhn7ZL0Y8pYPUpyqoT/hnZG7eyw2pjkOSEbP4uY7+cpJvSHgWgXNFrFL07RU9GRX9c9r22ssFOwB2TF0jytIvSUmVkn2nNIPlW1iZJznOQY8j+5AEmD/GiFb+dkE7ZFDONbQ6KtykAOy3Wj6j1NQ5yutThueq2E9KkhPTJOCO0Wps9j5SBZRbr1Wr9rI2MjcroKMlBBaQ2HQBlStlJkpvVhZokGTbxL1L8vTYyAyTHhGfCIoxqTBmnmeQ1FUpF6QAISMojySGhnVFe6TWlwx0KwHaH8OhUfA2KvpDktHSS3C3yk+EzYCfT6VLeVMqK5XI9UenwkuLtV7xOKXel4jsltBDJYXVZL1uEXJcXAPuUgCahhSUMYiolVim+HpdMFSD5QXiHBaxOvY+VZ7VXW7wAaFACDin6YvFCEsS03I24PMjccvxx4Y2qeKc8rUOK75xaq/ACoEQJuG2RUeLqTiTdX5ICgFqVEOLK+FLTs2BIXfiAFwCGPP1I8rNF1qgged/GS279gtp3Ve6Y3TvVDSdZboquKEWVNjyVpteGVHulQ2jUK737neS4ve8/VPM6G54peVdPt00B+Gqztk7NX2bySak3b8pjvSqpKwFgJBMA4+oTMJLHYtsWmY8AiGUCYBbAC5k3Sbkk161UvsAAoA8AM61K9MgYBLA8DwBWq/mDbJRVnqr52jwAaFXzV27MwRQEvpFxTj7KBwV4Nqtshpq3qws8lo3SYlBqRAFVLsllmxPjhwE0ZuMOJKQ8EspjFgoBuOdmfDrF3WIAhwEsyXFJMhmWEwDOSxb8Z/8H/F9MPgAfgA/AB/D/t18P2whBIuOcawAAAABJRU5ErkJggg==",
+    share_black: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAACR0lEQVR42u2ZP0scQRjGf3f+R6NCQBQOJRCJYKFWVpYp0qTzA4TUYmmEFEKqQIhVME38ADaKnWAjaqOQoGWIRQgRgwgml9PLnbeb5l14Xdj1mP3jDuwDwy07zO7zm3ln5p09yJUrV1IqALPAHNBqo/kVwJWyDbTZZH5VjFekuMC+DRAF4JMYvlYj8E9+d7MMUQCWVc+7qjTUvd2szol3AeZ18UZlK2sQb5T5hlyfKuOfgW8+wJ2shNOSMubF+iiwoABeA13AuQCWswIxL0bKyvyU1L1VAB/k3qCEkYZYl/lzL7oQ4575CVW3qACW1f1BNRc8iD5TA8WIAC+BdnnOJHCk6v4GtDkDHgHfgR7gFfDb1EDUlWADeADcAFVf3cOQdmfAY6A7inliWsqCevr8jnY3Uc3HEUJh6k9jEiYJMGQ7QM12gHoWAAoRIBsx+Gu5a5MLM1cCjoGvwLDBy8sRzY8DP8XDgMkDVtVOumbQ/n3ATtysvqj2H032gUvAidCbceQ33vuvTQBaVIiZmHFjnKPF+1iFqrYvo5WYRyOxXChIvbKZOXKYsW4ENiXV7pQVxboR2JczQgdwaCMAvgOOdSGUinKAHCAlgKKNAE7ahxNfIugGeGkaoC3t860v9egI8NI0wA8hrwLPuP3VLWk9BcaAK/FwYJKzlwTiStKBIrAHnMi1k0A4O2J8Wq5r8u4+4I/JQ+dkOOuEf/ePu+jP9LNRe+YFt/8uSquUgedxHft6gBngCTCS4LLqAL8kh9qR8M2VK1eI/gNP1916cmV+agAAAABJRU5ErkJggg==",
+    share_white: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAACd0lEQVR42u2av2sUQRSAv938MhqjKCqBoIiKgopiY6WdhY3Y5A8Q65AyFqIhtoGUqbSyshI7wSbENAoJWvqjEFEiaaKX5M5Lbp/NOxyW7N6xM3OX0X2w3N7tLvN9O3Mzb2Y3EhFCjpjAoxT4lwUiYAwYB3q9lSIiPrZIRObkb7wSkT4fZfmCf6LgG7qJiCz6kPAB/1iBq0YN/NbPBdcSruFnjTtvRsP4bUFEenejwEwGvBnNWnnpSsIV/CMDvqH73w3wJRH5lBKcd9GcXMBPGWDNtn5GRCYNgfsiMigiqypYcSVhOw5MAA+Bde3r+4ErwEfgkHHeCFAFLgJ1YK9ecx14pmNGVwayBwrUr9tlYFmPrRnn1fVzBTip34dU4jYw3C2BuwoeK/w749h6xjVNiS8qcQ/4WRTAdoh/DuwHtoFa6tjhnOtWgNPAPht4HOUoWXd6tcV127bwvpO5g6FnoyOhC9RDF9jaDQKRhWTDAV9Pq0EuD24UeA98AI4XKLxiCX8e+KYMR4sITAMXgFPATAGAI5YCT4FjyjBdZBxYAxKLuxk5aELN8qtFBHqMGioCIw7/o3E3eqFa6N3ohuPa8JYLZcWwDmYJMBhiDbzQVHuPMUcIqgYWdY4wALwNUYDUBKdc3C0FSoEuCsQhCiSdnpykEkHJYGlboK/T89tU6jGQwdK2wFc1rwE3gUsdFLgBnAM2leFNZlXlPCceVYlNTQdi4DXwWfcTD805UfCrul/Xsg8Av3auq/zV33FdRd5qse7vOsxl+jHb5fU7qcdFnYqKiNxqxRe1+arBEHANOAuc8NitJsAPzaHmtfnmd1fluxKlwH8u8AdiWuVVkebCOgAAAABJRU5ErkJggg==",
     user_black: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAADTElEQVR42u2Zy0vUURTHP6NjqeWzAhHCXCQtgjaZGBm2iKAHPQhqUZtWbfoLWkYh9C9Um+hBmyCIqEWbMMNCekClFFhqGIVhMU3j6EwLvz86XEac328eV2gOXH6Pe8/9nXPvOd9z7vlBhSr0f1N1CeasAjqAfcB5oBdIAmkgsZIXowo4AgwD2SXaA6B7JQrfCAwZQRNAyjwn9S54vg7UrBThW4AfEmzWWfExNfvul67DQNy38HEjYMIIvQdoAGJqLcAh4JujxG31e6NzjkA3l1nVNcbUAp4DvoRfLWQJEOaxHDkfvlHDm/LlD33OSraF4N3q+My2QqAvKh3UtV52Px2C9y0wBax15iqrAh1mjjsheTOOyfX4UGDO3L+PwP/T3Hf6UMCiTRQkaTX3H30o8F3XeWBnSDyPK1ealzmN+EChfiFIEIV3RECwKLxFoxpBaErtgzA+nzjwVXEgJSW8pRSnHDwfAmqXSfoGHZ4TvlPoESegTQJHJWyNWitwUpHXjh30nQuhYDTqCBa0tFrwvGDGjCyzW2WlVcANJ2VOGv9IOMpdE8+Ko73GpHK1R8U+kZXK/hqBLUCXIvZrYKIUZ+JYkeaoM/cZBahc46rl+FmN++OzmtENXDIOHKU9EzqtK5fgMWA/8M4RxDpsynHehDnkp0wASzpzXAU2llL4DcAT88HZAlY+61QwbMXiQhiEytcHeoGnJg1uNGn0FeA58DIHtLZqbAr4otUP+np0kDmrd7/NAWlC+dF0MVZ+l1YmZVZqUgJUFWH+ZmAgR9klDbQXOnmnsfHAZi+XKAh1Am+MWS3oWl8I0nzmX00zCxwvQ4b70Kkz3Ys62WHHWS+VsVj2wuxAFtgcBS7HNEkaGKc0leylqM0xpbthJ+hytvGYh2A5YPxvgcVSZd502tnCBg8KbHLS7/4wh/o+9dWqYuDjx8SEYk5Q/NodRoFm0z+jxMs3NYZRIGYqaOvxU3yNSb5g8dqXK05ZesXi76KMAswnpQ1JweqMxtUJMab0gUDxAL1qNTatgFRv0CyrvjjQZPgW9N0mmc+cxoxHjcDpIiVtUZoNotvDbuFFj4Jnc6TasSjZaD9wRtseK1Lylg9lJDjALeC+ea5QhSpk6C9h44vg5KCqcQAAAABJRU5ErkJggg==",
     user_white: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAAD7ElEQVR42u2a24scRRTGf72XcR3XySYaCQsaRkkIik8S14iKgiKYSOLlIfjokz74VwRCwH/ABy8PQhQfFAXxBiIEL2iMN1CJt5iNIaAsJM44uzM78/nyNRzajE7P9EwT3IKie7rrdJ1T9VWd75yaRBKXcpniEi8bBpRdZsY0KNcBS8B+4CzwOvAjcA4odtFJKqpOSTog6VP1L29J2l1gn4UZUJP0cVC0KWkt/G75WVpelDRbRN9JAdvoZuBnYAG4ANTCux983RGeNYB54DPgdmC9TAjNSDoZRl3+fY+kKyUlrpslPSjpd7f509eX/b40CD2VUeiojerX/ooAtVRmb1kQusxwWPdudgy4F+gNIPc1cL1lpwypzqT9wK1WPDXgsQGUB1gDHrFMG6gAN5bhyPb5WgVOeo8ftHwL/OaRj9+aqAHbwzdeySnbA94P/S+VYUA73H8/hPyFcF8vw4BIQ/YOIb8l3P9UhgF/+Lpuh5TkNP5+y/aAE2UY8GrwrNuB3Tlk93gGGtbh7WGVGMUPzAIr3gYBloGbvE3+lx84bQN6wF/A1mEpxSgz0AGetAGrwA3AB8Dcv8jUvPtcY8UrwBMj8aECKPSJDDU4I+khM9RZ1y2SDpqVxrYfjsqFimCj88DnwM7ANAkLPO5YKWTmgS+8+FfLDikbwM3A0aB8w4r1gtKNwHteAG4bVfmiIzIk3RcgdbHybtERWTKmvFAN2GVYtc0+l4Fm0R0VYUACXB7ue312lQSYNozkdiNDaNg1MG3Hddg8qOnaMN7bF6lrYS00gRbwCXAQuGpSayCR9ICk7zLYbjmIz9ZmqOmzjq+tzDeek3TtOEPKrZKOhQ7Pq5jSzGQsDkmqFL2I9wAfBRpcCzT6WWcYvszIVEwXaobP2RA2VhwD7LMnxvBKA6RlR3znioDQHR6ZtTBSZyQt2ROPuhUuSDoSZiD10h1Ji6NCqB4wnmL26TxTnKPWJX0TYNX1tTqsAdOSTnsk0pF/dAyKxzor6Z1MnumNYQ3Yn1msh8esfEyWHQ8zIEk78hqQOMPW9Qyc8owwobotA6XX8hqwMzOND09Q+bQeCeuv61TlP9r188RLmSTVeyWcXTwTaMkUcEseKnGn3805Y9AswYBl+5yUot+Vx4CF8H5lwJThuEstjwFJiKCudgA/6ZJYv3TwFvOckX0FHLBwHfjVtKEFnPesYBq9zXnOxWB417Rhzm07pghVM1lMqVesw6Yg13W/mwyfttucyhMP1H3qsmrhmZJgs24DqqbvxweF0C/m+nMlKp8ipAo878RB7ojsbuBxT3vC5M6Ve+E49iXgzX7Hs8nGfyU2DPifG/A3DE4uS5IRbXgAAAAASUVORK5CYII=",
   };
@@ -4376,6 +4391,8 @@ export default function App() {
     const [onlyNew, setOnlyNew] = useState(false);   // Новинки (3 дня)
     const [onlySale, setOnlySale] = useState(false); // Скидки (есть oldPrice)
     const [filtersOpen, setFiltersOpen] = useState(false);
+    const [showAllCats, setShowAllCats] = useState(false);
+    const [forceGrid, setForceGrid] = useState(false);
     const [localPage, setLocalPage] = useState(1);
     const [localLoading, setLocalLoading] = useState(false);
 
@@ -4440,6 +4457,8 @@ export default function App() {
       setOnlyNew(false);
       setOnlySale(false);
       setLocalPage(1);
+      setForceGrid(false);
+      setShowAllCats(false);
     };
     const applyFilters = () => {
       setSelectedBrand(localBrand);
@@ -4481,7 +4500,11 @@ export default function App() {
               style={[styles.favoriteBtn, isFav && styles.favoriteBtnActive, { top: 6, right: 6 }]}
               onPress={(e) => { e?.stopPropagation?.(); toggleFavorite(item); }}
             >
-              <Text style={[styles.favoriteBtnText, isFav && styles.favoriteBtnTextActive]}>{isFav ? "♥" : "♡"}</Text>
+              <Image
+                source={{ uri: MENU_ICONS.heart_black }}
+                style={{ width: 20, height: 20, opacity: isFav ? 1 : 0.5 }}
+                resizeMode="contain"
+              />
             </TouchableOpacity>
           </View>
           <Text style={styles.horizCardName} numberOfLines={2}>{item.name}</Text>
@@ -4490,7 +4513,7 @@ export default function App() {
       );
     };
 
-    const showSections = !localSearch && activeFiltersCount === 0;
+    const showSections = !localSearch && activeFiltersCount === 0 && !forceGrid;
 
     return (
       <View style={[styles.page, styles.catalogPage, isDark && styles.pageDark]}>
@@ -4506,15 +4529,25 @@ export default function App() {
           returnKeyType="search"
         />
 
-        <TouchableOpacity
-          style={[styles.filterChip, styles.filterChipActive, { alignSelf: "flex-start", marginBottom: 14, paddingHorizontal: 18 }]}
-          onPress={() => setFiltersOpen(true)}
-          activeOpacity={0.8}
-        >
-          <Text style={styles.filterChipTextActive}>
-            Фильтры{activeFiltersCount > 0 ? ` · ${activeFiltersCount}` : ""}
-          </Text>
-        </TouchableOpacity>
+        <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 14, gap: 8 }}>
+          <TouchableOpacity
+            style={[styles.filterChip, styles.filterChipActive, { paddingHorizontal: 18 }]}
+            onPress={() => setFiltersOpen(true)}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.filterChipTextActive}>
+              Фильтры{activeFiltersCount > 0 ? ` · ${activeFiltersCount}` : ""}
+            </Text>
+          </TouchableOpacity>
+          {forceGrid && (
+            <TouchableOpacity
+              style={[styles.filterChip, { paddingHorizontal: 14 }]}
+              onPress={() => { setForceGrid(false); setOnlyNew(false); setLocalBrand(null); setSelectedBrand(null); setLocalSearch(""); }}
+            >
+              <Text>← Назад</Text>
+            </TouchableOpacity>
+          )}
+        </View>
 
         <Modal visible={filtersOpen} transparent animationType="fade" onRequestClose={() => setFiltersOpen(false)}>
           <View style={styles.modalOverlay}>
@@ -4576,7 +4609,7 @@ export default function App() {
           <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 24 }}>
             <View style={styles.sectionHeaderRow}>
               <Text style={styles.sectionHeader}>НОВИНКИ</Text>
-              <TouchableOpacity onPress={() => setOnlyNew(true)}>
+              <TouchableOpacity onPress={() => { setOnlyNew(true); setForceGrid(true); }}>
                 <Text style={styles.sectionLink}>Смотреть все</Text>
               </TouchableOpacity>
             </View>
@@ -4588,30 +4621,74 @@ export default function App() {
 
             <View style={[styles.sectionHeaderRow, { marginTop: 22 }]}>
               <Text style={styles.sectionHeader}>КАТЕГОРИИ</Text>
-              <TouchableOpacity onPress={() => setFiltersOpen(true)}>
-                <Text style={styles.sectionLink}>Все</Text>
+              <TouchableOpacity onPress={() => setShowAllCats((v) => !v)}>
+                <Text style={styles.sectionLink}>{showAllCats ? "Свернуть" : "Все"}</Text>
               </TouchableOpacity>
             </View>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingRight: 8, paddingVertical: 4 }}>
-              {brandList.map((b) => (
-                <TouchableOpacity key={b} style={styles.brandCircleWrap} onPress={() => { setLocalBrand(b); setSelectedBrand(b); }} activeOpacity={0.85}>
-                  <View style={styles.brandCircle}>
-                    <Text style={styles.brandCircleLetter}>{(b || "?").charAt(0)}</Text>
-                  </View>
-                  <Text style={styles.brandCircleLabel} numberOfLines={1}>{b}</Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
+            {showAllCats ? (
+              <View style={{ flexDirection: "row", flexWrap: "wrap", marginBottom: 8 }}>
+                {brandList.map((b) => (
+                  <TouchableOpacity
+                    key={"all-" + b}
+                    style={[styles.filterChip, localBrand === b && styles.filterChipActive, { marginBottom: 8 }]}
+                    onPress={() => {
+                      setLocalBrand(b);
+                      setSelectedBrand(b);
+                      setForceGrid(true);
+                      setShowAllCats(false);
+                    }}
+                  >
+                    <Text style={localBrand === b ? styles.filterChipTextActive : null}>{b}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            ) : (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingRight: 8, paddingVertical: 4 }}>
+                {brandList.map((b) => (
+                  <TouchableOpacity key={b} style={styles.brandCircleWrap} onPress={() => { setLocalBrand(b); setSelectedBrand(b); setForceGrid(true); }} activeOpacity={0.85}>
+                    <View style={styles.brandCircle}>
+                      <Text style={styles.brandCircleLetter}>{(b || "?").charAt(0)}</Text>
+                    </View>
+                    <Text style={styles.brandCircleLabel} numberOfLines={1}>{b}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            )}
 
             <View style={[styles.sectionHeaderRow, { marginTop: 22 }]}>
               <Text style={styles.sectionHeader}>ПОПУЛЯРНОЕ</Text>
-              <Text style={styles.sectionLink}>Все</Text>
+              <TouchableOpacity onPress={() => setForceGrid(true)}>
+                <Text style={styles.sectionLink}>Все</Text>
+              </TouchableOpacity>
             </View>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingRight: 8 }}>
               {popular.map((item) => (
                 <HorizCard key={"pop-" + item.id} item={item} />
               ))}
             </ScrollView>
+
+            {/* Полный каталог под популярным */}
+            <View style={[styles.sectionHeaderRow, { marginTop: 28 }]}>
+              <Text style={styles.sectionHeader}>КАТАЛОГ</Text>
+              <TouchableOpacity onPress={() => setForceGrid(true)}>
+                <Text style={styles.sectionLink}>Все</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={styles.grid}>
+              {visible.slice(0, 8).map((item) => (
+                <View key={"cat-" + item.id} style={{ width: "48%" }}>
+                  <ProductCard item={item} />
+                </View>
+              ))}
+            </View>
+            {visible.length > 8 && (
+              <TouchableOpacity
+                onPress={() => setForceGrid(true)}
+                style={{ alignSelf: "center", marginTop: 12, paddingVertical: 10, paddingHorizontal: 20 }}
+              >
+                <Text style={{ fontSize: 14, fontWeight: "600", color: "#111" }}>Показать все ({visible.length})</Text>
+              </TouchableOpacity>
+            )}
           </ScrollView>
         ) : (
           <FlatList
@@ -4655,9 +4732,19 @@ export default function App() {
         showToast("⚠️ Выберите размер");
         return;
       }
-      // В корзину + сразу убрать из избранного одним сохранением
-      const item = { ...selectedProduct, size: selectedSize };
-      const nextCart = [...(cartRef.current || []), item];
+      // В корзину (с qty) + убрать из избранного
+      const cur = cartRef.current || [];
+      const idx = cur.findIndex(
+        (x) => String(x.id) === String(selectedProduct.id) && String(x.size || "") === String(selectedSize)
+      );
+      let nextCart;
+      if (idx >= 0) {
+        nextCart = cur.map((x, i) =>
+          i === idx ? { ...x, qty: (Number(x.qty) || 1) + 1 } : x
+        );
+      } else {
+        nextCart = [...cur, { ...selectedProduct, size: selectedSize, qty: 1 }];
+      }
       const nextFav = (favoritesRef.current || []).filter(
         (x) => String(x.id) !== String(selectedProduct.id)
       );
@@ -4683,30 +4770,65 @@ export default function App() {
     const isFav = favorites.some(x => x.id === selectedProduct.id);
 
     return (
-      <ScrollView style={[styles.page, isDark && styles.pageDark]} contentContainerStyle={styles.scrollContent}>
-        <View style={styles.productHeader}>
-          <TouchableOpacity style={styles.headerBtn} onPress={() => setPage("catalog")}>
-            <Text style={styles.headerBtnText}>‹</Text>
+      <ScrollView
+        style={[styles.page, isDark && styles.pageDark, { backgroundColor: "#FFFFFF" }]}
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: 100, backgroundColor: "#FFFFFF" }]}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Top bar: back | heart + share */}
+        <View style={styles.productHeaderBar}>
+          <TouchableOpacity
+            onPress={() => setPage("catalog")}
+            style={styles.productHeaderIconBtn}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Text style={styles.productHeaderBack}>‹</Text>
           </TouchableOpacity>
-
-          <TouchableOpacity style={styles.headerBtn} onPress={() => shareProduct(selectedProduct)}>
-            <Text style={styles.headerBtnText}>↗</Text>
-          </TouchableOpacity>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 14 }}>
+            <TouchableOpacity
+              onPress={() => {
+                toggleFavorite(selectedProduct);
+                showToast(isFav ? "Удалено из избранного" : "❤️ Добавлено в избранное");
+              }}
+              style={styles.productHeaderIconBtn}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Image
+                source={{ uri: MENU_ICONS.heart_black }}
+                style={{ width: 24, height: 24, opacity: isFav ? 1 : 0.7 }}
+                resizeMode="contain"
+              />
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => shareProduct(selectedProduct)}
+              style={styles.productHeaderIconBtn}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Image
+                source={{ uri: MENU_ICONS.share_black }}
+                style={{ width: 22, height: 22 }}
+                resizeMode="contain"
+              />
+            </TouchableOpacity>
+          </View>
         </View>
 
+        {/* Image + brush accent */}
         {(() => {
           const gallery = getProductImages(selectedProduct);
           const imgs = gallery.length ? gallery : ["https://via.placeholder.com/400?text=Photo"];
           const screenW =
-            typeof window !== "undefined" && window.innerWidth
-              ? window.innerWidth
-              : 360;
-          // ширина слайда = экран минус горизонтальные отступы страницы
+            typeof window !== "undefined" && window.innerWidth ? window.innerWidth : 360;
           const slideW = Math.max(260, screenW - 32);
           return (
-            <View style={styles.bigImageWrap}>
+            <View style={styles.ppImageBlock}>
+              <Image
+                source={{ uri: BRUSH_TOP_URI }}
+                style={styles.ppBrushAccent}
+                resizeMode="contain"
+              />
               {imgs.length === 1 ? (
-                <SmartImage uri={imgs[0]} style={styles.bigImage} highQuality resizeMode="contain" />
+                <SmartImage uri={imgs[0]} style={[styles.ppBigImage, { width: slideW, height: slideW }]} highQuality resizeMode="contain" />
               ) : (
                 <ScrollView
                   horizontal
@@ -4716,13 +4838,12 @@ export default function App() {
                   snapToInterval={slideW}
                   snapToAlignment="start"
                   style={{ width: "100%" }}
-                  contentContainerStyle={{ alignItems: "center" }}
                 >
                   {imgs.map((uri, idx) => (
                     <SmartImage
                       key={`${selectedProduct.id}-img-${idx}`}
                       uri={uri}
-                      style={[styles.bigImage, { width: slideW, height: slideW, aspectRatio: 1 }]}
+                      style={[styles.ppBigImage, { width: slideW, height: slideW }]}
                       highQuality
                       resizeMode="contain"
                     />
@@ -4730,52 +4851,36 @@ export default function App() {
                 </ScrollView>
               )}
               {imgs.length > 1 && (
-                <View style={{ flexDirection: "row", justifyContent: "center", gap: 6, marginTop: 8 }}>
+                <View style={styles.ppDots}>
                   {imgs.map((_, idx) => (
-                    <View
-                      key={`dot-${idx}`}
-                      style={{
-                        width: 7,
-                        height: 7,
-                        borderRadius: 4,
-                        backgroundColor: "#111",
-                        opacity: 0.35,
-                      }}
-                    />
+                    <View key={`dot-${idx}`} style={styles.ppDot} />
                   ))}
                 </View>
               )}
-              <TouchableOpacity
-                style={[styles.favoriteBtn, styles.favoriteBtnOnImage, isFav && styles.favoriteBtnActive]}
-                onPress={() => {
-                  toggleFavorite(selectedProduct);
-                  showToast(isFav ? "Удалено из избранного" : "❤️ Добавлено в избранное");
-                }}
-              >
-                <Text style={[styles.favoriteBtnText, isFav && styles.favoriteBtnTextActive]}>{isFav ? "♥" : "♡"}</Text>
-              </TouchableOpacity>
             </View>
           );
         })()}
-        
-        <View style={styles.productTitleRow}>
-          <View style={{ flex: 1, paddingRight: 12 }}>
-            <Text style={[styles.productTitle, isDark && styles.textDark]}>{selectedProduct.name}</Text>
-            <Text style={[styles.productBrand, isDark && styles.textDark, { marginTop: 2 }]}>
-              {selectedProduct.brand || ""}
+
+        {/* Title + price */}
+        <View style={styles.ppTitleRow}>
+          <View style={{ flex: 1, paddingRight: 16 }}>
+            <Text style={styles.ppName}>{selectedProduct.name}</Text>
+            <Text style={styles.ppSub}>
+              {selectedProduct.model || selectedProduct.brand || ""}
             </Text>
           </View>
           <View style={{ alignItems: "flex-end" }}>
             {selectedProduct.oldPrice ? (
               <Text style={styles.oldPriceBig}>{money(selectedProduct.oldPrice)}</Text>
             ) : null}
-            <Text style={[styles.productPrice, isDark && styles.textDark]}>{money(selectedProduct.price)}</Text>
+            <Text style={styles.ppPrice}>{money(selectedProduct.price)}</Text>
           </View>
         </View>
 
-        <View style={styles.sizeBox}>
+        {/* Size */}
+        <View style={styles.ppSizeBlock}>
           <View style={styles.sizeHeaderRow}>
-            <Text style={[styles.sizeTitle, isDark && styles.textDark]}>РАЗМЕР</Text>
+            <Text style={styles.ppSizeLabel}>РАЗМЕР</Text>
             <TouchableOpacity onPress={() => setOpenSizeTable((v) => !v)}>
               <Text style={styles.sizeTableLink}>Таблица размеров</Text>
             </TouchableOpacity>
@@ -4784,10 +4889,12 @@ export default function App() {
             {(selectedProduct.sizes || ["40", "41", "42", "43", "44", "45"]).map((size) => (
               <TouchableOpacity
                 key={size}
-                style={[styles.size, selectedSize === size && styles.sizeActive]}
+                style={[styles.ppSize, selectedSize === size && styles.ppSizeActive]}
                 onPress={() => setSelectedSize(size)}
               >
-                <Text style={selectedSize === size ? styles.sizeTextActive : styles.sizeText}>{size}</Text>
+                <Text style={selectedSize === size ? styles.ppSizeTextActive : styles.ppSizeText}>
+                  {size}
+                </Text>
               </TouchableOpacity>
             ))}
           </View>
@@ -4818,80 +4925,83 @@ export default function App() {
           )}
         </View>
 
+        {/* Brush CTA */}
         <TouchableOpacity activeOpacity={0.88} onPress={handleAddToCart} style={styles.brushBtnWrapWide}>
           <Image source={{ uri: BRUSH_BTN_URI }} style={styles.brushBtnImgWide} resizeMode="stretch" />
-          <Text style={[styles.brushBtnTextOverlay, { fontSize: 14, letterSpacing: 0.4 }]}>ДОБАВИТЬ В КОРЗИНУ</Text>
+          <Text style={[styles.brushBtnTextOverlay, { fontSize: 14, letterSpacing: 0.5 }]}>
+            ДОБАВИТЬ В КОРЗИНУ
+          </Text>
         </TouchableOpacity>
 
-        {/* Accordion: ОПИСАНИЕ */}
+        {/* Accordions */}
         <TouchableOpacity style={styles.accRow} onPress={() => setOpenDesc((v) => !v)} activeOpacity={0.7}>
           <Text style={styles.accTitle}>ОПИСАНИЕ</Text>
           <Text style={styles.accPlus}>{openDesc ? "−" : "+"}</Text>
         </TouchableOpacity>
         {openDesc && (
           <Text style={styles.accBody}>
-            {selectedProduct.description ||
-              "Описания пока не добавили :("}
+            {selectedProduct.description || "Описания пока не добавили :("}
           </Text>
         )}
 
-        {/* Accordion: ДОСТАВКА И ВОЗВРАТ */}
         <TouchableOpacity style={styles.accRow} onPress={() => setOpenDelivery((v) => !v)} activeOpacity={0.7}>
           <Text style={styles.accTitle}>ДОСТАВКА И ВОЗВРАТ</Text>
           <Text style={styles.accPlus}>{openDelivery ? "−" : "+"}</Text>
         </TouchableOpacity>
         {openDelivery && (
           <Text style={styles.accBody}>
-            Мы доставляем курьером и почтой по всей Беларуси с оплатой при получении.{"\n\n"}
-            При доставке курьером у вас будет время на примерку перед оплатой.{"\n\n"}
-            Обмен в случае неподходящего размера возможен в течение 14 дней после получения.{"\n"}
-            Возврат — в течение 30 дней после получения.
+            {"Мы доставляем курьером и почтой по всей Беларуси с оплатой при получении.\n\nПри доставке курьером у вас будет время на примерку перед оплатой.\n\nОбмен в случае неподходящего размера возможен в течение 14 дней после получения.\nВозврат — в течение 30 дней после получения."}
           </Text>
         )}
 
-        <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Отзывы</Text>
+        {/* Reviews */}
+        <Text style={[styles.sectionTitle, { marginTop: 20 }]}>Отзывы</Text>
         {(() => {
-          const approvedReviews = (selectedProduct.ratings || []).filter(r => r.approved === true);
+          const approvedReviews = (selectedProduct.ratings || []).filter((r) => r.approved === true);
           return approvedReviews.length > 0 ? (
             approvedReviews.slice(0, 5).map((r, idx) => (
-              <View key={idx} style={[styles.reviewItem, isDark && styles.reviewItemDark]}>
-                <Text style={[styles.reviewRating, isDark && styles.textDark]}>{"★".repeat(r.rating)}</Text>
-                <Text style={[styles.reviewComment, isDark && styles.textDark]}>{r.comment}</Text>
+              <View key={idx} style={styles.reviewItem}>
+                <Text style={styles.reviewRating}>{"★".repeat(r.rating)}</Text>
+                <Text style={styles.reviewComment}>{r.comment}</Text>
                 {r.adminReply ? (
-                  <Text style={[styles.reviewComment, isDark && styles.textDark, { marginTop: 4, fontStyle: "italic", color: "#555" }]}>
+                  <Text style={[styles.reviewComment, { marginTop: 4, fontStyle: "italic", color: "#555" }]}>
                     Ответ магазина: {r.adminReply}
                   </Text>
                 ) : null}
-                <Text style={[styles.reviewDate, isDark && styles.textDark]}>{new Date(r.date).toLocaleDateString()}</Text>
+                <Text style={styles.reviewDate}>{new Date(r.date).toLocaleDateString()}</Text>
               </View>
             ))
           ) : (
-            <Text style={[styles.noReviews, isDark && styles.textDark]}>Пока нет отзывов</Text>
+            <Text style={styles.noReviews}>Пока нет отзывов</Text>
           );
         })()}
 
         {hasPurchased && (
-          <View style={[styles.reviewForm, isDark && styles.reviewFormDark]}>
-            <Text style={[styles.reviewFormTitle, isDark && styles.textDark]}>Оставить отзыв</Text>
+          <View style={styles.reviewForm}>
+            <Text style={styles.reviewFormTitle}>Оставить отзыв</Text>
             <View style={styles.stars}>
-              {[1,2,3,4,5].map(s => (
+              {[1, 2, 3, 4, 5].map((s) => (
                 <TouchableOpacity key={s} onPress={() => setRating(s)}>
-                  <Text style={[
-                    styles.star,
-                    rating >= s
-                      ? (isDark ? styles.starActiveDark : styles.starActive)
-                      : styles.starInactive
-                  ]}>{rating >= s ? "★" : "☆"}</Text>
+                  <Text style={[styles.star, rating >= s ? styles.starActive : styles.starInactive]}>
+                    {rating >= s ? "★" : "☆"}
+                  </Text>
                 </TouchableOpacity>
               ))}
             </View>
-            <TextInput style={[styles.reviewInput, isDark && styles.inputDark]} placeholder="Ваш комментарий..." placeholderTextColor={isDark ? "#999" : "#888"} value={comment} onChangeText={setComment} blurOnSubmit={false} />
+            <TextInput
+              style={styles.reviewInput}
+              placeholder="Ваш комментарий..."
+              placeholderTextColor="#888"
+              value={comment}
+              onChangeText={setComment}
+              blurOnSubmit={false}
+            />
             <TouchableOpacity style={styles.submitReview} onPress={submitRating}>
               <Text style={styles.buttonText}>Отправить</Text>
             </TouchableOpacity>
           </View>
         )}
-        <View style={{ height: 20 }} />
+        <View style={{ height: 24 }} />
       </ScrollView>
     );
   };
@@ -5041,11 +5151,20 @@ export default function App() {
       persistUserState({ cart: [] }, { force: true }).catch(() => {});
     };
 
-    const addOneMore = (item) => {
-      const next = [...(cartRef.current || []), { ...item }];
+    const changeQty = (idx, delta) => {
+      const cur = cartRef.current || [];
+      const item = cur[idx];
+      if (!item) return;
+      const q = (Number(item.qty) || 1) + delta;
+      let next;
+      if (q <= 0) {
+        next = cur.filter((_, i) => i !== idx);
+      } else {
+        next = cur.map((x, i) => (i === idx ? { ...x, qty: q } : x));
+      }
       cartRef.current = next;
       setCart(next);
-      persistUserState({ cart: next }, { force: true }).catch(() => {});
+      persistUserState({ cart: next, favorites: favoritesRef.current }, { force: true }).catch(() => {});
     };
 
     return (
@@ -5082,11 +5201,11 @@ export default function App() {
                     <Text style={styles.cartRemoveX}>×</Text>
                   </TouchableOpacity>
                   <View style={styles.qtyBox}>
-                    <TouchableOpacity onPress={() => removeCart(idx)} style={styles.qtyBtn}>
+                    <TouchableOpacity onPress={() => changeQty(idx, -1)} style={styles.qtyBtn}>
                       <Text style={styles.qtyBtnText}>−</Text>
                     </TouchableOpacity>
-                    <Text style={styles.qtyNum}>1</Text>
-                    <TouchableOpacity onPress={() => addOneMore(item)} style={styles.qtyBtn}>
+                    <Text style={styles.qtyNum}>{Number(item.qty) || 1}</Text>
+                    <TouchableOpacity onPress={() => changeQty(idx, 1)} style={styles.qtyBtn}>
                       <Text style={styles.qtyBtnText}>+</Text>
                     </TouchableOpacity>
                   </View>
@@ -5135,8 +5254,9 @@ export default function App() {
       return () => clearTimeout(t);
     }, []);
 
-    const displayName = (user && (user.name || user.first_name)) || "MANZ SHOP BY";
-    const uname = (user && user.username) ? `@${user.username}` : "@manzshopby";
+    const displayName = (user && (user.name || user.first_name)) || "Гость";
+    const userId = (user && user.id) ? String(user.id) : "—";
+    const photoUrl = (user && user.photo_url) ? user.photo_url : "";
     const initial = (displayName || "M").charAt(0).toUpperCase();
 
     return (
@@ -5144,12 +5264,20 @@ export default function App() {
         {/* Header */}
         <View style={styles.profileHeader}>
           <View style={styles.profileAvatar}>
-            <Text style={styles.profileAvatarLetter}>{initial}</Text>
+            {photoUrl ? (
+              <Image
+                source={{ uri: photoUrl }}
+                style={{ width: 56, height: 56, borderRadius: 28 }}
+                resizeMode="cover"
+              />
+            ) : (
+              <Text style={styles.profileAvatarLetter}>{initial}</Text>
+            )}
           </View>
           <View style={{ flex: 1 }}>
             <Text style={styles.profileBrand}>MANZSHOPBY</Text>
             <Text style={styles.profileShopName}>{displayName}</Text>
-            <Text style={styles.profileUsername}>{uname}</Text>
+            <Text style={styles.profileUsername}>ID: {userId}</Text>
           </View>
           {isAdmin && (
             <TouchableOpacity onPress={() => setShowAdmin(true)} style={styles.profileAdminBtn}>
@@ -5180,7 +5308,7 @@ export default function App() {
         <View style={styles.refLinkRow}>
           <Text style={styles.refLinkText} numberOfLines={1} selectable>{referral}</Text>
           <TouchableOpacity onPress={copyReferral} style={styles.refCopyBtn}>
-            <Text style={{ fontSize: 16 }}>📋</Text>
+            <Image source={{ uri: MENU_ICONS.copy_black }} style={{ width: 22, height: 22 }} resizeMode="contain" />
           </TouchableOpacity>
         </View>
 
@@ -5194,9 +5322,19 @@ export default function App() {
             const isActive = item.name === currentLevel.name;
             return (
               <View key={item.name} style={[styles.levelTile, isActive && styles.levelTileActive]}>
-                <Text style={[styles.levelTileIcon, isActive && styles.levelTileIconActive]}>
-                  {item.cashback === 2 ? "👤" : item.cashback === 5 ? "★" : "♔"}
-                </Text>
+                <Image
+                  source={{
+                    uri: MENU_ICONS[
+                      (item.cashback === 2
+                        ? "level_newbie"
+                        : item.cashback === 5
+                        ? "level_regular"
+                        : "level_vip") + (isActive ? "_white" : "_black")
+                    ],
+                  }}
+                  style={{ width: 28, height: 28, marginBottom: 6 }}
+                  resizeMode="contain"
+                />
                 <Text style={[styles.levelTileName, isActive && styles.levelTileNameActive]} numberOfLines={2}>
                   {item.name}
                 </Text>
@@ -7751,28 +7889,25 @@ const styles = StyleSheet.create({
     position: "absolute",
     right: 8,
     top: 8,
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: "#fff",
-    borderWidth: 1.5,
-    borderColor: "#111",
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "transparent",
+    borderWidth: 0,
     justifyContent: "center",
     alignItems: "center",
     zIndex: 10,
-    elevation: 6,
+    elevation: 0,
   },
-  // Чуть крупнее на странице товара
   favoriteBtnOnImage: {
     right: 14,
     top: 14,
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
   },
   favoriteBtnActive: {
-    backgroundColor: "#fff",
-    borderColor: "#111",
+    backgroundColor: "transparent",
   },
   favoriteBtnText: {
     fontSize: 13,
@@ -8276,7 +8411,7 @@ const styles = StyleSheet.create({
   sizeBox: { marginTop: 16 },
   sizeTitle: { fontSize: 15, fontWeight: "600", marginBottom: 8 },
   sizes: { flexDirection: "row", flexWrap: "wrap" },
-  size: { width: 44, height: 44, borderRadius: 22, backgroundColor: "#eee", justifyContent: "center", alignItems: "center", marginRight: 8, marginBottom: 8 },
+  size: { width: 48, height: 48, borderRadius: 10, backgroundColor: "#F0F0F0", justifyContent: "center", alignItems: "center", marginRight: 8, marginBottom: 8 },
   sizeActive: { backgroundColor: "#111" },
   sizeTextActive: { color: "#fff" },
   sizeText: { fontSize: 13, color: "#555", marginTop: 2 },
@@ -8565,6 +8700,118 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     marginTop: 4,
   },
+  productHeaderBar: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingTop: 4,
+    paddingBottom: 8,
+    minHeight: 44,
+  },
+  productHeaderIconBtn: {
+    width: 40,
+    height: 40,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  productHeaderBack: {
+    fontSize: 32,
+    fontWeight: "300",
+    color: "#111",
+    lineHeight: 34,
+    marginTop: -2,
+  },
+  ppImageBlock: {
+    width: "100%",
+    position: "relative",
+    alignItems: "center",
+    marginBottom: 8,
+    backgroundColor: "#FFFFFF",
+  },
+  ppBrushAccent: {
+    position: "absolute",
+    top: 8,
+    right: -10,
+    width: 120,
+    height: 70,
+    zIndex: 2,
+    opacity: 0.95,
+    transform: [{ scaleX: -1 }],
+  },
+  ppBigImage: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 0,
+  },
+  ppDots: {
+    flexDirection: "row",
+    justifyContent: "center",
+    gap: 6,
+    marginTop: 10,
+    marginBottom: 4,
+  },
+  ppDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: "#111",
+    opacity: 0.25,
+  },
+  ppTitleRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    marginTop: 14,
+    marginBottom: 18,
+  },
+  ppName: {
+    fontSize: 20,
+    fontWeight: "700",
+    color: "#111",
+    letterSpacing: -0.2,
+  },
+  ppSub: {
+    fontSize: 13,
+    color: "#9A9A9A",
+    marginTop: 4,
+    fontWeight: "400",
+  },
+  ppPrice: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#111",
+  },
+  ppSizeBlock: {
+    marginBottom: 16,
+  },
+  ppSizeLabel: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#111",
+    letterSpacing: 0.8,
+  },
+  ppSize: {
+    width: 48,
+    height: 48,
+    borderRadius: 10,
+    backgroundColor: "#F2F2F2",
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 8,
+    marginBottom: 8,
+  },
+  ppSizeActive: {
+    backgroundColor: "#111",
+  },
+  ppSizeText: {
+    fontSize: 14,
+    color: "#111",
+    fontWeight: "500",
+  },
+  ppSizeTextActive: {
+    fontSize: 14,
+    color: "#fff",
+    fontWeight: "600",
+  },
+
   descriptionText: { fontSize: 14, color: "#666", marginVertical: 6, lineHeight: 20 },
   loader: { textAlign: "center", padding: 8, color: "#777" },
   empty: { textAlign: "center", padding: 20, color: "#999" },
@@ -8852,14 +9099,13 @@ const styles = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 28,
-    backgroundColor: "#F2F2F2",
-    borderWidth: 1,
-    borderColor: "#E5E5E5",
+    backgroundColor: "#111",
     alignItems: "center",
     justifyContent: "center",
     marginRight: 14,
+    overflow: "hidden",
   },
-  profileAvatarLetter: { fontSize: 24, fontWeight: "800", color: "#111" },
+  profileAvatarLetter: { fontSize: 24, fontWeight: "800", color: "#fff" },
   profileBrand: { fontSize: 11, fontWeight: "700", color: "#888", letterSpacing: 1 },
   profileShopName: { fontSize: 16, fontWeight: "800", color: "#111", marginTop: 2 },
   profileUsername: { fontSize: 13, color: "#888", marginTop: 2 },
@@ -9044,6 +9290,8 @@ const styles = StyleSheet.create({
     backgroundColor: "#111",
     alignItems: "center",
     justifyContent: "center",
+    marginRight: 14,
+    overflow: "hidden",
   },
   profileAvatarText: {
     color: "#fff",
