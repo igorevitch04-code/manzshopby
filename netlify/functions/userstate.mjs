@@ -1,9 +1,14 @@
 // Netlify Function: корзина / избранное по Telegram user id
-// БЕЗ @netlify/blobs — храним на getpantry.cloud (с сервера CORS не мешает)
+// Хранение:
+//   1) Netlify Blobs (прод), если пакет есть
+//   2) Локальный файл .netlify/userstate-data.json (netlify dev) — всегда
 //
 // POST /.netlify/functions/userstate
-//   { action: "get", id: "123456" }
-//   { action: "set", id: "123456", state: { cart, favorites, bonusBalance, updatedAt } }
+//   { action: "get", id: "123" }
+//   { action: "set", id: "123", state: { cart, favorites, ... } }
+
+import fs from "fs";
+import path from "path";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -18,112 +23,81 @@ const json = (status, body) => ({
   body: JSON.stringify(body),
 });
 
-// Фиксированный pantry basket для всех user-state (ключ = user id внутри)
-// Можно переопределить через env USERSTATE_PANTRY_ID
-const DEFAULT_PANTRY_ID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"; // заменится при первом create
-const PANTRY_BASKET = "manz_userstate_v1";
+// ---- Local file store ----
+const localPaths = () => [
+  path.join(process.cwd(), ".netlify", "userstate-data.json"),
+  path.join(process.cwd(), "userstate-data.json"),
+  path.join("/tmp", "manz-userstate-data.json"),
+];
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const localReadAll = () => {
+  for (const p of localPaths()) {
+    try {
+      if (!fs.existsSync(p)) continue;
+      const data = JSON.parse(fs.readFileSync(p, "utf8"));
+      if (data && typeof data === "object") return data;
+    } catch (e) {}
+  }
+  return {};
+};
 
-async function ensurePantryId() {
-  const fromEnv = (process.env.USERSTATE_PANTRY_ID || "").trim();
-  if (fromEnv) return fromEnv;
-
-  // Пробуем прочитать id из простого KV (keyvalue.immanuel.co)
-  const KV_NS = "manzshopby";
-  const KV_KEY = "userstate_pantry_id_v1";
-  try {
-    const getUrl = `https://keyvalue.immanuel.co/api/KeyVal/GetValue/${KV_NS}/${encodeURIComponent(KV_KEY)}`;
-    const r = await fetch(getUrl, { cache: "no-store" });
-    if (r.ok) {
-      let text = (await r.text()) || "";
-      text = text.replace(/^"|"$/g, "").trim();
-      if (text && text.length > 10 && text !== "null") return text;
+const localWriteAll = (all) => {
+  const text = JSON.stringify(all);
+  for (const p of localPaths()) {
+    try {
+      const dir = path.dirname(p);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(p, text, "utf8");
+      return true;
+    } catch (e) {
+      console.warn("[userstate] write fail", p, e && e.message);
     }
-  } catch (e) {}
+  }
+  return false;
+};
 
-  // Создаём новый pantry
+// ---- Optional Blobs ----
+const tryGetBlobStore = async (event) => {
   try {
-    const r = await fetch("https://getpantry.cloud/apiv1/pantry", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: "manzshop-userstate",
-        description: "cart favorites sync",
-      }),
-    });
-    const data = await r.json().catch(() => ({}));
-    const id = data?.pantryId || data?.id || null;
-    if (id) {
-      // Сохраняем id в KV
+    const mod = await import("@netlify/blobs");
+    try {
+      if (typeof mod.connectLambda === "function") mod.connectLambda(event);
+    } catch (e) {}
+    try {
+      return mod.getStore({ name: "manz-userstate", consistency: "strong" });
+    } catch (e1) {
       try {
-        const setUrl =
-          `https://keyvalue.immanuel.co/api/KeyVal/UpdateValue/${KV_NS}/` +
-          `${encodeURIComponent(KV_KEY)}/${encodeURIComponent(id)}`;
-        await fetch(setUrl, { method: "GET", cache: "no-store" });
-      } catch (e) {}
-      return id;
+        return mod.getStore("manz-userstate");
+      } catch (e2) {
+        return null;
+      }
     }
-  } catch (e) {
-    console.error("[userstate] create pantry", e);
-  }
-
-  // Последний шанс — env или ошибка
-  return null;
-}
-
-async function pantryGet(pantryId, basket) {
-  const url = `https://getpantry.cloud/apiv1/pantry/${pantryId}/basket/${basket}`;
-  const r = await fetch(url, { cache: "no-store" });
-  if (r.status === 404) return {};
-  if (!r.ok) throw new Error(`pantry get ${r.status}`);
-  const data = await r.json().catch(() => ({}));
-  return data && typeof data === "object" ? data : {};
-}
-
-async function pantryPut(pantryId, basket, data) {
-  const url = `https://getpantry.cloud/apiv1/pantry/${pantryId}/basket/${basket}`;
-  // create or replace
-  let r = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data),
-  });
-  if (!r.ok) {
-    r = await fetch(url, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(data),
-    });
-  }
-  if (!r.ok) throw new Error(`pantry put ${r.status}`);
-  return true;
-}
-
-// Fallback: keyvalue по одному пользователю (если pantry недоступен)
-async function kvGet(key) {
-  const url = `https://keyvalue.immanuel.co/api/KeyVal/GetValue/manzshopby/${encodeURIComponent(key)}`;
-  const r = await fetch(url, { cache: "no-store" });
-  if (!r.ok) return null;
-  let text = (await r.text()) || "";
-  text = text.replace(/^"|"$/g, "").trim();
-  if (!text || text === "null") return null;
-  try {
-    return JSON.parse(text);
   } catch (e) {
     return null;
   }
-}
+};
 
-async function kvSet(key, value) {
-  const json = typeof value === "string" ? value : JSON.stringify(value);
-  if (json.length > 1400) return false;
-  const url =
-    `https://keyvalue.immanuel.co/api/KeyVal/UpdateValue/manzshopby/` +
-    `${encodeURIComponent(key)}/${encodeURIComponent(json)}`;
-  const r = await fetch(url, { method: "GET", cache: "no-store" });
-  return r.ok;
-}
+const blobGet = async (store, key) => {
+  try {
+    const v = await store.get(key, { type: "json" });
+    return v && typeof v === "object" ? v : null;
+  } catch (e) {
+    try {
+      const t = await store.get(key);
+      return t ? JSON.parse(t) : null;
+    } catch (e2) {
+      return null;
+    }
+  }
+};
+
+const blobSet = async (store, key, value) => {
+  if (typeof store.setJSON === "function") {
+    await store.setJSON(key, value);
+  } else {
+    await store.set(key, JSON.stringify(value), { contentType: "application/json" });
+  }
+};
 
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") {
@@ -151,36 +125,27 @@ export const handler = async (event) => {
       return json(400, { ok: false, error: "invalid_id", got: id });
     }
 
-    const userKey = `u_${id}`;
+    const key = `user_${id}`;
 
+    // -------- GET --------
     if (action === "get" || action === "getstate") {
-      // 1) Pantry
-      try {
-        const pantryId = await ensurePantryId();
-        if (pantryId) {
-          const all = await pantryGet(pantryId, PANTRY_BASKET);
-          const state = all && all[userKey] ? all[userKey] : null;
-          if (state) {
-            return json(200, { ok: true, state, source: "pantry" });
-          }
+      const store = await tryGetBlobStore(event);
+      if (store) {
+        try {
+          const state = await blobGet(store, key);
+          if (state) return json(200, { ok: true, state, source: "blobs" });
+        } catch (e) {
+          console.warn("[userstate] blob get", e && e.message);
         }
-      } catch (e) {
-        console.warn("[userstate] pantry get", e && e.message);
       }
 
-      // 2) KV
-      try {
-        const state = await kvGet(`ustate_${id}`);
-        if (state) {
-          return json(200, { ok: true, state, source: "kv" });
-        }
-      } catch (e) {
-        console.warn("[userstate] kv get", e && e.message);
-      }
+      const all = localReadAll();
+      if (all[key]) return json(200, { ok: true, state: all[key], source: "local" });
 
       return json(200, { ok: true, state: null });
     }
 
+    // -------- SET --------
     if (action === "set" || action === "setstate") {
       const state = body.state && typeof body.state === "object" ? body.state : {};
       const payload = {
@@ -199,71 +164,29 @@ export const handler = async (event) => {
       let saved = false;
       let source = null;
 
-      // 1) Pantry — весь объект пользователей
-      try {
-        const pantryId = await ensurePantryId();
-        if (pantryId) {
-          let all = {};
-          try {
-            all = await pantryGet(pantryId, PANTRY_BASKET);
-          } catch (e) {
-            all = {};
-          }
-          if (!all || typeof all !== "object") all = {};
-          all[userKey] = payload;
-          // не раздуваем бесконечно — чистим очень старые если > 200 ключей
-          const keys = Object.keys(all);
-          if (keys.length > 200) {
-            const sorted = keys
-              .map((k) => ({ k, t: Date.parse(all[k]?.updatedAt || 0) || 0 }))
-              .sort((a, b) => a.t - b.t);
-            for (let i = 0; i < sorted.length - 150; i++) {
-              delete all[sorted[i].k];
-            }
-          }
-          await pantryPut(pantryId, PANTRY_BASKET, all);
+      const store = await tryGetBlobStore(event);
+      if (store) {
+        try {
+          await blobSet(store, key, payload);
           saved = true;
-          source = "pantry";
+          source = "blobs";
+        } catch (e) {
+          console.warn("[userstate] blob set", e && e.message);
         }
-      } catch (e) {
-        console.warn("[userstate] pantry set", e && e.message);
       }
 
-      // 2) KV backup (компактный)
-      try {
-        const compact = {
-          cart: payload.cart.map((x) => ({
-            id: x.id,
-            name: x.name,
-            brand: x.brand,
-            price: x.price,
-            size: x.size || null,
-            image: typeof x.image === "string" ? x.image.slice(0, 80) : "",
-          })),
-          favorites: payload.favorites.map((x) => ({
-            id: x.id,
-            name: x.name,
-            brand: x.brand,
-            price: x.price,
-            image: typeof x.image === "string" ? x.image.slice(0, 80) : "",
-          })),
-          bonusBalance: payload.bonusBalance,
-          updatedAt: payload.updatedAt,
-        };
-        const ok = await kvSet(`ustate_${id}`, compact);
-        if (ok) {
-          saved = true;
-          source = source || "kv";
-        }
-      } catch (e) {
-        console.warn("[userstate] kv set", e && e.message);
+      const all = localReadAll();
+      all[key] = payload;
+      if (localWriteAll(all)) {
+        saved = true;
+        source = source || "local";
       }
 
       if (!saved) {
         return json(500, {
           ok: false,
           error: "storage_failed",
-          detail: "pantry and kv both failed",
+          detail: "could not write blobs or local file",
         });
       }
 
