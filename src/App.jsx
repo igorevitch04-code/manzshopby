@@ -810,6 +810,57 @@ const pantryPutBasket = async (basket, payload) => {
   return false;
 };
 
+// ==============================
+// Персональные данные пользователя в shared storage (Pantry)
+// Нужно для надёжной синхронизации корзины / избранного / бонусов между устройствами
+// (CloudStorage Telegram иногда не успевает / не синхронизируется Desktop ↔ Mobile)
+// ==============================
+const userStateBasket = (tgId) => `u_${String(tgId || "").replace(/[^0-9]/g, "")}`;
+
+const loadUserStateFromShared = async (tgId) => {
+  if (!tgId || String(tgId) === "guest" || !/^\d+$/.test(String(tgId))) return null;
+  try {
+    const data = await pantryGetBasket(userStateBasket(tgId));
+    if (data && typeof data === "object") return data;
+  } catch (e) {}
+  return null;
+};
+
+const saveUserStateToShared = async (tgId, state) => {
+  if (!tgId || String(tgId) === "guest" || !/^\d+$/.test(String(tgId))) return false;
+  try {
+    return await pantryPutBasket(userStateBasket(tgId), {
+      ...state,
+      updatedAt: new Date().toISOString(),
+    });
+  } catch (e) {
+    return false;
+  }
+};
+
+// Глобальный epoch для принудительного сброса данных у ВСЕХ пользователей
+const APP_META_BASKET = "app_meta_v1";
+const loadResetEpoch = async () => {
+  try {
+    const meta = await pantryGetBasket(APP_META_BASKET);
+    if (meta && typeof meta.resetEpoch === "number") return meta.resetEpoch;
+  } catch (e) {}
+  return 0;
+};
+const bumpResetEpoch = async () => {
+  let current = 0;
+  try {
+    const meta = await pantryGetBasket(APP_META_BASKET);
+    if (meta && typeof meta.resetEpoch === "number") current = meta.resetEpoch;
+  } catch (e) {}
+  const next = current + 1;
+  await pantryPutBasket(APP_META_BASKET, {
+    resetEpoch: next,
+    resetAt: new Date().toISOString(),
+  });
+  return next;
+};
+
 // Загрузка: индекс ID → каждый заказ; + pantry; + старый bulk-ключ
 const sharedOrdersLoad = async () => {
   // 0) Netlify API — основной канал
@@ -1465,6 +1516,25 @@ const Toast = ({ message, visible, onHide }) => {
 export default function App() {
   const [user, setUser] = useState(() => getTelegramUser());
 
+  // Подключаем шрифт Inter (современная чистая типографика)
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    if (document.getElementById("manz-inter-font")) return;
+    const link = document.createElement("link");
+    link.id = "manz-inter-font";
+    link.rel = "stylesheet";
+    link.href = "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap";
+    document.head.appendChild(link);
+    // Глобальный font-family для web
+    const style = document.createElement("style");
+    style.id = "manz-font-style";
+    style.textContent = `
+      * { font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important; }
+      body, #root, #app { font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important; }
+    `;
+    document.head.appendChild(style);
+  }, []);
+
   // Перечитываем Telegram user после ready (initData иногда приходит с задержкой)
   useEffect(() => {
     const tryRead = () => {
@@ -1723,15 +1793,141 @@ export default function App() {
           loadFromCloud(CLOUD_KEYS.utmSource)
         ]);
 
-        setCart(cloudCart || []);
-        setFavorites(cloudFavorites || []);
-        setOrders(cloudOrders || 0);
-        setBonusBalance(cloudBonus || 0);
-        setOrderHistory(cloudOrderHistory || []);
-        setLastOrderNumber(cloudLastOrderNumber || 3340);
-        setUsedFreeDelivery(cloudUsedFreeDelivery || []);
-        setAdminOrders(cloudAdminOrders || []);
+        // --- Глобальный сброс (resetEpoch): если админ сбросил данные — очищаем персональное у всех ---
+        let forceReset = false;
+        try {
+          const remoteEpoch = await loadResetEpoch();
+          let localEpoch = 0;
+          try {
+            if (typeof localStorage !== "undefined") {
+              localEpoch = Number(localStorage.getItem("krost_reset_epoch") || "0") || 0;
+            }
+          } catch (e) {}
+          if (remoteEpoch > localEpoch) {
+            forceReset = true;
+            console.log("[Reset] global epoch", remoteEpoch, "> local", localEpoch, "— wiping personal data");
+            try {
+              if (typeof localStorage !== "undefined") {
+                localStorage.setItem("krost_reset_epoch", String(remoteEpoch));
+              }
+            } catch (e) {}
+            // Очищаем CloudStorage персональные ключи
+            const wipeKeys = [
+              CLOUD_KEYS.cart, CLOUD_KEYS.favorites, CLOUD_KEYS.orders, CLOUD_KEYS.bonus,
+              CLOUD_KEYS.orderHistory, CLOUD_KEYS.lastOrderNumber, CLOUD_KEYS.usedFreeDelivery,
+              CLOUD_KEYS.adminOrders, CLOUD_KEYS.referredBy, CLOUD_KEYS.referralCount,
+              CLOUD_KEYS.referralEarnings, CLOUD_KEYS.referralNotified, CLOUD_KEYS.refEvents,
+            ];
+            for (const k of wipeKeys) {
+              try { await saveToCloud(k, k.includes("bonus") || k.includes("Count") || k.includes("Earnings") || k.includes("lastOrder") ? 0 : (k.includes("Notified") ? false : [])); } catch (e) {}
+              try {
+                if (typeof localStorage !== "undefined") {
+                  localStorage.removeItem(k);
+                  localStorage.removeItem("krost_" + k);
+                }
+              } catch (e) {}
+            }
+          }
+        } catch (e) {
+          console.warn("[Reset] epoch check failed", e);
+        }
+
+        if (forceReset) {
+          setCart([]);
+          setFavorites([]);
+          setOrders(0);
+          setBonusBalance(0);
+          setOrderHistory([]);
+          setLastOrderNumber(3340);
+          setUsedFreeDelivery([]);
+          setAdminOrders([]);
+          setReferralCount(0);
+          setReferralEarnings(0);
+          setReferralNotified(false);
+          setReferredBy(null);
+        } else {
+          setCart(cloudCart || []);
+          setFavorites(cloudFavorites || []);
+          setOrders(cloudOrders || 0);
+          setBonusBalance(cloudBonus || 0);
+          setOrderHistory(cloudOrderHistory || []);
+          setLastOrderNumber(cloudLastOrderNumber || 3340);
+          setUsedFreeDelivery(cloudUsedFreeDelivery || []);
+          setAdminOrders(cloudAdminOrders || []);
+        }
         setPromoCodes(cloudPromoCodes || []);
+
+        // --- Персональные данные с shared storage (надёжная синхронизация между устройствами) ---
+        if (!forceReset) {
+          try {
+            const uid = String(user?.id || "");
+            if (uid && /^\d+$/.test(uid)) {
+              const sharedUser = await loadUserStateFromShared(uid);
+              if (sharedUser && typeof sharedUser === "object") {
+                const sharedTs = sharedUser.updatedAt ? new Date(sharedUser.updatedAt).getTime() : 0;
+                // Корзина
+                if (Array.isArray(sharedUser.cart) && sharedUser.cart.length) {
+                  const localCart = Array.isArray(cloudCart) ? cloudCart : [];
+                  // Берём shared, если он не пустой (приоритет сервера для кросс-девайс)
+                  if (sharedUser.cart.length >= localCart.length || sharedTs > 0) {
+                    setCart(sharedUser.cart);
+                  }
+                }
+                // Избранное
+                if (Array.isArray(sharedUser.favorites) && sharedUser.favorites.length) {
+                  const localFav = Array.isArray(cloudFavorites) ? cloudFavorites : [];
+                  if (sharedUser.favorites.length >= localFav.length || sharedTs > 0) {
+                    setFavorites(sharedUser.favorites);
+                  }
+                }
+                // Бонусы — берём максимум (чтобы не потерять начисление)
+                if (typeof sharedUser.bonusBalance === "number") {
+                  setBonusBalance((prev) => Math.max(Number(prev) || 0, sharedUser.bonusBalance || 0));
+                }
+                // История заказов — мержим
+                if (Array.isArray(sharedUser.orderHistory) && sharedUser.orderHistory.length) {
+                  setOrderHistory((prev) => {
+                    const map = new Map();
+                    (prev || []).forEach((o) => map.set(String(o.id), o));
+                    sharedUser.orderHistory.forEach((o) => {
+                      if (!o || o.id == null) return;
+                      const id = String(o.id);
+                      if (!map.has(id)) map.set(id, o);
+                      else {
+                        const local = map.get(id);
+                        map.set(id, {
+                          ...local,
+                          ...o,
+                          status: o.status || local.status,
+                          trackingNumber: o.trackingNumber || local.trackingNumber,
+                        });
+                      }
+                    });
+                    return Array.from(map.values()).sort((a, b) => {
+                      const da = a.date ? new Date(a.date).getTime() : 0;
+                      const db = b.date ? new Date(b.date).getTime() : 0;
+                      return db - da;
+                    });
+                  });
+                }
+                // Рефералы
+                if (typeof sharedUser.referralCount === "number") {
+                  setReferralCount((c) => Math.max(c || 0, sharedUser.referralCount || 0));
+                }
+                if (typeof sharedUser.referralEarnings === "number") {
+                  setReferralEarnings((e) => Math.max(e || 0, sharedUser.referralEarnings || 0));
+                }
+                console.log("[UserState] loaded from shared", uid, {
+                  cart: (sharedUser.cart || []).length,
+                  fav: (sharedUser.favorites || []).length,
+                  orders: (sharedUser.orderHistory || []).length,
+                });
+              }
+            }
+          } catch (e) {
+            console.warn("[UserState] shared load failed", e);
+          }
+        }
 
         // Каталог: сервер → облако. Демо DEFAULT_PRODUCTS больше не подмешиваем.
         let list = Array.isArray(cloudProducts) ? cloudProducts : [];
@@ -1764,6 +1960,7 @@ export default function App() {
         preloadImages(list);
 
         // Общие заказы (другие пользователи / другое устройство)
+        // Сервер — источник истины для статуса и трека
         try {
           const remoteOrders = await sharedOrdersLoad();
           if (Array.isArray(remoteOrders) && remoteOrders.length) {
@@ -1777,9 +1974,13 @@ export default function App() {
                 map.set(id, {
                   ...local,
                   ...o,
-                  status: local.status && local.status !== "Новый" ? local.status : (o.status || local.status),
-                  trackingNumber: o.trackingNumber || local.trackingNumber || null,
-                  items: (local.items && local.items.length ? local.items : o.items) || [],
+                  status: o.status || local.status || "Новый",
+                  trackingNumber:
+                    o.trackingNumber != null && String(o.trackingNumber).trim() !== ""
+                      ? String(o.trackingNumber).trim()
+                      : local.trackingNumber || null,
+                  askReview: o.askReview != null ? !!o.askReview : local.askReview,
+                  items: (o.items && o.items.length ? o.items : local.items) || [],
                 });
               }
             });
@@ -1856,6 +2057,23 @@ export default function App() {
   useEffect(() => { if (!dataReady) return; saveToCloud(CLOUD_KEYS.referralEarnings, referralEarnings); }, [referralEarnings, dataReady]);
   useEffect(() => { if (!dataReady) return; saveToCloud(CLOUD_KEYS.referralNotified, referralNotified); }, [referralNotified, dataReady]);
   useEffect(() => { if (!dataReady) return; if (utmSource) saveToCloud(CLOUD_KEYS.utmSource, utmSource); }, [utmSource, dataReady]);
+
+  // Сохраняем персональные данные в shared storage (для синхронизации ПК ↔ телефон)
+  useEffect(() => {
+    if (!dataReady || !user?.id || !/^\d+$/.test(String(user.id))) return;
+    const t = setTimeout(() => {
+      saveUserStateToShared(user.id, {
+        cart,
+        favorites,
+        bonusBalance,
+        orderHistory: (orderHistory || []).slice(0, 40),
+        referralCount,
+        referralEarnings,
+        orders,
+      }).catch(() => {});
+    }, 800); // debounce
+    return () => clearTimeout(t);
+  }, [dataReady, user?.id, cart, favorites, bonusBalance, orderHistory, referralCount, referralEarnings, orders]);
 
   // Если referredBy уже есть, а Telegram ID стал числовым — дорегистрируем реферала
   useEffect(() => {
@@ -1962,26 +2180,57 @@ export default function App() {
     }
   }, [orderHistory, user?.id]);
 
-  // Подтягиваем статусы своих заказов с сервера (бонусы + отзыв)
+  // Подтягиваем СВОИ заказы + статусы/треки с сервера (работает между устройствами)
   useEffect(() => {
     if (!dataReady || !user?.id) return;
     let stopped = false;
+    const myId = String(user.id);
+
     const syncMyOrders = async () => {
       try {
         const remote = await sharedOrdersLoad();
-        if (stopped || !Array.isArray(remote) || !remote.length) return;
+        if (stopped || !Array.isArray(remote)) return;
+
+        // Заказы текущего пользователя с сервера
+        const myRemote = remote.filter(
+          (o) => o && (String(o.tgId) === myId || String(o.userId) === myId)
+        );
+
         let bonusToAdd = 0;
+
         setOrderHistory((prev) => {
-          if (!prev.length) return prev;
+          const map = new Map();
+          // Сначала локальные
+          (prev || []).forEach((o) => {
+            if (o && o.id != null) map.set(String(o.id), o);
+          });
+
           let changed = false;
-          const next = prev.map((local) => {
-            const r = remote.find((o) => String(o.id) === String(local.id));
-            if (!r) return local;
+
+          // Мержим / добавляем серверные
+          myRemote.forEach((r) => {
+            const id = String(r.id);
+            const local = map.get(id);
+
+            if (!local) {
+              // Новый заказ с другого устройства — добавляем
+              map.set(id, {
+                ...r,
+                status: r.status || "Новый",
+                trackingNumber: r.trackingNumber || null,
+                askReview: !!r.askReview,
+                cashbackCredited: !!r.cashbackCredited,
+              });
+              changed = true;
+              return;
+            }
+
             const newStatus = r.status || local.status;
             const statusChanged = newStatus !== local.status;
             const reviewChanged = !!r.askReview !== !!local.askReview;
             const trackChanged =
               (r.trackingNumber || null) !== (local.trackingNumber || null);
+
             // кэшбэк: статус стал «Деньги получены» и ещё не начисляли
             let credited = local.cashbackCredited;
             if (
@@ -1993,12 +2242,20 @@ export default function App() {
               credited = true;
               changed = true;
             }
-            if (!statusChanged && !reviewChanged && !trackChanged && credited === local.cashbackCredited) {
-              return local;
+
+            if (
+              !statusChanged &&
+              !reviewChanged &&
+              !trackChanged &&
+              credited === local.cashbackCredited
+            ) {
+              return;
             }
+
             changed = true;
-            return {
+            map.set(id, {
               ...local,
+              ...r,
               status: newStatus,
               askReview:
                 r.askReview != null
@@ -2006,25 +2263,36 @@ export default function App() {
                   : r.status === "Забрать деньги" || r.status === "Деньги получены"
                     ? true
                     : local.askReview,
-              // трек всегда с сервера (CRM), если пришёл
               trackingNumber:
                 r.trackingNumber != null && String(r.trackingNumber).trim() !== ""
                   ? String(r.trackingNumber).trim()
                   : local.trackingNumber || null,
               delivery: r.delivery || local.delivery || "courier",
               cashbackCredited: credited,
-            };
+              // сохраняем локальные поля, которые сервер может не знать
+              pendingCashback: local.pendingCashback ?? r.pendingCashback,
+              items: (local.items && local.items.length ? local.items : r.items) || [],
+            });
           });
-          return changed ? next : prev;
+
+          if (!changed) return prev;
+
+          return Array.from(map.values()).sort((a, b) => {
+            const da = a.date ? new Date(a.date).getTime() : 0;
+            const db = b.date ? new Date(b.date).getTime() : 0;
+            return db - da;
+          });
         });
+
         if (bonusToAdd > 0) {
           setBonusBalance((b) => b + bonusToAdd);
           showToast(`+${bonusToAdd} BYN на бонусный счёт`);
         }
       } catch (e) {}
     };
+
     syncMyOrders();
-    const t = setInterval(syncMyOrders, 12000);
+    const t = setInterval(syncMyOrders, 10000);
     return () => {
       stopped = true;
       clearInterval(t);
@@ -2121,6 +2389,34 @@ export default function App() {
       if (d && d.ok) setBroadcastAudience(Number(d.count) || 0);
     });
   }, [showAdmin, isAdmin]);
+
+  // Авто-синхронизация заказов CRM (чтобы все админы видели актуальные статусы)
+  useEffect(() => {
+    if (!dataReady || !isAdmin) return;
+    let stopped = false;
+    const tick = async () => {
+      if (stopped) return;
+      try {
+        await syncSharedOrders(false);
+      } catch (e) {}
+    };
+    // Сразу + каждые 10 сек (и когда CRM открыта — чаще)
+    tick();
+    const interval = setInterval(tick, showAdmin ? 8000 : 15000);
+    const onVis = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") tick();
+    };
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", onVis);
+    }
+    return () => {
+      stopped = true;
+      clearInterval(interval);
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", onVis);
+      }
+    };
+  }, [dataReady, isAdmin, showAdmin]);
 
   // В уровень не считаем отменённые заказы
   const levelOrdersCount = (orderHistory || []).filter(
@@ -2795,29 +3091,34 @@ export default function App() {
             map.set(id, o);
           } else {
             const local = map.get(id);
+            // Сервер — источник истины для статуса и трека (чтобы изменения одного админа видели все)
             const merged = {
               ...local,
               ...o,
-              status: local.status && local.status !== "Новый" ? local.status : (o.status || local.status),
-              trackingNumber: o.trackingNumber || local.trackingNumber || null,
+              status: o.status || local.status || "Новый",
+              trackingNumber:
+                o.trackingNumber != null && String(o.trackingNumber).trim() !== ""
+                  ? String(o.trackingNumber).trim()
+                  : local.trackingNumber || null,
               phone: o.phone || local.phone,
               fullName: o.fullName || local.fullName,
               address: o.address || local.address,
-              items: (local.items && local.items.length ? local.items : o.items) || [],
+              askReview: o.askReview != null ? !!o.askReview : local.askReview,
+              items: (o.items && o.items.length ? o.items : local.items) || [],
             };
-            // не трогаем стейт, если ничего важного не изменилось
             if (
               local.status !== merged.status ||
               local.trackingNumber !== merged.trackingNumber ||
               local.phone !== merged.phone ||
-              local.fullName !== merged.fullName
+              local.fullName !== merged.fullName ||
+              !!local.askReview !== !!merged.askReview
             ) {
               changed = true;
             }
             map.set(id, merged);
           }
         });
-        if (!changed) return prev; // без лишнего re-render CRM
+        if (!changed) return prev;
         return Array.from(map.values()).sort((a, b) => {
           const da = a.date ? new Date(a.date).getTime() : 0;
           const db = b.date ? new Date(b.date).getTime() : 0;
@@ -4444,6 +4745,18 @@ export default function App() {
 
   // Полная очистка тестовых данных (локально + сервер заказов)
   const doResetAllTestData = async () => {
+    // 0) Глобальный epoch — все устройства/пользователи при следующем открытии обнулят персональные данные
+    try {
+      const epoch = await bumpResetEpoch();
+      try {
+        if (typeof localStorage !== "undefined") {
+          localStorage.setItem("krost_reset_epoch", String(epoch));
+        }
+      } catch (e) {}
+      console.log("[Reset] bumped global epoch to", epoch);
+    } catch (e) {
+      console.warn("[Reset] bump epoch failed", e);
+    }
     try {
       showToast("Очищаю…");
       // 1) Сервер заказов
@@ -4482,8 +4795,10 @@ export default function App() {
       setReferralEarnings(0);
       setReferralNotified(false);
       setCart([]);
+      setFavorites([]);
       setLastOrderNumber(0);
       setUsedFreeDelivery([]);
+      setReferredBy(null);
 
       // 3) CloudStorage + localStorage
       const keys = [
@@ -4498,6 +4813,7 @@ export default function App() {
         CLOUD_KEYS.usedFreeDelivery,
         CLOUD_KEYS.refEvents,
         CLOUD_KEYS.cart,
+        CLOUD_KEYS.favorites,
         CLOUD_KEYS.referredBy,
       ];
       const zeroKeys = new Set([
@@ -4532,6 +4848,7 @@ export default function App() {
         "krost_refEvents",
         "krost_referredBy",
         "krost_cart",
+        "krost_favorites",
       ].forEach((k) => {
         try {
           localStorage.removeItem(k);
@@ -4555,6 +4872,7 @@ export default function App() {
           "krost_refEvents",
           "krost_referredBy",
           "krost_cart",
+          "krost_favorites",
         ].forEach((k) => {
           try {
             cs.removeItem(k);
@@ -4562,7 +4880,23 @@ export default function App() {
         });
       }
 
-      showToast("✅ Данные очищены. Перезапустите мини-апп");
+      // Очищаем свой user-state в pantry (остальные пользователи очистятся по epoch)
+      try {
+        const uid = String(user?.id || "");
+        if (uid && /^\d+$/.test(uid)) {
+          await saveUserStateToShared(uid, {
+            cart: [],
+            favorites: [],
+            bonusBalance: 0,
+            orderHistory: [],
+            referralCount: 0,
+            referralEarnings: 0,
+            orders: 0,
+          });
+        }
+      } catch (e) {}
+
+      showToast("✅ Все данные очищены у всех пользователей");
       console.log("[Reset] done");
     } catch (e) {
       console.warn("[Reset] error", e);
@@ -4572,7 +4906,7 @@ export default function App() {
 
   const resetAllTestData = () => {
     const msg =
-      "Очистить заказы, бонусы, рефералы и корзину? Каталог не трогаем.";
+      "Очистить ВСЕ данные у ВСЕХ пользователей?\n\nЗаказы, бонусы, рефералы, корзины, избранное.\nКаталог не трогаем.\n\nЭто действие нельзя отменить.";
     // Telegram Mini App — нативный confirm
     const tg =
       typeof window !== "undefined" && window.Telegram?.WebApp
@@ -5295,6 +5629,16 @@ export default function App() {
                   <Text style={styles.adminStatWhite}>Товаров в каталоге: {products.length}</Text>
                   <Text style={styles.adminStatWhite}>Промокодов: {promoCodes.length}</Text>
                 </View>
+
+                <TouchableOpacity
+                  style={[styles.adminButton, { backgroundColor: "#c0392b", marginBottom: 16 }]}
+                  onPress={resetAllTestData}
+                  activeOpacity={0.85}
+                >
+                  <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13, textAlign: "center" }}>
+                    🗑 Очистить ВСЕ данные пользователей
+                  </Text>
+                </TouchableOpacity>
 
                 <Text style={[styles.sectionTitle, theme === "dark" && styles.textDark]}>Заказы</Text>
                 <View
@@ -6687,10 +7031,11 @@ export default function App() {
 // СТИЛИ (ПОЛНЫЕ)
 // ==============================
 const styles = StyleSheet.create({
-      root: {
+  root: {
     flex: 1,
     backgroundColor: '#F7F7F5',
     minHeight: '100%',
+    fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
   },
   rootDark: {
     backgroundColor: '#1a1a1a',
@@ -6713,17 +7058,51 @@ const styles = StyleSheet.create({
 
   logoWrap: { marginTop: 8, marginBottom: 4, alignItems: 'flex-start' },
   logoImage: { width: 180, height: 70 },
-  logo: { fontSize: 30, fontWeight: "900", marginTop: 18 },
-  description: { color: "#777", marginTop: 4, fontSize: 14 },
-  pageTitle: { fontSize: 24, fontWeight: "900", marginTop: 18, marginBottom: 12 },
-  sectionTitle: { fontSize: 20, fontWeight: "900", marginTop: 18, marginBottom: 12 },
+  logo: {
+    fontSize: 28,
+    fontWeight: "800",
+    marginTop: 18,
+    letterSpacing: -0.4,
+    fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+  },
+  description: {
+    color: "#888",
+    marginTop: 4,
+    fontSize: 13,
+    fontWeight: "400",
+    letterSpacing: 0.1,
+    fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+  },
+  pageTitle: {
+    fontSize: 22,
+    fontWeight: "800",
+    marginTop: 16,
+    marginBottom: 12,
+    letterSpacing: -0.4,
+    color: "#111",
+    fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: "800",
+    marginTop: 18,
+    marginBottom: 12,
+    letterSpacing: -0.3,
+    fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+  },
 
   banner: { backgroundColor: "#111", padding: 20, borderRadius: 28, marginTop: 18 },
-  bannerTitle: { fontSize: 26, fontWeight: "900", color: "#fff" },
+  bannerTitle: {
+    fontSize: 24,
+    fontWeight: "800",
+    color: "#fff",
+    letterSpacing: -0.3,
+    fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+  },
   bannerButton: { backgroundColor: "#fff", padding: 10, borderRadius: 20, marginTop: 15, alignSelf: "flex-start" },
 
   grid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between" },
-  card: { width: "48%", backgroundColor: "#fff", borderRadius: 20, padding: 8, marginBottom: 12, position: "relative" },
+  card: { width: "48%", backgroundColor: "#fff", borderRadius: 18, padding: 10, marginBottom: 14, position: "relative" },
   image: {
     width: "100%",
     aspectRatio: 1,
@@ -6803,30 +7182,78 @@ const styles = StyleSheet.create({
     color: "#111",
     lineHeight: 18,
   },
-  brand: { fontSize: 11, color: "#777", marginTop: 6 },
-  productName: { fontSize: 14, fontWeight: "800", marginTop: 4 },
-  price: { fontSize: 18, fontWeight: "900", marginTop: 3 },
-  oldPrice: { textDecorationLine: "line-through", color: "#999", fontSize: 13 },
-  oldPriceBig: { textDecorationLine: "line-through", color: "#999", fontSize: 15, marginRight: 10 },
-  bigTitle: { fontSize: 24, fontWeight: "900" },
-  bigPrice: { fontSize: 28, fontWeight: "900" },
+  brand: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#888",
+    marginTop: 8,
+    letterSpacing: 1.1,
+    textTransform: "uppercase",
+    fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+  },
+  productName: {
+    fontSize: 14,
+    fontWeight: "600",
+    marginTop: 3,
+    color: "#111",
+    letterSpacing: -0.1,
+    lineHeight: 18,
+    fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+  },
+  price: {
+    fontSize: 16,
+    fontWeight: "800",
+    marginTop: 4,
+    color: "#111",
+    letterSpacing: -0.2,
+    fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+  },
+  oldPrice: {
+    textDecorationLine: "line-through",
+    color: "#999",
+    fontSize: 13,
+    fontWeight: "500",
+    fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+  },
+  oldPriceBig: {
+    textDecorationLine: "line-through",
+    color: "#999",
+    fontSize: 15,
+    marginRight: 10,
+    fontWeight: "500",
+  },
+  bigTitle: {
+    fontSize: 22,
+    fontWeight: "800",
+    letterSpacing: -0.3,
+    fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+  },
+  bigPrice: {
+    fontSize: 24,
+    fontWeight: "800",
+    letterSpacing: -0.3,
+    fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+  },
 
   // Product page new styles
   productBrand: {
-    fontSize: 13,
-    fontWeight: "700",
+    fontSize: 12,
+    fontWeight: "600",
     color: "#888",
-    letterSpacing: 1.5,
+    letterSpacing: 1.4,
     textTransform: "uppercase",
     marginTop: 16,
     marginBottom: 4,
+    fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
   },
   productTitle: {
-    fontSize: 26,
-    fontWeight: "900",
+    fontSize: 24,
+    fontWeight: "800",
     color: "#111",
-    lineHeight: 32,
+    lineHeight: 30,
     marginBottom: 8,
+    letterSpacing: -0.4,
+    fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
   },
   priceRow: {
     flexDirection: "row",
@@ -6834,9 +7261,11 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   productPrice: {
-    fontSize: 26,
-    fontWeight: "900",
+    fontSize: 24,
+    fontWeight: "800",
     color: "#111",
+    letterSpacing: -0.3,
+    fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
   },
   headerBtn: {
     backgroundColor: "#111",
@@ -7204,7 +7633,17 @@ const styles = StyleSheet.create({
   bonusCheckbox: { flexDirection: "row", alignItems: "center", marginVertical: 8 },
   bonusCheckboxText: { fontSize: 14, fontWeight: "600" },
 
-  searchInput: { backgroundColor: "#fff", padding: 10, borderRadius: 22, marginBottom: 12, fontSize: 14 },
+  searchInput: {
+    backgroundColor: "#fff",
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 22,
+    marginBottom: 12,
+    fontSize: 14,
+    fontWeight: "500",
+    color: "#111",
+    fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+  },
   filterScroll: { flexDirection: "row", marginBottom: 12, height: 44, flexShrink: 0, flexGrow: 0 },
   filterContent: { alignItems: "center" },
   filterChip: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 16, backgroundColor: "#eee", marginRight: 8, alignSelf: "flex-start", flexShrink: 0, flexGrow: 0 },
@@ -7485,9 +7924,11 @@ const styles = StyleSheet.create({
   },
   menuText: {
     fontSize: 11,
-    fontWeight: '500',
+    fontWeight: '600',
     color: '#888',
     marginTop: 1,
+    letterSpacing: 0.1,
+    fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
   },
   menuTextActive: {
     fontWeight: '700',
