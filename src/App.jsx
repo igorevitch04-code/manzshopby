@@ -961,8 +961,11 @@ const saveUserStateToShared = async (tgId, state) => {
           console.log("[UserState] netlify save OK", tgId, "cart", payload.cart.length, "fav", payload.favorites.length);
           break;
         }
+        // Сохраняем текст ошибки для тоста
+        payload.__lastError = data?.error || data?.detail || `HTTP ${r.status}`;
         console.warn("[UserState] netlify save response", url, r.status, data);
       } catch (e) {
+        payload.__lastError = (e && e.message) || String(e);
         console.warn("[UserState] netlify save fail", url, e && e.message);
       }
     }
@@ -2257,7 +2260,7 @@ export default function App() {
       const ok = await saveUserStateToShared(uid, payload);
       if (!ok) {
         console.warn("[UserState] persist FAILED", uid);
-        if (opts.force) showToast("⚠️ Синхронизация корзины не удалась");
+        if (opts.force) showToast("⚠️ Синхронизация не удалась — проверь деплой userstate");
       } else {
         console.log("[UserState] persist OK", uid, "cart", (nextCart || []).length, "fav", (nextFav || []).length);
         if (opts.force) {
