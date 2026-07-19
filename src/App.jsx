@@ -4228,12 +4228,14 @@ export default function App() {
     const isDark = theme === "dark";
     return (
       <View style={[styles.homePage, isDark && styles.pageDark]}>
+        {/* Мазок — строго верхний левый угол, не пересекается с логотипом */}
         <Image
           source={{ uri: BRUSH_TOP_URI }}
           style={styles.homeBrushTopImg}
           resizeMode="contain"
         />
 
+        {/* Центр: логотип → тексты → кнопка */}
         <View style={styles.homeCenter}>
           <Image
             source={{ uri: LOGO_URI }}
@@ -8390,27 +8392,33 @@ const styles = StyleSheet.create({
   // ===== NEW DESIGN (black / white / brush) =====
   homePage: {
     flex: 1,
-    justifyContent: "center",
     alignItems: "center",
-    paddingHorizontal: 28,
-    paddingBottom: 120,
     backgroundColor: "#fff",
+    paddingHorizontal: 24,
+    // место под нижнее меню
+    paddingBottom: 100,
   },
   homeBrushTopImg: {
     position: "absolute",
-    top: 12,
-    left: -4,
-    width: 190,
-    height: 70,
+    top: 0,
+    left: 0,
+    width: 150,
+    height: 56,
+    zIndex: 1,
   },
   homeCenter: {
-    alignItems: "center",
+    flex: 1,
     width: "100%",
+    alignItems: "center",
+    justifyContent: "center",
+    // чуть выше геометрического центра — как на макете
+    paddingBottom: 40,
+    paddingTop: 48,
   },
   homeLogoImg: {
-    width: 270,
-    height: 78,
-    marginBottom: 30,
+    width: 250,
+    height: 72,
+    marginBottom: 36,
   },
   homeWelcome: {
     fontSize: 18,
@@ -8422,12 +8430,12 @@ const styles = StyleSheet.create({
   homeSub: {
     fontSize: 14,
     color: "#9a9a9a",
-    marginBottom: 34,
+    marginBottom: 36,
     textAlign: "center",
   },
   brushBtnWrap: {
-    width: 280,
-    height: 56,
+    width: 270,
+    height: 54,
     alignItems: "center",
     justifyContent: "center",
     position: "relative",
@@ -8436,8 +8444,8 @@ const styles = StyleSheet.create({
     position: "absolute",
     left: 0,
     top: 0,
-    width: 280,
-    height: 56,
+    width: 270,
+    height: 54,
   },
   brushBtnTextOverlay: {
     color: "#fff",
