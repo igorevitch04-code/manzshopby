@@ -1804,11 +1804,10 @@ export default function App() {
     try {
       if (typeof sessionStorage !== "undefined") {
         const saved = sessionStorage.getItem("krost_page");
-        // home больше нет — стартуем с каталога
-        if (saved && saved !== "home") return saved;
+        if (saved) return saved;
       }
     } catch (e) {}
-    return "catalog";
+    return "home";
   };
   const getInitialProductId = () => {
     try {
@@ -4219,7 +4218,32 @@ export default function App() {
   const Home = () => null;
 
   // ---- Catalog ----
+  // ---- Home / Welcome (дизайн-референс) ----
+  const HomeWelcome = () => {
+    const { theme } = useTheme();
+    const isDark = theme === "dark";
+    return (
+      <View style={[styles.page, styles.homePage, isDark && styles.pageDark]}>
+        <View style={styles.homeBrushTop} />
+        <View style={styles.homeCenter}>
+          <Text style={[styles.homeLogo, isDark && styles.textDark]}>MANZSHOPBY</Text>
+          <Text style={[styles.homeWelcome, isDark && styles.textDark]}>Добро пожаловать</Text>
+          <Text style={styles.homeSub}>Выбери свои идеальные кроссовки</Text>
+          <TouchableOpacity
+            style={styles.brushBtn}
+            activeOpacity={0.85}
+            onPress={() => setPage("catalog")}
+          >
+            <Text style={styles.brushBtnText}>ПЕРЕЙТИ В КАТАЛОГ</Text>
+          </TouchableOpacity>
+        </View>
+        <View style={styles.homeBrushBottom} />
+      </View>
+    );
+  };
+
   const Catalog = () => {
+
     const brands = getBrands(products);
     const allSizes = Array.from(
       new Set(
@@ -4316,10 +4340,9 @@ export default function App() {
 
     return (
       <View style={[styles.page, isDark && styles.pageDark]}>
-        <Text style={[styles.pageTitle, isDark && styles.textDark]}>Каталог</Text>
         <TextInput
           style={[styles.searchInput, isDark && styles.inputDark]}
-          placeholder="Поиск..."
+          placeholder="Поиск кроссовок"
           placeholderTextColor={isDark ? "#999" : "#888"}
           value={localSearch}
           onChangeText={handleSearchChange}
@@ -5836,7 +5859,7 @@ export default function App() {
   const Menu = () => {
     const { theme } = useTheme();
     const isDark = theme === "dark";
-    const isActive = (target) => page === target;
+    const isActive = (target) => page === target || (target === "catalog" && page === "home");
 
     const textStyle = (active) => [
       styles.menuText,
@@ -5890,7 +5913,7 @@ export default function App() {
             <View style={[styles.menuIconWrap, isActive("profile") && (isDark ? styles.menuIconWrapActiveDark : styles.menuIconWrapActive)]}>
               <Text style={iconStyle(isActive("profile"))}>👤</Text>
             </View>
-            <Text style={textStyle(isActive("profile"))}>Я</Text>
+            <Text style={textStyle(isActive("profile"))}>Профиль</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -5901,7 +5924,8 @@ export default function App() {
   // РЕНДЕР
   // ==============================
   let content;
-  if (page === "home" || page === "catalog") content = <Catalog />; // home больше нет
+  if (page === "home") content = <HomeWelcome />;
+  else if (page === "catalog") content = <Catalog />;
   else if (page === "product") content = <ProductPage />;
   else if (page === "favorites") content = <Favorites />;
   else if (page === "cart") content = <Cart />;
@@ -8343,5 +8367,209 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     textAlign: 'center',
-  }
+  },
+
+  // ===== NEW DESIGN (black / white / brush) =====
+  homePage: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 24,
+    paddingBottom: 100,
+  },
+  homeBrushTop: {
+    position: "absolute",
+    top: 40,
+    left: -20,
+    width: 180,
+    height: 48,
+    backgroundColor: "#111",
+    transform: [{ rotate: "-8deg" }, { skewX: "-12deg" }],
+    borderRadius: 4,
+    opacity: 0.95,
+  },
+  homeBrushBottom: {
+    position: "absolute",
+    bottom: 120,
+    right: -30,
+    width: 200,
+    height: 40,
+    backgroundColor: "#111",
+    transform: [{ rotate: "6deg" }, { skewX: "10deg" }],
+    borderRadius: 4,
+    opacity: 0.9,
+  },
+  homeCenter: {
+    alignItems: "center",
+    width: "100%",
+  },
+  homeLogo: {
+    fontSize: 36,
+    fontWeight: "900",
+    letterSpacing: 1,
+    color: "#111",
+    fontStyle: "italic",
+    marginBottom: 28,
+    textAlign: "center",
+  },
+  homeWelcome: {
+    fontSize: 22,
+    fontWeight: "800",
+    color: "#111",
+    marginBottom: 8,
+    textAlign: "center",
+  },
+  homeSub: {
+    fontSize: 14,
+    color: "#888",
+    marginBottom: 28,
+    textAlign: "center",
+  },
+  brushBtn: {
+    backgroundColor: "#111",
+    paddingVertical: 16,
+    paddingHorizontal: 32,
+    borderRadius: 6,
+    transform: [{ skewX: "-8deg" }],
+    minWidth: 240,
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  brushBtnText: {
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: "800",
+    letterSpacing: 1.2,
+    transform: [{ skewX: "8deg" }],
+  },
+  sectionHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginTop: 18,
+    marginBottom: 12,
+  },
+  sectionTitle: {
+    fontSize: 13,
+    fontWeight: "800",
+    letterSpacing: 1.4,
+    color: "#111",
+    textTransform: "uppercase",
+  },
+  sectionLink: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#999",
+  },
+  brandRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 8,
+  },
+  brandCircle: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: "#F5F5F5",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "#EEE",
+  },
+  brandCircleActive: {
+    backgroundColor: "#111",
+    borderColor: "#111",
+  },
+  brandCircleText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#333",
+    textAlign: "center",
+  },
+  brandCircleTextActive: {
+    color: "#fff",
+  },
+  brandLabel: {
+    fontSize: 11,
+    color: "#666",
+    textAlign: "center",
+    marginTop: 6,
+    fontWeight: "600",
+  },
+  horizCard: {
+    width: 150,
+    marginRight: 12,
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: "#F0F0F0",
+  },
+  horizCardImg: {
+    width: "100%",
+    height: 110,
+    borderRadius: 12,
+    backgroundColor: "#F7F7F7",
+  },
+  listRowCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    padding: 12,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: "#F0F0F0",
+  },
+  listRowImg: {
+    width: 72,
+    height: 72,
+    borderRadius: 12,
+    backgroundColor: "#F7F7F7",
+  },
+  listRowBody: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  profileAvatar: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: "#111",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  profileAvatarText: {
+    color: "#fff",
+    fontSize: 24,
+    fontWeight: "900",
+  },
+  statsRow: {
+    flexDirection: "row",
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#F0F0F0",
+    paddingVertical: 14,
+    marginBottom: 14,
+  },
+  statCell: {
+    flex: 1,
+    alignItems: "center",
+  },
+  statValue: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: "#111",
+  },
+  statLabel: {
+    fontSize: 11,
+    color: "#999",
+    marginTop: 4,
+    textAlign: "center",
+  },
 });
