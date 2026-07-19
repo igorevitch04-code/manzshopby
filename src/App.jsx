@@ -4228,34 +4228,34 @@ export default function App() {
     const isDark = theme === "dark";
     return (
       <View style={[styles.homePage, isDark && styles.pageDark]}>
+        {/* Мазок — только угол, не в потоке контента */}
         <Image
           source={{ uri: BRUSH_TOP_URI }}
           style={styles.homeBrushTopImg}
           resizeMode="contain"
         />
 
-        <View style={styles.homeCenter}>
-          <View style={styles.homeBlock}>
+        {/* Блок по центру экрана (как на макете) */}
+        <View style={styles.homeBlock} pointerEvents="box-none">
+          <Image
+            source={{ uri: LOGO_URI }}
+            style={styles.homeLogoImg}
+            resizeMode="contain"
+          />
+          <Text style={styles.homeWelcome}>Добро пожаловать</Text>
+          <Text style={styles.homeSub}>Выбери свои идеальные кроссовки</Text>
+          <TouchableOpacity
+            activeOpacity={0.88}
+            onPress={() => setPage("catalog")}
+            style={styles.brushBtnWrap}
+          >
             <Image
-              source={{ uri: LOGO_URI }}
-              style={styles.homeLogoImg}
-              resizeMode="contain"
+              source={{ uri: BRUSH_BTN_URI }}
+              style={styles.brushBtnImg}
+              resizeMode="stretch"
             />
-            <Text style={styles.homeWelcome}>Добро пожаловать</Text>
-            <Text style={styles.homeSub}>Выбери свои идеальные кроссовки</Text>
-            <TouchableOpacity
-              activeOpacity={0.88}
-              onPress={() => setPage("catalog")}
-              style={styles.brushBtnWrap}
-            >
-              <Image
-                source={{ uri: BRUSH_BTN_URI }}
-                style={styles.brushBtnImg}
-                resizeMode="stretch"
-              />
-              <Text style={styles.brushBtnTextOverlay}>ПЕРЕЙТИ В КАТАЛОГ</Text>
-            </TouchableOpacity>
-          </View>
+            <Text style={styles.brushBtnTextOverlay}>ПЕРЕЙТИ В КАТАЛОГ</Text>
+          </TouchableOpacity>
         </View>
       </View>
     );
@@ -8393,33 +8393,34 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "#fff",
     position: "relative",
+    overflow: "hidden",
   },
+  // Самый верхний левый угол, под шапкой Telegram
   homeBrushTopImg: {
     position: "absolute",
-    top: 0,
+    top: 4,
     left: 0,
-    width: 200,
-    height: 72,
+    width: 130,
+    height: 44,
+    zIndex: 1,
+  },
+  // Центр экрана: логотип чуть выше середины
+  homeBlock: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    top: "34%",
+    alignItems: "center",
+    paddingHorizontal: 28,
     zIndex: 2,
   },
   homeCenter: {
     flex: 1,
-    width: "100%",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 28,
-    paddingBottom: 96,
-  },
-  homeBlock: {
-    width: "100%",
-    alignItems: "center",
-    // чуть выше центра экрана
-    marginBottom: 56,
   },
   homeLogoImg: {
-    width: 248,
-    height: 70,
-    marginBottom: 26,
+    width: 236,
+    height: 66,
+    marginBottom: 28,
   },
   homeWelcome: {
     fontSize: 17,
@@ -8431,12 +8432,12 @@ const styles = StyleSheet.create({
   homeSub: {
     fontSize: 13,
     color: "#9a9a9a",
-    marginBottom: 26,
+    marginBottom: 28,
     textAlign: "center",
   },
   brushBtnWrap: {
-    width: 268,
-    height: 52,
+    width: 256,
+    height: 50,
     alignItems: "center",
     justifyContent: "center",
     position: "relative",
@@ -8445,8 +8446,8 @@ const styles = StyleSheet.create({
     position: "absolute",
     left: 0,
     top: 0,
-    width: 268,
-    height: 52,
+    width: 256,
+    height: 50,
   },
   brushBtnTextOverlay: {
     color: "#fff",
