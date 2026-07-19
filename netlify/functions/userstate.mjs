@@ -1,12 +1,9 @@
-// Netlify Function: корзина / избранное / бонусы по Telegram user id
+// Netlify Function: корзина / избранное по Telegram user id
+// БЕЗ @netlify/blobs — храним на getpantry.cloud (с сервера CORS не мешает)
+//
 // POST /.netlify/functions/userstate
 //   { action: "get", id: "123456" }
 //   { action: "set", id: "123456", state: { cart, favorites, bonusBalance, updatedAt } }
-//
-// Важно: для Lambda-совместимого handler нужен connectLambda(event),
-// иначе getStore падает и клиент видит «синхронизация не удалась».
-
-import { connectLambda, getStore } from "@netlify/blobs";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -21,35 +18,119 @@ const json = (status, body) => ({
   body: JSON.stringify(body),
 });
 
+// Фиксированный pantry basket для всех user-state (ключ = user id внутри)
+// Можно переопределить через env USERSTATE_PANTRY_ID
+const DEFAULT_PANTRY_ID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"; // заменится при первом create
+const PANTRY_BASKET = "manz_userstate_v1";
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function ensurePantryId() {
+  const fromEnv = (process.env.USERSTATE_PANTRY_ID || "").trim();
+  if (fromEnv) return fromEnv;
+
+  // Пробуем прочитать id из простого KV (keyvalue.immanuel.co)
+  const KV_NS = "manzshopby";
+  const KV_KEY = "userstate_pantry_id_v1";
+  try {
+    const getUrl = `https://keyvalue.immanuel.co/api/KeyVal/GetValue/${KV_NS}/${encodeURIComponent(KV_KEY)}`;
+    const r = await fetch(getUrl, { cache: "no-store" });
+    if (r.ok) {
+      let text = (await r.text()) || "";
+      text = text.replace(/^"|"$/g, "").trim();
+      if (text && text.length > 10 && text !== "null") return text;
+    }
+  } catch (e) {}
+
+  // Создаём новый pantry
+  try {
+    const r = await fetch("https://getpantry.cloud/apiv1/pantry", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "manzshop-userstate",
+        description: "cart favorites sync",
+      }),
+    });
+    const data = await r.json().catch(() => ({}));
+    const id = data?.pantryId || data?.id || null;
+    if (id) {
+      // Сохраняем id в KV
+      try {
+        const setUrl =
+          `https://keyvalue.immanuel.co/api/KeyVal/UpdateValue/${KV_NS}/` +
+          `${encodeURIComponent(KV_KEY)}/${encodeURIComponent(id)}`;
+        await fetch(setUrl, { method: "GET", cache: "no-store" });
+      } catch (e) {}
+      return id;
+    }
+  } catch (e) {
+    console.error("[userstate] create pantry", e);
+  }
+
+  // Последний шанс — env или ошибка
+  return null;
+}
+
+async function pantryGet(pantryId, basket) {
+  const url = `https://getpantry.cloud/apiv1/pantry/${pantryId}/basket/${basket}`;
+  const r = await fetch(url, { cache: "no-store" });
+  if (r.status === 404) return {};
+  if (!r.ok) throw new Error(`pantry get ${r.status}`);
+  const data = await r.json().catch(() => ({}));
+  return data && typeof data === "object" ? data : {};
+}
+
+async function pantryPut(pantryId, basket, data) {
+  const url = `https://getpantry.cloud/apiv1/pantry/${pantryId}/basket/${basket}`;
+  // create or replace
+  let r = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!r.ok) {
+    r = await fetch(url, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+  }
+  if (!r.ok) throw new Error(`pantry put ${r.status}`);
+  return true;
+}
+
+// Fallback: keyvalue по одному пользователю (если pantry недоступен)
+async function kvGet(key) {
+  const url = `https://keyvalue.immanuel.co/api/KeyVal/GetValue/manzshopby/${encodeURIComponent(key)}`;
+  const r = await fetch(url, { cache: "no-store" });
+  if (!r.ok) return null;
+  let text = (await r.text()) || "";
+  text = text.replace(/^"|"$/g, "").trim();
+  if (!text || text === "null") return null;
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    return null;
+  }
+}
+
+async function kvSet(key, value) {
+  const json = typeof value === "string" ? value : JSON.stringify(value);
+  if (json.length > 1400) return false;
+  const url =
+    `https://keyvalue.immanuel.co/api/KeyVal/UpdateValue/manzshopby/` +
+    `${encodeURIComponent(key)}/${encodeURIComponent(json)}`;
+  const r = await fetch(url, { method: "GET", cache: "no-store" });
+  return r.ok;
+}
+
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") {
     return { statusCode: 204, headers: corsHeaders, body: "" };
   }
 
   try {
-    // КРИТИЧНО для Lambda-совместимого режима (export const handler)
-    try {
-      connectLambda(event);
-    } catch (e) {
-      console.warn("[userstate] connectLambda:", e && e.message);
-    }
-
-    let store;
-    try {
-      store = getStore({ name: "manz-userstate", consistency: "strong" });
-    } catch (e1) {
-      try {
-        store = getStore("manz-userstate");
-      } catch (e2) {
-        console.error("[userstate] getStore failed", e1, e2);
-        return json(500, {
-          ok: false,
-          error: "blobs_unavailable",
-          detail: String((e2 && e2.message) || (e1 && e1.message) || e2 || e1),
-        });
-      }
-    }
-
     let body = {};
     if (event.body) {
       try {
@@ -70,26 +151,34 @@ export const handler = async (event) => {
       return json(400, { ok: false, error: "invalid_id", got: id });
     }
 
-    const key = `user_${id}`;
+    const userKey = `u_${id}`;
 
     if (action === "get" || action === "getstate") {
-      let raw = null;
+      // 1) Pantry
       try {
-        raw = await store.get(key, { type: "json" });
-      } catch (e) {
-        try {
-          const text = await store.get(key);
-          raw = text ? JSON.parse(text) : null;
-        } catch (e2) {
-          console.warn("[userstate] get parse", e2 && e2.message);
-          raw = null;
+        const pantryId = await ensurePantryId();
+        if (pantryId) {
+          const all = await pantryGet(pantryId, PANTRY_BASKET);
+          const state = all && all[userKey] ? all[userKey] : null;
+          if (state) {
+            return json(200, { ok: true, state, source: "pantry" });
+          }
         }
+      } catch (e) {
+        console.warn("[userstate] pantry get", e && e.message);
       }
 
-      if (!raw || typeof raw !== "object") {
-        return json(200, { ok: true, state: null });
+      // 2) KV
+      try {
+        const state = await kvGet(`ustate_${id}`);
+        if (state) {
+          return json(200, { ok: true, state, source: "kv" });
+        }
+      } catch (e) {
+        console.warn("[userstate] kv get", e && e.message);
       }
-      return json(200, { ok: true, state: raw });
+
+      return json(200, { ok: true, state: null });
     }
 
     if (action === "set" || action === "setstate") {
@@ -107,20 +196,74 @@ export const handler = async (event) => {
         updatedAt: state.updatedAt || new Date().toISOString(),
       };
 
+      let saved = false;
+      let source = null;
+
+      // 1) Pantry — весь объект пользователей
       try {
-        if (typeof store.setJSON === "function") {
-          await store.setJSON(key, payload);
-        } else {
-          await store.set(key, JSON.stringify(payload), {
-            contentType: "application/json",
-          });
+        const pantryId = await ensurePantryId();
+        if (pantryId) {
+          let all = {};
+          try {
+            all = await pantryGet(pantryId, PANTRY_BASKET);
+          } catch (e) {
+            all = {};
+          }
+          if (!all || typeof all !== "object") all = {};
+          all[userKey] = payload;
+          // не раздуваем бесконечно — чистим очень старые если > 200 ключей
+          const keys = Object.keys(all);
+          if (keys.length > 200) {
+            const sorted = keys
+              .map((k) => ({ k, t: Date.parse(all[k]?.updatedAt || 0) || 0 }))
+              .sort((a, b) => a.t - b.t);
+            for (let i = 0; i < sorted.length - 150; i++) {
+              delete all[sorted[i].k];
+            }
+          }
+          await pantryPut(pantryId, PANTRY_BASKET, all);
+          saved = true;
+          source = "pantry";
         }
       } catch (e) {
-        console.error("[userstate] set failed", e);
+        console.warn("[userstate] pantry set", e && e.message);
+      }
+
+      // 2) KV backup (компактный)
+      try {
+        const compact = {
+          cart: payload.cart.map((x) => ({
+            id: x.id,
+            name: x.name,
+            brand: x.brand,
+            price: x.price,
+            size: x.size || null,
+            image: typeof x.image === "string" ? x.image.slice(0, 80) : "",
+          })),
+          favorites: payload.favorites.map((x) => ({
+            id: x.id,
+            name: x.name,
+            brand: x.brand,
+            price: x.price,
+            image: typeof x.image === "string" ? x.image.slice(0, 80) : "",
+          })),
+          bonusBalance: payload.bonusBalance,
+          updatedAt: payload.updatedAt,
+        };
+        const ok = await kvSet(`ustate_${id}`, compact);
+        if (ok) {
+          saved = true;
+          source = source || "kv";
+        }
+      } catch (e) {
+        console.warn("[userstate] kv set", e && e.message);
+      }
+
+      if (!saved) {
         return json(500, {
           ok: false,
-          error: "set_failed",
-          detail: String(e && e.message ? e.message : e),
+          error: "storage_failed",
+          detail: "pantry and kv both failed",
         });
       }
 
@@ -129,6 +272,7 @@ export const handler = async (event) => {
         cart: payload.cart.length,
         favorites: payload.favorites.length,
         updatedAt: payload.updatedAt,
+        source,
       });
     }
 
