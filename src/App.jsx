@@ -4378,10 +4378,53 @@ export default function App() {
       setFiltersOpen(false);
     };
 
+    // Данные для секций макета
+    const visible = (products || []).filter((p) => !p.hidden);
+    const threeDays = Date.now() - 3 * 24 * 60 * 60 * 1000;
+    const novinki = [...visible]
+      .filter((p) => p.createdAt && new Date(p.createdAt).getTime() >= threeDays)
+      .sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0))
+      .slice(0, 8);
+    const novinkiList = novinki.length ? novinki : visible.slice(0, 8);
+    const popular = [...visible]
+      .sort((a, b) => {
+        if (!!b.pinned !== !!a.pinned) return (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0);
+        return (Number(b.averageRating) || 0) - (Number(a.averageRating) || 0);
+      })
+      .slice(0, 8);
+    const brandList = brands.length ? brands : ["Nike", "Jordan", "Adidas", "New Balance"];
+
+    const openProduct = (item) => {
+      setSelectedProduct(item);
+      setSelectedSize(null);
+      setPage("product");
+    };
+
+    const HorizCard = ({ item }) => {
+      const isFav = favorites.some((x) => x.id === item.id);
+      return (
+        <TouchableOpacity activeOpacity={0.9} onPress={() => openProduct(item)} style={styles.horizCard}>
+          <View style={{ position: "relative" }}>
+            <SmartImage uri={getProductMainImage(item)} style={styles.horizCardImg} resizeMode="contain" />
+            <TouchableOpacity
+              style={[styles.favoriteBtn, isFav && styles.favoriteBtnActive, { top: 6, right: 6 }]}
+              onPress={(e) => { e?.stopPropagation?.(); toggleFavorite(item); }}
+            >
+              <Text style={[styles.favoriteBtnText, isFav && styles.favoriteBtnTextActive]}>{isFav ? "♥" : "♡"}</Text>
+            </TouchableOpacity>
+          </View>
+          <Text style={styles.horizCardName} numberOfLines={2}>{item.name}</Text>
+          <Text style={styles.horizCardPrice}>{money(item.price)}</Text>
+        </TouchableOpacity>
+      );
+    };
+
+    const showSections = !localSearch && activeFiltersCount === 0;
+
     return (
-      <View style={[styles.page, isDark && styles.pageDark]}>
+      <View style={[styles.page, styles.catalogPage, isDark && styles.pageDark]}>
         <TextInput
-          style={[styles.searchInput, isDark && styles.inputDark]}
+          style={[styles.searchInput, styles.catalogSearch, isDark && styles.inputDark]}
           placeholder="Поиск кроссовок"
           placeholderTextColor={isDark ? "#999" : "#888"}
           value={localSearch}
@@ -4392,13 +4435,8 @@ export default function App() {
           returnKeyType="search"
         />
 
-        {/* Кнопка Фильтры */}
         <TouchableOpacity
-          style={[
-            styles.filterChip,
-            styles.filterChipActive,
-            { alignSelf: "flex-start", marginBottom: 12, paddingHorizontal: 18 },
-          ]}
+          style={[styles.filterChip, styles.filterChipActive, { alignSelf: "flex-start", marginBottom: 14, paddingHorizontal: 18 }]}
           onPress={() => setFiltersOpen(true)}
           activeOpacity={0.8}
         >
@@ -4407,142 +4445,124 @@ export default function App() {
           </Text>
         </TouchableOpacity>
 
-        {/* Модалка фильтров */}
         <Modal visible={filtersOpen} transparent animationType="fade" onRequestClose={() => setFiltersOpen(false)}>
           <View style={styles.modalOverlay}>
             <View style={[styles.modalView, isDark && styles.modalViewDark, { maxHeight: "85%" }]}>
               <Text style={[styles.modalTitle, isDark && styles.textDark]}>Фильтры</Text>
-
               <Text style={[styles.sizeTitle, isDark && styles.textDark, { marginBottom: 8 }]}>Сортировка</Text>
               <View style={{ flexDirection: "row", flexWrap: "wrap", marginBottom: 16 }}>
-                {[
-                  { key: null, label: "По умолчанию" },
-                  { key: "asc", label: "Цена ↑" },
-                  { key: "desc", label: "Цена ↓" },
-                ].map((opt) => (
-                  <TouchableOpacity
-                    key={String(opt.key)}
-                    style={[
-                      styles.filterChip,
-                      sortBy === opt.key && styles.filterChipActive,
-                      { marginBottom: 6 },
-                    ]}
-                    onPress={() => setSortBy(opt.key)}
-                  >
-                    <Text style={sortBy === opt.key ? styles.filterChipTextActive : null}>
-                      {opt.label}
-                    </Text>
+                {[{ key: null, label: "По умолчанию" }, { key: "asc", label: "Цена ↑" }, { key: "desc", label: "Цена ↓" }].map((opt) => (
+                  <TouchableOpacity key={String(opt.key)} style={[styles.filterChip, sortBy === opt.key && styles.filterChipActive, { marginBottom: 6 }]} onPress={() => setSortBy(opt.key)}>
+                    <Text style={sortBy === opt.key ? styles.filterChipTextActive : null}>{opt.label}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
-
               <Text style={[styles.sizeTitle, isDark && styles.textDark, { marginBottom: 8 }]}>Категория</Text>
               <View style={{ flexDirection: "row", flexWrap: "wrap", marginBottom: 16 }}>
-                <TouchableOpacity
-                  style={[styles.filterChip, onlyNew && styles.filterChipActive, { marginBottom: 6 }]}
-                  onPress={() => setOnlyNew((v) => !v)}
-                >
+                <TouchableOpacity style={[styles.filterChip, onlyNew && styles.filterChipActive, { marginBottom: 6 }]} onPress={() => setOnlyNew((v) => !v)}>
                   <Text style={onlyNew ? styles.filterChipTextActive : null}>Новинки</Text>
                 </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.filterChip, onlySale && styles.filterChipActive, { marginBottom: 6 }]}
-                  onPress={() => setOnlySale((v) => !v)}
-                >
+                <TouchableOpacity style={[styles.filterChip, onlySale && styles.filterChipActive, { marginBottom: 6 }]} onPress={() => setOnlySale((v) => !v)}>
                   <Text style={onlySale ? styles.filterChipTextActive : null}>Скидки</Text>
                 </TouchableOpacity>
               </View>
-
               <Text style={[styles.sizeTitle, isDark && styles.textDark, { marginBottom: 8 }]}>Бренд</Text>
               <View style={{ flexDirection: "row", flexWrap: "wrap", marginBottom: 16 }}>
-                <TouchableOpacity
-                  style={[styles.filterChip, localBrand === null && styles.filterChipActive, { marginBottom: 6 }]}
-                  onPress={() => setLocalBrand(null)}
-                >
+                <TouchableOpacity style={[styles.filterChip, localBrand === null && styles.filterChipActive, { marginBottom: 6 }]} onPress={() => setLocalBrand(null)}>
                   <Text style={localBrand === null ? styles.filterChipTextActive : null}>Все</Text>
                 </TouchableOpacity>
                 {brands.map((b) => (
-                  <TouchableOpacity
-                    key={b}
-                    style={[styles.filterChip, localBrand === b && styles.filterChipActive, { marginBottom: 6 }]}
-                    onPress={() => setLocalBrand(b)}
-                  >
+                  <TouchableOpacity key={b} style={[styles.filterChip, localBrand === b && styles.filterChipActive, { marginBottom: 6 }]} onPress={() => setLocalBrand(b)}>
                     <Text style={localBrand === b ? styles.filterChipTextActive : null}>{b}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
-
               <Text style={[styles.sizeTitle, isDark && styles.textDark, { marginBottom: 8 }]}>Размер</Text>
               <View style={{ flexDirection: "row", flexWrap: "wrap", marginBottom: 16 }}>
-                <TouchableOpacity
-                  style={[styles.filterChip, localSize === null && styles.filterChipActive, { marginBottom: 6 }]}
-                  onPress={() => setLocalSize(null)}
-                >
+                <TouchableOpacity style={[styles.filterChip, localSize === null && styles.filterChipActive, { marginBottom: 6 }]} onPress={() => setLocalSize(null)}>
                   <Text style={localSize === null ? styles.filterChipTextActive : null}>Все</Text>
                 </TouchableOpacity>
                 {allSizes.map((s) => (
-                  <TouchableOpacity
-                    key={s}
-                    style={[styles.filterChip, localSize === s && styles.filterChipActive, { marginBottom: 6, minWidth: 44 }]}
-                    onPress={() => setLocalSize(s)}
-                  >
+                  <TouchableOpacity key={s} style={[styles.filterChip, localSize === s && styles.filterChipActive, { marginBottom: 6, minWidth: 44 }]} onPress={() => setLocalSize(s)}>
                     <Text style={localSize === s ? styles.filterChipTextActive : null}>{s}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
-
               <Text style={[styles.sizeTitle, isDark && styles.textDark, { marginBottom: 8 }]}>Цена</Text>
               <View style={styles.priceFilter}>
-                <TextInput
-                  style={[styles.priceInput, isDark && styles.inputDark]}
-                  placeholder="от"
-                  placeholderTextColor={isDark ? "#999" : "#888"}
-                  value={localMin}
-                  onChangeText={setLocalMin}
-                  keyboardType="numeric"
-                  blurOnSubmit={false}
-                />
-                <TextInput
-                  style={[styles.priceInput, isDark && styles.inputDark]}
-                  placeholder="до"
-                  placeholderTextColor={isDark ? "#999" : "#888"}
-                  value={localMax}
-                  onChangeText={setLocalMax}
-                  keyboardType="numeric"
-                  blurOnSubmit={false}
-                />
+                <TextInput style={[styles.priceInput, isDark && styles.inputDark]} placeholder="от" placeholderTextColor={isDark ? "#999" : "#888"} value={localMin} onChangeText={setLocalMin} keyboardType="numeric" blurOnSubmit={false} />
+                <TextInput style={[styles.priceInput, isDark && styles.inputDark]} placeholder="до" placeholderTextColor={isDark ? "#999" : "#888"} value={localMax} onChangeText={setLocalMax} keyboardType="numeric" blurOnSubmit={false} />
               </View>
-
               <View style={styles.modalButtons}>
-                <TouchableOpacity style={styles.modalCancel} onPress={resetFilters}>
-                  <Text>Сбросить</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.modalConfirm} onPress={applyFilters}>
-                  <Text style={{ color: "#fff", fontWeight: "700" }}>Применить</Text>
-                </TouchableOpacity>
+                <TouchableOpacity style={styles.modalCancel} onPress={resetFilters}><Text>Сбросить</Text></TouchableOpacity>
+                <TouchableOpacity style={styles.modalConfirm} onPress={applyFilters}><Text style={{ color: "#fff", fontWeight: "700" }}>Применить</Text></TouchableOpacity>
               </View>
             </View>
           </View>
         </Modal>
 
-        <FlatList
-          data={localPaginated}
-          renderItem={({ item }) => <ProductCard item={item} />}
-          keyExtractor={item => item.id.toString()}
-          numColumns={2}
-          columnWrapperStyle={styles.grid}
-          contentContainerStyle={{ paddingBottom: 20 }}
-          onEndReached={handleLoadMore}
-          onEndReachedThreshold={0.5}
-          keyboardShouldPersistTaps="handled"
-          ListFooterComponent={localLoading ? <Text style={[styles.loader, isDark && styles.textDark]}>Загрузка...</Text> : null}
-          ListEmptyComponent={
-            <View style={{ paddingVertical: 40, alignItems: "center" }}>
-              <Text style={[styles.empty, isDark && styles.textDark]}>
-                {!dataReady ? "Загружаю каталог…" : "Товаров нет"}
-              </Text>
+        {showSections ? (
+          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 24 }}>
+            <View style={styles.sectionHeaderRow}>
+              <Text style={styles.sectionHeader}>НОВИНКИ</Text>
+              <TouchableOpacity onPress={() => setOnlyNew(true)}>
+                <Text style={styles.sectionLink}>Смотреть все</Text>
+              </TouchableOpacity>
             </View>
-          }
-        />
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingRight: 8 }}>
+              {novinkiList.map((item) => (
+                <HorizCard key={"new-" + item.id} item={item} />
+              ))}
+            </ScrollView>
+
+            <View style={[styles.sectionHeaderRow, { marginTop: 22 }]}>
+              <Text style={styles.sectionHeader}>КАТЕГОРИИ</Text>
+              <TouchableOpacity onPress={() => setFiltersOpen(true)}>
+                <Text style={styles.sectionLink}>Все</Text>
+              </TouchableOpacity>
+            </View>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingRight: 8, paddingVertical: 4 }}>
+              {brandList.map((b) => (
+                <TouchableOpacity key={b} style={styles.brandCircleWrap} onPress={() => { setLocalBrand(b); setSelectedBrand(b); }} activeOpacity={0.85}>
+                  <View style={styles.brandCircle}>
+                    <Text style={styles.brandCircleLetter}>{(b || "?").charAt(0)}</Text>
+                  </View>
+                  <Text style={styles.brandCircleLabel} numberOfLines={1}>{b}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+
+            <View style={[styles.sectionHeaderRow, { marginTop: 22 }]}>
+              <Text style={styles.sectionHeader}>ПОПУЛЯРНОЕ</Text>
+              <Text style={styles.sectionLink}>Все</Text>
+            </View>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingRight: 8 }}>
+              {popular.map((item) => (
+                <HorizCard key={"pop-" + item.id} item={item} />
+              ))}
+            </ScrollView>
+          </ScrollView>
+        ) : (
+          <FlatList
+            data={localPaginated}
+            renderItem={({ item }) => <ProductCard item={item} />}
+            keyExtractor={(item) => item.id.toString()}
+            numColumns={2}
+            columnWrapperStyle={styles.grid}
+            contentContainerStyle={{ paddingBottom: 20 }}
+            onEndReached={handleLoadMore}
+            onEndReachedThreshold={0.5}
+            keyboardShouldPersistTaps="handled"
+            ListFooterComponent={localLoading ? <Text style={[styles.loader, isDark && styles.textDark]}>Загрузка...</Text> : null}
+            ListEmptyComponent={
+              <View style={{ paddingVertical: 40, alignItems: "center" }}>
+                <Text style={[styles.empty, isDark && styles.textDark]}>
+                  {!dataReady ? "Загружаю каталог…" : "Товаров нет"}
+                </Text>
+              </View>
+            }
+          />
+        )}
       </View>
     );
   };
@@ -4719,8 +4739,9 @@ export default function App() {
           </View>
         </View>
 
-        <TouchableOpacity style={styles.buyButton} onPress={handleAddToCart}>
-          <Text style={styles.buttonText}>Добавить в корзину</Text>
+        <TouchableOpacity activeOpacity={0.88} onPress={handleAddToCart} style={styles.brushBtnWrapWide}>
+          <Image source={{ uri: BRUSH_BTN_URI }} style={styles.brushBtnImgWide} resizeMode="stretch" />
+          <Text style={styles.brushBtnTextOverlay}>ДОБАВИТЬ В КОРЗИНУ</Text>
         </TouchableOpacity>
 
         <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Отзывы</Text>
@@ -4772,16 +4793,35 @@ export default function App() {
 
   // ---- Favorites ----
   const Favorites = () => {
-    const { theme } = useTheme(); const isDark = theme === "dark";
+    const { theme } = useTheme();
+    const isDark = theme === "dark";
     return (
       <ScrollView style={[styles.page, isDark && styles.pageDark]} contentContainerStyle={styles.scrollContent}>
-        <Text style={[styles.pageTitle, isDark && styles.textDark]}>Избранное</Text>
+        <Text style={[styles.pageTitle, styles.listPageTitle, isDark && styles.textDark]}>ИЗБРАННОЕ</Text>
         {favorites.length === 0 ? (
           <Text style={[styles.empty, isDark && styles.textDark]}>Нет сохраненных товаров</Text>
         ) : (
-          <View style={styles.grid}>
-            {favorites.map(item => <ProductCard key={item.id} item={item} />)}
-          </View>
+          favorites.map((item) => (
+            <TouchableOpacity
+              key={item.id}
+              style={styles.listRow}
+              activeOpacity={0.85}
+              onPress={() => {
+                setSelectedProduct(item);
+                setSelectedSize(null);
+                setPage("product");
+              }}
+            >
+              <SmartImage uri={getProductMainImage(item)} style={styles.listRowImg} resizeMode="contain" />
+              <View style={{ flex: 1, paddingRight: 8 }}>
+                <Text style={styles.listRowName} numberOfLines={2}>{item.name}</Text>
+                <Text style={styles.listRowPrice}>{money(item.price)}</Text>
+              </View>
+              <TouchableOpacity onPress={() => toggleFavorite(item)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                <Text style={{ fontSize: 22, color: "#111" }}>♥</Text>
+              </TouchableOpacity>
+            </TouchableOpacity>
+          ))
         )}
         <View style={{ height: 20 }} />
       </ScrollView>
@@ -4890,20 +4930,68 @@ export default function App() {
     const isDark = theme === "dark";
     const { total, discount, usedBonus, finalTotal } = calculateTotals();
 
+    const clearAll = () => {
+      cartRef.current = [];
+      setCart([]);
+      persistUserState({ cart: [] }, { force: true }).catch(() => {});
+    };
+
+    const addOneMore = (item) => {
+      const next = [...(cartRef.current || []), { ...item }];
+      cartRef.current = next;
+      setCart(next);
+      persistUserState({ cart: next }, { force: true }).catch(() => {});
+    };
+
     return (
       <ScrollView style={[styles.page, isDark && styles.pageDark]} contentContainerStyle={styles.scrollContent}>
-        <Text style={[styles.pageTitle, isDark && styles.textDark]}>
-          {cart.length > 0 ? `Корзина (${cart.length})` : "Корзина"}
-        </Text>
+        <View style={styles.cartHeaderRow}>
+          <Text style={[styles.listPageTitle, isDark && styles.textDark]}>КОРЗИНА</Text>
+          {cart.length > 0 && (
+            <TouchableOpacity onPress={clearAll}>
+              <Text style={styles.sectionLink}>Очистить</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+
         {cart.length === 0 ? (
           <Text style={[styles.empty, isDark && styles.textDark]}>Корзина пустая</Text>
         ) : (
           <>
             {cart.map((item, idx) => (
-              <SwipeableCartItem key={`${item.id}-${idx}-${item.size || ""}`} item={item} idx={idx} isDark={isDark} />
+              <View key={`${item.id}-${idx}-${item.size || ""}`} style={styles.cartListRow}>
+                <SmartImage
+                  uri={getProductMainImage(item) || item.image}
+                  style={styles.listRowImg}
+                  resizeMode="contain"
+                />
+                <View style={{ flex: 1, paddingRight: 6 }}>
+                  <Text style={styles.listRowName} numberOfLines={2}>{item.name}</Text>
+                  <Text style={styles.listRowPrice}>{money(item.price)}</Text>
+                  <Text style={styles.cartSizeLine}>
+                    {item.size ? `Размер: ${item.size}` : "Размер не выбран"}
+                  </Text>
+                </View>
+                <View style={styles.cartRightCol}>
+                  <TouchableOpacity onPress={() => removeCart(idx)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                    <Text style={styles.cartRemoveX}>×</Text>
+                  </TouchableOpacity>
+                  <View style={styles.qtyBox}>
+                    <TouchableOpacity onPress={() => removeCart(idx)} style={styles.qtyBtn}>
+                      <Text style={styles.qtyBtnText}>−</Text>
+                    </TouchableOpacity>
+                    <Text style={styles.qtyNum}>1</Text>
+                    <TouchableOpacity onPress={() => addOneMore(item)} style={styles.qtyBtn}>
+                      <Text style={styles.qtyBtnText}>+</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </View>
             ))}
 
-            {discount > 0 && <Text style={[styles.discountText, isDark && styles.textDark]}>Скидка: -{money(discount)}</Text>}
+            {discount > 0 && (
+              <Text style={[styles.discountText, isDark && styles.textDark]}>Скидка: -{money(discount)}</Text>
+            )}
             {bonusBalance > 0 && (
               <TouchableOpacity style={styles.bonusCheckbox} onPress={() => setUseBonus(!useBonus)}>
                 <Text style={[styles.bonusCheckboxText, isDark && styles.textDark]}>
@@ -4911,12 +4999,18 @@ export default function App() {
                 </Text>
               </TouchableOpacity>
             )}
-            <Text style={[styles.total, isDark && styles.textDark]}>Итого: {money(total)}</Text>
-            {discount > 0 && <Text style={[styles.discountText, isDark && styles.textDark]}>Скидка: -{money(discount)}</Text>}
-            {useBonus && usedBonus > 0 && <Text style={[styles.discountText, isDark && styles.textDark]}>Бонусы: -{money(usedBonus)}</Text>}
-            <Text style={[styles.finalTotal, isDark && styles.textDark]}>К оплате: {money(finalTotal)}</Text>
-            <TouchableOpacity style={styles.buyButton} onPress={openOrderModal}>
-              <Text style={styles.buttonText}>Оформить заказ</Text>
+            <Text style={[styles.cartTotalLine, isDark && styles.textDark]}>Итого:  {money(finalTotal)}</Text>
+            {useBonus && usedBonus > 0 && (
+              <Text style={[styles.discountText, isDark && styles.textDark]}>Бонусы: -{money(usedBonus)}</Text>
+            )}
+
+            <TouchableOpacity
+              activeOpacity={0.88}
+              onPress={openOrderModal}
+              style={[styles.brushBtnWrapWide, { alignSelf: "center", marginTop: 16 }]}
+            >
+              <Image source={{ uri: BRUSH_BTN_URI }} style={styles.brushBtnImgWide} resizeMode="stretch" />
+              <Text style={styles.brushBtnTextOverlay}>ОФОРМИТЬ ЗАКАЗ</Text>
             </TouchableOpacity>
           </>
         )}
@@ -4927,8 +5021,8 @@ export default function App() {
 
   // ---- Profile ----
   const Profile = () => {
-    const { theme } = useTheme(); const isDark = theme === "dark";
-    // При открытии профиля — сразу подтягиваем рефералов (без кнопки)
+    const { theme } = useTheme();
+    const isDark = theme === "dark";
     useEffect(() => {
       ensureReferralRegistered();
       syncReferralStatsFromCloud();
@@ -4936,138 +5030,106 @@ export default function App() {
       return () => clearTimeout(t);
     }, []);
 
+    const displayName = (user && (user.name || user.first_name)) || "MANZ SHOP BY";
+    const uname = (user && user.username) ? `@${user.username}` : "@manzshopby";
+    const initial = (displayName || "M").charAt(0).toUpperCase();
+
     return (
       <ScrollView style={[styles.page, isDark && styles.pageDark]} contentContainerStyle={styles.scrollContent}>
-        <Text style={[styles.pageTitle, isDark && styles.textDark]}>Профиль</Text>
-
-        {isAdmin && (
-          <TouchableOpacity style={styles.adminButton} onPress={() => setShowAdmin(true)}>
-            <Text style={styles.buttonText}>⚙️ CRM</Text>
-          </TouchableOpacity>
-        )}
-
-        {/* Единая плашка: бонусы + рефералы */}
-        <View style={styles.balanceCard}>
-          <Text style={styles.balanceRowLabel}>Ваш бонусный счёт</Text>
-          <Text style={styles.balanceValue}>{money(bonusBalance)}</Text>
-
-          <View style={styles.balanceDivider} />
-
-          <View style={styles.balanceStatRow}>
-            <Text style={styles.balanceStatLabel}>Сумма кэшбэка</Text>
-            <Text style={styles.balanceStatValue}>{currentLevel.cashback}%</Text>
+        {/* Header */}
+        <View style={styles.profileHeader}>
+          <View style={styles.profileAvatar}>
+            <Text style={styles.profileAvatarLetter}>{initial}</Text>
           </View>
-          <View style={styles.balanceStatRow}>
-            <Text style={styles.balanceStatLabel}>Приглашено друзей</Text>
-            <Text style={styles.balanceStatValue}>{referralCount}</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.profileBrand}>MANZSHOPBY</Text>
+            <Text style={styles.profileShopName}>MANZ SHOP BY</Text>
+            <Text style={styles.profileUsername}>{uname}</Text>
           </View>
-          {referralEarnings > 0 && (
-            <View style={styles.balanceStatRow}>
-              <Text style={styles.balanceStatLabel}>Заработано с рефералов</Text>
-              <Text style={styles.balanceStatValue}>{money(referralEarnings)}</Text>
-            </View>
+          {isAdmin && (
+            <TouchableOpacity onPress={() => setShowAdmin(true)} style={styles.profileAdminBtn}>
+              <Text style={{ color: "#fff", fontWeight: "700", fontSize: 12 }}>CRM</Text>
+            </TouchableOpacity>
           )}
-
-          <Text style={styles.balanceHint}>
-            Друг переходит по ссылке → вам начисляется 2% на бонусный счёт
-          </Text>
         </View>
 
-        <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Ваша реферальная ссылка</Text>
-        <View style={[styles.referralBox, isDark && styles.referralBoxDark]}>
-          <Text style={[styles.referralText, isDark && styles.textDark]} selectable>
-            {referral}
-          </Text>
-          <TouchableOpacity style={styles.copyButton} onPress={copyReferral}>
-            <Text style={styles.buttonText}>📋 Скопировать ссылку</Text>
+        {/* БОНУСНЫЙ СЧЕТ */}
+        <Text style={styles.profileSectionLabel}>БОНУСНЫЙ СЧЕТ</Text>
+        <View style={styles.bonusGrid}>
+          <View style={styles.bonusCell}>
+            <Text style={styles.bonusCellValue}>{money(bonusBalance)}</Text>
+            <Text style={styles.bonusCellLabel}>Баланс</Text>
+          </View>
+          <View style={[styles.bonusCell, styles.bonusCellMid]}>
+            <Text style={styles.bonusCellValue}>{referralCount}</Text>
+            <Text style={styles.bonusCellLabel}>Приглашено друзей</Text>
+          </View>
+          <View style={styles.bonusCell}>
+            <Text style={styles.bonusCellValue}>{money(referralEarnings)}</Text>
+            <Text style={styles.bonusCellLabel}>Заработано{"\n"}с рефералов</Text>
+          </View>
+        </View>
+
+        {/* Реферальная ссылка */}
+        <Text style={[styles.profileSectionLabel, { marginTop: 18 }]}>Реферальная ссылка</Text>
+        <View style={styles.refLinkRow}>
+          <Text style={styles.refLinkText} numberOfLines={1} selectable>{referral}</Text>
+          <TouchableOpacity onPress={copyReferral} style={styles.refCopyBtn}>
+            <Text style={{ fontSize: 16 }}>📋</Text>
           </TouchableOpacity>
         </View>
 
-        <Text style={[styles.sectionTitle, isDark && styles.textDark]}>Все уровни</Text>
-        {LEVELS.map((item, idx) => {
-          const isActive = item.name === currentLevel.name;
-          // прогресс внутри уровня (без отменённых)
-          let levelProgress = 0;
-          if (levelOrdersCount < item.min) {
-            levelProgress = 0;
-          } else if (item.max === 999 || levelOrdersCount > item.max) {
-            levelProgress = 100;
-          } else {
-            const span = item.max - item.min;
-            levelProgress = span <= 0 ? 100 : Math.min(100, Math.round(((levelOrdersCount - item.min) / span) * 100));
-          }
-          const next = LEVELS[idx + 1];
-          const remaining = next && isActive ? Math.max(0, next.min - levelOrdersCount) : 0;
-
-          return (
-            <View
-              key={item.name}
-              style={[
-                styles.levelCard,
-                isActive && styles.activeLevel,
-                !isActive && isDark && styles.levelCardDark,
-              ]}
-            >
-              <Text style={[styles.levelName, isActive && styles.activeText, !isActive && isDark && styles.textDark]}>
-                {item.name}
-              </Text>
-              <Text style={[styles.levelInfo, isActive && styles.activeText, !isActive && isDark && styles.textDark]}>
-                {item.min} – {item.max === 999 ? "∞" : item.max} заказов • {item.cashback}% кэшбэк
-              </Text>
-              {isActive && next && (
-                <Text style={[styles.levelSubInfo, styles.activeText]}>
-                  Осталось {remaining} {remaining === 1 ? "заказ" : remaining < 5 ? "заказа" : "заказов"} до «{next.name}»
+        {/* УРОВЕНЬ КЭШБЭКА */}
+        <Text style={[styles.profileSectionLabel, { marginTop: 20 }]}>УРОВЕНЬ КЭШБЭКА</Text>
+        <Text style={styles.profileLevelCurrent}>
+          Текущий уровень: {currentLevel.name} ({currentLevel.cashback}%)
+        </Text>
+        <View style={styles.levelRow}>
+          {LEVELS.map((item) => {
+            const isActive = item.name === currentLevel.name;
+            return (
+              <View key={item.name} style={[styles.levelTile, isActive && styles.levelTileActive]}>
+                <Text style={[styles.levelTileIcon, isActive && styles.levelTileIconActive]}>
+                  {item.cashback === 2 ? "👤" : item.cashback === 5 ? "★" : "♔"}
                 </Text>
-              )}
-              {isActive && !next && (
-                <Text style={[styles.levelSubInfo, styles.activeText]}>Максимальный уровень</Text>
-              )}
-              {/* белая полоса прогресса */}
-              <View style={[styles.levelProgressTrack, isActive ? styles.levelProgressTrackActive : styles.levelProgressTrackInactive]}>
-                <View
-                  style={[
-                    styles.levelProgressFill,
-                    isActive ? styles.levelProgressFillActive : styles.levelProgressFillInactive,
-                    { width: `${levelProgress}%` },
-                  ]}
-                />
+                <Text style={[styles.levelTileName, isActive && styles.levelTileNameActive]} numberOfLines={2}>
+                  {item.name}
+                </Text>
+                <Text style={[styles.levelTileCb, isActive && styles.levelTileNameActive]}>
+                  {item.cashback}% кэшбэк
+                </Text>
+                <Text style={[styles.levelTileRange, isActive && styles.levelTileNameActive]}>
+                  {item.min} – {item.max === 999 ? "∞" : item.max} заказа
+                </Text>
               </View>
-              <Text style={[styles.levelProgressPct, isActive && styles.activeText, !isActive && isDark && styles.textDark]}>
-                {levelProgress}%
-              </Text>
-            </View>
-          );
-        })}
-        <Text style={[styles.sectionTitle, isDark && styles.textDark]}>История заказов</Text>
+            );
+          })}
+        </View>
+
+        {/* ИСТОРИЯ ЗАКАЗОВ */}
+        <View style={[styles.sectionHeaderRow, { marginTop: 22 }]}>
+          <Text style={styles.profileSectionLabel}>ИСТОРИЯ ЗАКАЗОВ</Text>
+          {orderHistory.length > 0 && <Text style={styles.sectionLink}>Смотреть все</Text>}
+        </View>
         {orderHistory.length === 0 ? (
           <Text style={[styles.empty, isDark && styles.textDark]}>Заказов пока нет</Text>
         ) : (
-          orderHistory.map(order => (
-            <View key={order.id} style={[styles.orderCard, isDark && styles.orderCardDark]}>
-              <Text style={[styles.orderId, isDark && styles.textDark]}>Заказ #{order.id}</Text>
-              <Text style={[styles.orderDate, isDark && styles.textDark]}>{new Date(order.date).toLocaleDateString()}</Text>
-              <Text style={[styles.orderStatus, isDark && styles.textDark]}>Статус: {getClientStatus(order.status)}</Text>
-              {(order.delivery === "europost" ||
-                order.delivery === "euro" ||
-                String(order.delivery || "").toLowerCase().includes("евро")) &&
-                !!order.trackingNumber &&
-                order.status !== "Забрать деньги" &&
-                order.status !== "Деньги получены" && (
-                <Text style={[styles.trackingText, isDark && styles.textDark]}>
-                  Трек-номер: {order.trackingNumber}
+          orderHistory.slice(0, 10).map((order) => (
+            <View key={order.id} style={styles.historyRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.historyId}>Заказ #{order.id}</Text>
+                <Text style={styles.historyDate}>
+                  {order.date ? new Date(order.date).toLocaleDateString("ru-RU", { day: "2-digit", month: "long", year: "numeric" }) : ""}
                 </Text>
-              )}
-              <Text style={[styles.orderTotal, isDark && styles.textDark]}>Сумма: {money(order.finalTotal)}</Text>
-              {(order.items || []).slice(0, 3).map((item, i) => (
-                <Text key={i} style={[styles.orderItem, isDark && styles.textDark]}>• {item.name} x1</Text>
-              ))}
-              {(order.items || []).length > 3 && (
-                <Text style={[styles.orderMore, isDark && styles.textDark]}>и ещё {order.items.length - 3}...</Text>
-              )}
+              </View>
+              <View style={{ alignItems: "flex-end" }}>
+                <Text style={styles.historySum}>{money(order.finalTotal)}</Text>
+                <Text style={styles.historyStatus}>{getClientStatus(order.status)}</Text>
+              </View>
             </View>
           ))
         )}
-        <View style={{ height: 20 }} />
+        <View style={{ height: 24 }} />
       </ScrollView>
     );
   };
@@ -8488,6 +8550,202 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
     zIndex: 2,
   },
+  brushBtnWrapWide: {
+    width: "100%",
+    maxWidth: 340,
+    height: 56,
+    alignItems: "center",
+    justifyContent: "center",
+    position: "relative",
+    alignSelf: "center",
+    marginVertical: 8,
+  },
+  brushBtnImgWide: {
+    position: "absolute",
+    left: 0,
+    top: 0,
+    width: "100%",
+    height: 56,
+  },
+  catalogPage: { backgroundColor: "#FFFFFF", paddingTop: 8 },
+  catalogSearch: {
+    backgroundColor: "#F5F5F5",
+    borderRadius: 22,
+    borderWidth: 0,
+    paddingHorizontal: 18,
+    height: 44,
+    marginBottom: 10,
+  },
+  sectionHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 12,
+    marginTop: 4,
+  },
+  sectionHeader: { fontSize: 15, fontWeight: "800", color: "#111", letterSpacing: 0.6 },
+  sectionLink: { fontSize: 13, color: "#888", fontWeight: "500" },
+  horizCard: { width: 150, marginRight: 12 },
+  horizCardImg: {
+    width: 150,
+    height: 150,
+    backgroundColor: "#F7F7F7",
+    borderRadius: 12,
+    marginBottom: 8,
+  },
+  horizCardName: { fontSize: 13, fontWeight: "600", color: "#111", marginBottom: 4, lineHeight: 17 },
+  horizCardPrice: { fontSize: 13, fontWeight: "700", color: "#111" },
+  brandCircleWrap: { width: 76, alignItems: "center", marginRight: 14 },
+  brandCircle: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: "#F5F5F5",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 6,
+    borderWidth: 1,
+    borderColor: "#EEE",
+  },
+  brandCircleLetter: { fontSize: 22, fontWeight: "800", color: "#111" },
+  brandCircleLabel: { fontSize: 11, color: "#555", textAlign: "center" },
+  listPageTitle: { fontSize: 18, fontWeight: "800", letterSpacing: 0.8, marginBottom: 16 },
+  listRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F0F0F0",
+  },
+  listRowImg: { width: 72, height: 72, borderRadius: 10, backgroundColor: "#F7F7F7", marginRight: 12 },
+  listRowName: { fontSize: 14, fontWeight: "600", color: "#111", marginBottom: 4 },
+  listRowPrice: { fontSize: 14, fontWeight: "700", color: "#111" },
+  cartHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 8,
+  },
+  cartListRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F0F0F0",
+  },
+  cartSizeLine: { fontSize: 12, color: "#888", marginTop: 2 },
+  cartRightCol: { alignItems: "flex-end", justifyContent: "space-between", minHeight: 72 },
+  cartRemoveX: { fontSize: 22, color: "#999", lineHeight: 24, marginBottom: 8 },
+  qtyBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#E5E5E5",
+    borderRadius: 8,
+    overflow: "hidden",
+  },
+  qtyBtn: { paddingHorizontal: 10, paddingVertical: 4 },
+  qtyBtnText: { fontSize: 16, color: "#111", fontWeight: "600" },
+  qtyNum: { fontSize: 14, fontWeight: "600", minWidth: 18, textAlign: "center" },
+  cartTotalLine: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: "#111",
+    marginTop: 18,
+    marginBottom: 4,
+  },
+  profileHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 22,
+    marginTop: 4,
+  },
+  profileAvatar: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: "#F2F2F2",
+    borderWidth: 1,
+    borderColor: "#E5E5E5",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 14,
+  },
+  profileAvatarLetter: { fontSize: 24, fontWeight: "800", color: "#111" },
+  profileBrand: { fontSize: 11, fontWeight: "700", color: "#888", letterSpacing: 1 },
+  profileShopName: { fontSize: 16, fontWeight: "800", color: "#111", marginTop: 2 },
+  profileUsername: { fontSize: 13, color: "#888", marginTop: 2 },
+  profileAdminBtn: {
+    backgroundColor: "#111",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+  },
+  profileSectionLabel: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: "#111",
+    letterSpacing: 0.8,
+    marginBottom: 10,
+  },
+  bonusGrid: {
+    flexDirection: "row",
+    borderWidth: 1,
+    borderColor: "#EAEAEA",
+    borderRadius: 12,
+    overflow: "hidden",
+    backgroundColor: "#FAFAFA",
+  },
+  bonusCell: { flex: 1, paddingVertical: 14, paddingHorizontal: 8, alignItems: "center" },
+  bonusCellMid: { borderLeftWidth: 1, borderRightWidth: 1, borderColor: "#EAEAEA" },
+  bonusCellValue: { fontSize: 15, fontWeight: "800", color: "#111", marginBottom: 4 },
+  bonusCellLabel: { fontSize: 10, color: "#888", textAlign: "center", lineHeight: 13 },
+  refLinkRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#EAEAEA",
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: "#FAFAFA",
+  },
+  refLinkText: { flex: 1, fontSize: 12, color: "#555" },
+  refCopyBtn: { paddingLeft: 10 },
+  profileLevelCurrent: { fontSize: 13, color: "#555", marginBottom: 12 },
+  levelRow: { flexDirection: "row", gap: 8 },
+  levelTile: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: "#EAEAEA",
+    borderRadius: 12,
+    padding: 10,
+    backgroundColor: "#FAFAFA",
+    alignItems: "center",
+    minHeight: 110,
+  },
+  levelTileActive: {
+    borderColor: "#111",
+    backgroundColor: "#111",
+  },
+  levelTileIcon: { fontSize: 18, marginBottom: 6, color: "#111" },
+  levelTileIconActive: { color: "#fff" },
+  levelTileName: { fontSize: 11, fontWeight: "700", color: "#111", textAlign: "center", marginBottom: 4 },
+  levelTileNameActive: { color: "#fff" },
+  levelTileCb: { fontSize: 11, fontWeight: "700", color: "#333", marginBottom: 2 },
+  levelTileRange: { fontSize: 10, color: "#888", textAlign: "center" },
+  historyRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F0F0F0",
+  },
+  historyId: { fontSize: 14, fontWeight: "600", color: "#111" },
+  historyDate: { fontSize: 12, color: "#999", marginTop: 2 },
+  historySum: { fontSize: 14, fontWeight: "700", color: "#111" },
+  historyStatus: { fontSize: 12, color: "#888", marginTop: 2 },
+
   brushBtn: {
     backgroundColor: "#111",
     paddingVertical: 16,
