@@ -778,35 +778,56 @@ const pantryBasketUrls = (pantryId, basket) => {
   ];
 };
 
+// Таймаут для сетевых запросов (чтобы Pantry не блокировал загрузку приложения)
+const withTimeout = (promise, ms = 4000) => {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error("timeout")), ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
+};
+
 const pantryGetBasket = async (basket) => {
-  const pantryId = await ensurePantryId();
-  if (!pantryId) return null;
-  for (const url of pantryBasketUrls(pantryId, basket)) {
-    try {
-      const r = await fetch(url, { cache: "no-store", mode: "cors" });
-      if (!r.ok) continue;
-      const data = await r.json();
-      return data;
-    } catch (e) {}
-  }
+  try {
+    const pantryId = await withTimeout(ensurePantryId(), 3500);
+    if (!pantryId) return null;
+    for (const url of pantryBasketUrls(pantryId, basket)) {
+      try {
+        const r = await withTimeout(
+          fetch(url, { cache: "no-store", mode: "cors" }),
+          4000
+        );
+        if (!r.ok) continue;
+        const data = await r.json();
+        return data;
+      } catch (e) {}
+    }
+  } catch (e) {}
   return null;
 };
 
 const pantryPutBasket = async (basket, payload) => {
-  const pantryId = await ensurePantryId();
-  if (!pantryId) return false;
-  for (const url of pantryBasketUrls(pantryId, basket)) {
-    for (const method of ["PUT", "POST"]) {
-      try {
-        const r = await fetch(url, {
-          method,
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-        if (r.ok) return true;
-      } catch (e) {}
+  try {
+    const pantryId = await withTimeout(ensurePantryId(), 3500);
+    if (!pantryId) return false;
+    for (const url of pantryBasketUrls(pantryId, basket)) {
+      for (const method of ["PUT", "POST"]) {
+        try {
+          const r = await withTimeout(
+            fetch(url, {
+              method,
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(payload),
+            }),
+            5000
+          );
+          if (r.ok) return true;
+        } catch (e) {}
+      }
     }
-  }
+  } catch (e) {}
   return false;
 };
 
@@ -1444,9 +1465,15 @@ const mergeRatingsLists = (a, b) => {
   return Array.from(map.values()).slice(-40);
 };
 
-// Сервер — источник правды: чего нет на сервере, того нет в каталоге (удаления синхронизируются)
+// Сервер — источник правды, НО пустой сервер не затирает локальный каталог
+// (защита от случайной потери товаров при сбое API)
 const applyServerCatalog = (localList, serverList) => {
   if (!Array.isArray(serverList)) return localList || [];
+  // Если сервер вернул пусто, а локально есть товары — оставляем локальные
+  if (serverList.length === 0 && Array.isArray(localList) && localList.length > 0) {
+    console.warn("[Products] server empty, keeping local catalog", localList.length);
+    return localList;
+  }
   const localMap = new Map();
   (localList || []).forEach((p) => {
     if (p && p.id != null) localMap.set(String(p.id), p);
@@ -1793,143 +1820,18 @@ export default function App() {
           loadFromCloud(CLOUD_KEYS.utmSource)
         ]);
 
-        // --- Глобальный сброс (resetEpoch): если админ сбросил данные — очищаем персональное у всех ---
-        let forceReset = false;
-        try {
-          const remoteEpoch = await loadResetEpoch();
-          let localEpoch = 0;
-          try {
-            if (typeof localStorage !== "undefined") {
-              localEpoch = Number(localStorage.getItem("krost_reset_epoch") || "0") || 0;
-            }
-          } catch (e) {}
-          if (remoteEpoch > localEpoch) {
-            forceReset = true;
-            console.log("[Reset] global epoch", remoteEpoch, "> local", localEpoch, "— wiping personal data");
-            try {
-              if (typeof localStorage !== "undefined") {
-                localStorage.setItem("krost_reset_epoch", String(remoteEpoch));
-              }
-            } catch (e) {}
-            // Очищаем CloudStorage персональные ключи
-            const wipeKeys = [
-              CLOUD_KEYS.cart, CLOUD_KEYS.favorites, CLOUD_KEYS.orders, CLOUD_KEYS.bonus,
-              CLOUD_KEYS.orderHistory, CLOUD_KEYS.lastOrderNumber, CLOUD_KEYS.usedFreeDelivery,
-              CLOUD_KEYS.adminOrders, CLOUD_KEYS.referredBy, CLOUD_KEYS.referralCount,
-              CLOUD_KEYS.referralEarnings, CLOUD_KEYS.referralNotified, CLOUD_KEYS.refEvents,
-            ];
-            for (const k of wipeKeys) {
-              try { await saveToCloud(k, k.includes("bonus") || k.includes("Count") || k.includes("Earnings") || k.includes("lastOrder") ? 0 : (k.includes("Notified") ? false : [])); } catch (e) {}
-              try {
-                if (typeof localStorage !== "undefined") {
-                  localStorage.removeItem(k);
-                  localStorage.removeItem("krost_" + k);
-                }
-              } catch (e) {}
-            }
-          }
-        } catch (e) {
-          console.warn("[Reset] epoch check failed", e);
-        }
-
-        if (forceReset) {
-          setCart([]);
-          setFavorites([]);
-          setOrders(0);
-          setBonusBalance(0);
-          setOrderHistory([]);
-          setLastOrderNumber(3340);
-          setUsedFreeDelivery([]);
-          setAdminOrders([]);
-          setReferralCount(0);
-          setReferralEarnings(0);
-          setReferralNotified(false);
-          setReferredBy(null);
-        } else {
-          setCart(cloudCart || []);
-          setFavorites(cloudFavorites || []);
-          setOrders(cloudOrders || 0);
-          setBonusBalance(cloudBonus || 0);
-          setOrderHistory(cloudOrderHistory || []);
-          setLastOrderNumber(cloudLastOrderNumber || 3340);
-          setUsedFreeDelivery(cloudUsedFreeDelivery || []);
-          setAdminOrders(cloudAdminOrders || []);
-        }
+        // Базовые персональные данные из CloudStorage (сразу, без ожидания сети)
+        setCart(cloudCart || []);
+        setFavorites(cloudFavorites || []);
+        setOrders(cloudOrders || 0);
+        setBonusBalance(cloudBonus || 0);
+        setOrderHistory(cloudOrderHistory || []);
+        setLastOrderNumber(cloudLastOrderNumber || 3340);
+        setUsedFreeDelivery(cloudUsedFreeDelivery || []);
+        setAdminOrders(cloudAdminOrders || []);
         setPromoCodes(cloudPromoCodes || []);
 
-        // --- Персональные данные с shared storage (надёжная синхронизация между устройствами) ---
-        if (!forceReset) {
-          try {
-            const uid = String(user?.id || "");
-            if (uid && /^\d+$/.test(uid)) {
-              const sharedUser = await loadUserStateFromShared(uid);
-              if (sharedUser && typeof sharedUser === "object") {
-                const sharedTs = sharedUser.updatedAt ? new Date(sharedUser.updatedAt).getTime() : 0;
-                // Корзина
-                if (Array.isArray(sharedUser.cart) && sharedUser.cart.length) {
-                  const localCart = Array.isArray(cloudCart) ? cloudCart : [];
-                  // Берём shared, если он не пустой (приоритет сервера для кросс-девайс)
-                  if (sharedUser.cart.length >= localCart.length || sharedTs > 0) {
-                    setCart(sharedUser.cart);
-                  }
-                }
-                // Избранное
-                if (Array.isArray(sharedUser.favorites) && sharedUser.favorites.length) {
-                  const localFav = Array.isArray(cloudFavorites) ? cloudFavorites : [];
-                  if (sharedUser.favorites.length >= localFav.length || sharedTs > 0) {
-                    setFavorites(sharedUser.favorites);
-                  }
-                }
-                // Бонусы — берём максимум (чтобы не потерять начисление)
-                if (typeof sharedUser.bonusBalance === "number") {
-                  setBonusBalance((prev) => Math.max(Number(prev) || 0, sharedUser.bonusBalance || 0));
-                }
-                // История заказов — мержим
-                if (Array.isArray(sharedUser.orderHistory) && sharedUser.orderHistory.length) {
-                  setOrderHistory((prev) => {
-                    const map = new Map();
-                    (prev || []).forEach((o) => map.set(String(o.id), o));
-                    sharedUser.orderHistory.forEach((o) => {
-                      if (!o || o.id == null) return;
-                      const id = String(o.id);
-                      if (!map.has(id)) map.set(id, o);
-                      else {
-                        const local = map.get(id);
-                        map.set(id, {
-                          ...local,
-                          ...o,
-                          status: o.status || local.status,
-                          trackingNumber: o.trackingNumber || local.trackingNumber,
-                        });
-                      }
-                    });
-                    return Array.from(map.values()).sort((a, b) => {
-                      const da = a.date ? new Date(a.date).getTime() : 0;
-                      const db = b.date ? new Date(b.date).getTime() : 0;
-                      return db - da;
-                    });
-                  });
-                }
-                // Рефералы
-                if (typeof sharedUser.referralCount === "number") {
-                  setReferralCount((c) => Math.max(c || 0, sharedUser.referralCount || 0));
-                }
-                if (typeof sharedUser.referralEarnings === "number") {
-                  setReferralEarnings((e) => Math.max(e || 0, sharedUser.referralEarnings || 0));
-                }
-                console.log("[UserState] loaded from shared", uid, {
-                  cart: (sharedUser.cart || []).length,
-                  fav: (sharedUser.favorites || []).length,
-                  orders: (sharedUser.orderHistory || []).length,
-                });
-              }
-            }
-          } catch (e) {
-            console.warn("[UserState] shared load failed", e);
-          }
-        }
-
-        // Каталог: сервер → облако. Демо DEFAULT_PRODUCTS больше не подмешиваем.
+        // ========== КАТАЛОГ ПЕРВЫМ (критично — не блокируем pantry) ==========
         let list = Array.isArray(cloudProducts) ? cloudProducts : [];
         try {
           let sharedProds = null;
@@ -1958,6 +1860,120 @@ export default function App() {
         }
         setProducts(list);
         preloadImages(list);
+
+        // ========== Глобальный сброс + user-state (не блокируют каталог) ==========
+        let forceReset = false;
+        try {
+          const remoteEpoch = await loadResetEpoch();
+          let localEpoch = 0;
+          try {
+            if (typeof localStorage !== "undefined") {
+              localEpoch = Number(localStorage.getItem("krost_reset_epoch") || "0") || 0;
+            }
+          } catch (e) {}
+          if (remoteEpoch > localEpoch) {
+            forceReset = true;
+            console.log("[Reset] global epoch", remoteEpoch, "> local", localEpoch, "— wiping personal data");
+            try {
+              if (typeof localStorage !== "undefined") {
+                localStorage.setItem("krost_reset_epoch", String(remoteEpoch));
+              }
+            } catch (e) {}
+            const wipeKeys = [
+              CLOUD_KEYS.cart, CLOUD_KEYS.favorites, CLOUD_KEYS.orders, CLOUD_KEYS.bonus,
+              CLOUD_KEYS.orderHistory, CLOUD_KEYS.lastOrderNumber, CLOUD_KEYS.usedFreeDelivery,
+              CLOUD_KEYS.adminOrders, CLOUD_KEYS.referredBy, CLOUD_KEYS.referralCount,
+              CLOUD_KEYS.referralEarnings, CLOUD_KEYS.referralNotified, CLOUD_KEYS.refEvents,
+            ];
+            for (const k of wipeKeys) {
+              try {
+                await saveToCloud(
+                  k,
+                  k.includes("bonus") || k.includes("Count") || k.includes("Earnings") || k.includes("lastOrder")
+                    ? 0
+                    : k.includes("Notified")
+                      ? false
+                      : []
+                );
+              } catch (e) {}
+              try {
+                if (typeof localStorage !== "undefined") {
+                  localStorage.removeItem(k);
+                  localStorage.removeItem("krost_" + k);
+                }
+              } catch (e) {}
+            }
+            setCart([]);
+            setFavorites([]);
+            setOrders(0);
+            setBonusBalance(0);
+            setOrderHistory([]);
+            setLastOrderNumber(3340);
+            setUsedFreeDelivery([]);
+            setAdminOrders([]);
+            setReferralCount(0);
+            setReferralEarnings(0);
+            setReferralNotified(false);
+            setReferredBy(null);
+          }
+        } catch (e) {
+          console.warn("[Reset] epoch check failed", e);
+        }
+
+        // Персональные данные с shared storage (корзина/избранное между устройствами)
+        if (!forceReset) {
+          try {
+            const uid = String(user?.id || "");
+            if (uid && /^\d+$/.test(uid)) {
+              const sharedUser = await loadUserStateFromShared(uid);
+              if (sharedUser && typeof sharedUser === "object") {
+                if (Array.isArray(sharedUser.cart) && sharedUser.cart.length) {
+                  setCart(sharedUser.cart);
+                }
+                if (Array.isArray(sharedUser.favorites) && sharedUser.favorites.length) {
+                  setFavorites(sharedUser.favorites);
+                }
+                if (typeof sharedUser.bonusBalance === "number") {
+                  setBonusBalance((prev) => Math.max(Number(prev) || 0, sharedUser.bonusBalance || 0));
+                }
+                if (Array.isArray(sharedUser.orderHistory) && sharedUser.orderHistory.length) {
+                  setOrderHistory((prev) => {
+                    const map = new Map();
+                    (prev || []).forEach((o) => map.set(String(o.id), o));
+                    sharedUser.orderHistory.forEach((o) => {
+                      if (!o || o.id == null) return;
+                      const id = String(o.id);
+                      if (!map.has(id)) map.set(id, o);
+                      else {
+                        const local = map.get(id);
+                        map.set(id, {
+                          ...local,
+                          ...o,
+                          status: o.status || local.status,
+                          trackingNumber: o.trackingNumber || local.trackingNumber,
+                        });
+                      }
+                    });
+                    return Array.from(map.values()).sort((a, b) => {
+                      const da = a.date ? new Date(a.date).getTime() : 0;
+                      const db = b.date ? new Date(b.date).getTime() : 0;
+                      return db - da;
+                    });
+                  });
+                }
+                if (typeof sharedUser.referralCount === "number") {
+                  setReferralCount((c) => Math.max(c || 0, sharedUser.referralCount || 0));
+                }
+                if (typeof sharedUser.referralEarnings === "number") {
+                  setReferralEarnings((e) => Math.max(e || 0, sharedUser.referralEarnings || 0));
+                }
+                console.log("[UserState] loaded from shared", uid);
+              }
+            }
+          } catch (e) {
+            console.warn("[UserState] shared load failed", e);
+          }
+        }
 
         // Общие заказы (другие пользователи / другое устройство)
         // Сервер — источник истины для статуса и трека
@@ -2050,7 +2066,12 @@ export default function App() {
       setPromoCodes(cleaned);
     }
   }, [promoCodes, dataReady]);
-  useEffect(() => { if (!dataReady) return; saveToCloud(CLOUD_KEYS.products, products); }, [products, dataReady]);
+  // Не сохраняем пустой каталог в CloudStorage — иначе можно затереть кэш
+  useEffect(() => {
+    if (!dataReady) return;
+    if (!Array.isArray(products) || products.length === 0) return;
+    saveToCloud(CLOUD_KEYS.products, products);
+  }, [products, dataReady]);
   // theme больше не сохраняем — только системная / Telegram
   useEffect(() => { if (!dataReady) return; if (referredBy != null) saveToCloud(CLOUD_KEYS.referredBy, referredBy); }, [referredBy, dataReady]);
   useEffect(() => { if (!dataReady) return; saveToCloud(CLOUD_KEYS.referralCount, referralCount); }, [referralCount, dataReady]);
