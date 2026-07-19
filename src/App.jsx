@@ -4226,22 +4226,32 @@ export default function App() {
   const HomeWelcome = () => {
     const { theme } = useTheme();
     const isDark = theme === "dark";
+    // Реальная высота окна (Telegram WebView) — блок чуть выше центра
+    const winH =
+      typeof window !== "undefined" && window.innerHeight
+        ? window.innerHeight
+        : 700;
+    // Отступ сверху: ~28% экрана → логотип визуально чуть выше центра
+    const padTop = Math.round(winH * 0.28);
+
     return (
-      <View style={[styles.homePage, isDark && styles.pageDark]}>
+      <View style={[styles.homePage, isDark && styles.pageDark, { minHeight: winH - 90 }]}>
         <Image
           source={{ uri: BRUSH_TOP_URI }}
           style={styles.homeBrushTopImg}
           resizeMode="contain"
         />
 
-        <View style={styles.homeCenter}>
+        <View style={[styles.homeCenter, { paddingTop: padTop }]}>
           <Image
             source={{ uri: LOGO_URI }}
             style={styles.homeLogoImg}
             resizeMode="contain"
           />
+          <View style={{ height: 90 }} />
           <Text style={styles.homeWelcome}>Добро пожаловать</Text>
           <Text style={styles.homeSub}>Выбери свои идеальные кроссовки</Text>
+          <View style={{ height: 8 }} />
           <TouchableOpacity
             activeOpacity={0.88}
             onPress={() => setPage("catalog")}
@@ -8394,27 +8404,24 @@ const styles = StyleSheet.create({
   },
   homeBrushTopImg: {
     position: "absolute",
-    top: 6,
+    top: 8,
     left: 0,
-    width: 120,
-    height: 40,
+    width: 135,
+    height: 46,
     zIndex: 1,
   },
   homeCenter: {
-    flex: 1,
+    width: "100%",
     alignItems: "center",
-    justifyContent: "center",
     paddingHorizontal: 28,
-    paddingBottom: 100,
-    paddingTop: 40,
   },
   homeBlock: {
     alignItems: "center",
   },
   homeLogoImg: {
-    width: 236,
-    height: 66,
-    marginBottom: 28,
+    width: 240,
+    height: 68,
+    marginBottom: 0,
   },
   homeWelcome: {
     fontSize: 17,
@@ -8430,8 +8437,8 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
   brushBtnWrap: {
-    width: 256,
-    height: 50,
+    width: 260,
+    height: 52,
     alignItems: "center",
     justifyContent: "center",
     position: "relative",
@@ -8440,8 +8447,8 @@ const styles = StyleSheet.create({
     position: "absolute",
     left: 0,
     top: 0,
-    width: 256,
-    height: 50,
+    width: 260,
+    height: 52,
   },
   brushBtnTextOverlay: {
     color: "#fff",
