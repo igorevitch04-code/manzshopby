@@ -1901,6 +1901,7 @@ export default function App() {
   const showToast = (msg) => {
     setToastMessage(msg);
     setToastVisible(true);
+    setTimeout(() => setToastVisible(false), 2500);
   };
 
   const hideToast = () => {
@@ -2807,6 +2808,44 @@ export default function App() {
       setCart(nextCart);
       persistUserState({ cart: nextCart, favorites: nextFav }, { force: true }).catch(() => {});
     }
+  };
+
+  const shareReferral = async () => {
+    const u = getTelegramUser();
+    if (u && /^\d+$/.test(String(u.id))) {
+      persistRealUser(u);
+      if (String(u.id) !== String(user.id)) setUser(u);
+    }
+    const realId = (u && /^\d+$/.test(String(u.id))) ? u.id : user.id;
+    const url = `https://t.me/manzshop_bot/manzshopbyapp?startapp=ref_${realId}`;
+    const shareText = `Загляни в MANZSHOPBY — кроссовки с примеркой и оплатой при получении 👟\n${url}`;
+
+    // 1) Web Share API
+    try {
+      if (typeof navigator !== "undefined" && navigator.share) {
+        await navigator.share({ title: "MANZSHOPBY", text: shareText, url });
+        showToast("Ссылка отправлена");
+        return;
+      }
+    } catch (e) {
+      // user cancelled or not supported
+    }
+
+    // 2) Telegram share URL
+    try {
+      const tgShare = `https://t.me/share/url?url=${encodeURIComponent(url)}&text=${encodeURIComponent("Загляни в MANZSHOPBY — кроссовки с примеркой и оплатой при получении 👟")}`;
+      if (tg && typeof tg.openTelegramLink === "function") {
+        tg.openTelegramLink(tgShare);
+        return;
+      }
+      if (typeof window !== "undefined") {
+        window.open(tgShare, "_blank");
+        return;
+      }
+    } catch (e) {}
+
+    // 3) fallback — copy
+    await copyReferral();
   };
 
   const copyReferral = async () => {
@@ -4210,8 +4249,8 @@ export default function App() {
 
         </View>
         
-        <Text style={[styles.brand, isDark && styles.textDark]}>{item.brand}</Text>
-        <Text style={[styles.productName, isDark && styles.textDark]}>{item.name}</Text>
+        <Text style={[styles.brand, isDark && styles.textDark]} numberOfLines={1}>{item.brand}</Text>
+        <Text style={[styles.productName, isDark && styles.textDark]} numberOfLines={2}>{item.name}</Text>
         
         {item.oldPrice && <Text style={styles.oldPrice}>{money(item.oldPrice)}</Text>}
         <Text style={[styles.price, isDark && styles.textDark]}>{money(item.price)}</Text>
@@ -4529,7 +4568,26 @@ export default function App() {
           returnKeyType="search"
         />
 
-        <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 14, gap: 8 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 14, gap: 8, flexWrap: "wrap" }}>
+          {(forceGrid || localBrand || selectedBrand || onlyNew || onlySale || !!localSearch || activeFiltersCount > 0) ? (
+            <TouchableOpacity
+              style={[styles.filterChip, { paddingHorizontal: 14, backgroundColor: "#F0F0F0" }]}
+              onPress={() => {
+                setForceGrid(false);
+                setOnlyNew(false);
+                setOnlySale(false);
+                setLocalBrand(null);
+                setSelectedBrand(null);
+                setLocalSearch("");
+                setLocalSize(null);
+                setSortBy(null);
+                setLocalMin("");
+                setLocalMax("");
+              }}
+            >
+              <Text style={{ fontWeight: "600" }}>← Назад</Text>
+            </TouchableOpacity>
+          ) : null}
           <TouchableOpacity
             style={[styles.filterChip, styles.filterChipActive, { paddingHorizontal: 18 }]}
             onPress={() => setFiltersOpen(true)}
@@ -4539,14 +4597,6 @@ export default function App() {
               Фильтры{activeFiltersCount > 0 ? ` · ${activeFiltersCount}` : ""}
             </Text>
           </TouchableOpacity>
-          {forceGrid && (
-            <TouchableOpacity
-              style={[styles.filterChip, { paddingHorizontal: 14 }]}
-              onPress={() => { setForceGrid(false); setOnlyNew(false); setLocalBrand(null); setSelectedBrand(null); setLocalSearch(""); }}
-            >
-              <Text>← Назад</Text>
-            </TouchableOpacity>
-          )}
         </View>
 
         <Modal visible={filtersOpen} transparent animationType="fade" onRequestClose={() => setFiltersOpen(false)}>
@@ -4674,11 +4724,9 @@ export default function App() {
                 <Text style={styles.sectionLink}>Все</Text>
               </TouchableOpacity>
             </View>
-            <View style={styles.grid}>
+            <View style={[styles.grid, { rowGap: 4 }]}>
               {visible.slice(0, 8).map((item) => (
-                <View key={"cat-" + item.id} style={{ width: "48%" }}>
-                  <ProductCard item={item} />
-                </View>
+                <ProductCard key={"cat-" + item.id} item={item} />
               ))}
             </View>
             {visible.length > 8 && (
@@ -5216,17 +5264,7 @@ export default function App() {
             {discount > 0 && (
               <Text style={[styles.discountText, isDark && styles.textDark]}>Скидка: -{money(discount)}</Text>
             )}
-            {bonusBalance > 0 && (
-              <TouchableOpacity style={styles.bonusCheckbox} onPress={() => setUseBonus(!useBonus)}>
-                <Text style={[styles.bonusCheckboxText, isDark && styles.textDark]}>
-                  {useBonus ? "☑" : "☐"} Использовать бонусы ({money(Math.min(bonusBalance, total - discount))})
-                </Text>
-              </TouchableOpacity>
-            )}
-            <Text style={[styles.cartTotalLine, isDark && styles.textDark]}>Итого:  {money(finalTotal)}</Text>
-            {useBonus && usedBonus > 0 && (
-              <Text style={[styles.discountText, isDark && styles.textDark]}>Бонусы: -{money(usedBonus)}</Text>
-            )}
+            <Text style={[styles.cartTotalLine, isDark && styles.textDark]}>Итого:  {money(total - discount)}</Text>
 
             <TouchableOpacity
               activeOpacity={0.88}
@@ -5243,10 +5281,13 @@ export default function App() {
     );
   };
 
+
   // ---- Profile ----
   const Profile = () => {
     const { theme } = useTheme();
     const isDark = theme === "dark";
+    const [showAllHistory, setShowAllHistory] = useState(false);
+
     useEffect(() => {
       ensureReferralRegistered();
       syncReferralStatsFromCloud();
@@ -5258,18 +5299,14 @@ export default function App() {
     const userId = (user && user.id) ? String(user.id) : "—";
     const photoUrl = (user && user.photo_url) ? user.photo_url : "";
     const initial = (displayName || "M").charAt(0).toUpperCase();
+    const referral = `https://t.me/manzshop_bot/manzshopbyapp?startapp=ref_${userId}`;
 
     return (
       <ScrollView style={[styles.page, isDark && styles.pageDark]} contentContainerStyle={styles.scrollContent}>
-        {/* Header */}
         <View style={styles.profileHeader}>
           <View style={styles.profileAvatar}>
             {photoUrl ? (
-              <Image
-                source={{ uri: photoUrl }}
-                style={{ width: 56, height: 56, borderRadius: 28 }}
-                resizeMode="cover"
-              />
+              <Image source={{ uri: photoUrl }} style={{ width: 56, height: 56, borderRadius: 28 }} resizeMode="cover" />
             ) : (
               <Text style={styles.profileAvatarLetter}>{initial}</Text>
             )}
@@ -5286,7 +5323,6 @@ export default function App() {
           )}
         </View>
 
-        {/* БОНУСНЫЙ СЧЕТ */}
         <Text style={styles.profileSectionLabel}>БОНУСНЫЙ СЧЕТ</Text>
         <View style={styles.bonusGrid}>
           <View style={styles.bonusCell}>
@@ -5303,16 +5339,14 @@ export default function App() {
           </View>
         </View>
 
-        {/* Реферальная ссылка */}
         <Text style={[styles.profileSectionLabel, { marginTop: 18 }]}>Реферальная ссылка</Text>
         <View style={styles.refLinkRow}>
           <Text style={styles.refLinkText} numberOfLines={1} selectable>{referral}</Text>
-          <TouchableOpacity onPress={copyReferral} style={styles.refCopyBtn}>
-            <Image source={{ uri: MENU_ICONS.copy_black }} style={{ width: 22, height: 22 }} resizeMode="contain" />
+          <TouchableOpacity onPress={shareReferral} style={styles.refCopyBtn}>
+            <Image source={{ uri: MENU_ICONS.share_black }} style={{ width: 22, height: 22 }} resizeMode="contain" />
           </TouchableOpacity>
         </View>
 
-        {/* УРОВЕНЬ КЭШБЭКА */}
         <Text style={[styles.profileSectionLabel, { marginTop: 20 }]}>УРОВЕНЬ КЭШБЭКА</Text>
         <Text style={styles.profileLevelCurrent}>
           Текущий уровень: {currentLevel.name} ({currentLevel.cashback}%)
@@ -5335,13 +5369,9 @@ export default function App() {
                   style={{ width: 28, height: 28, marginBottom: 6 }}
                   resizeMode="contain"
                 />
-                <Text style={[styles.levelTileName, isActive && styles.levelTileNameActive]} numberOfLines={2}>
-                  {item.name}
-                </Text>
-                <Text style={[styles.levelTileCb, isActive && styles.levelTileNameActive]}>
-                  {item.cashback}% кэшбэк
-                </Text>
-                <Text style={[styles.levelTileRange, isActive && styles.levelTileNameActive]}>
+                <Text style={[styles.levelTileName, isActive && styles.levelTileNameActive]}>{item.name}</Text>
+                <Text style={[styles.levelTileCash, isActive && styles.levelTileNameActive]}>{item.cashback}%</Text>
+                <Text style={[styles.levelTileRange, isActive && { color: "rgba(255,255,255,0.7)" }]}>
                   {item.min} – {item.max === 999 ? "∞" : item.max} заказа
                 </Text>
               </View>
@@ -5349,20 +5379,29 @@ export default function App() {
           })}
         </View>
 
-        {/* ИСТОРИЯ ЗАКАЗОВ */}
         <View style={[styles.sectionHeaderRow, { marginTop: 22 }]}>
           <Text style={styles.profileSectionLabel}>ИСТОРИЯ ЗАКАЗОВ</Text>
-          {orderHistory.length > 0 && <Text style={styles.sectionLink}>Смотреть все</Text>}
+          {orderHistory.length > 0 && (
+            <TouchableOpacity onPress={() => setShowAllHistory((v) => !v)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <Text style={styles.sectionLink}>{showAllHistory ? "Свернуть" : "Смотреть все"}</Text>
+            </TouchableOpacity>
+          )}
         </View>
         {orderHistory.length === 0 ? (
           <Text style={[styles.empty, isDark && styles.textDark]}>Заказов пока нет</Text>
         ) : (
-          orderHistory.slice(0, 10).map((order) => (
+          (showAllHistory ? orderHistory : orderHistory.slice(0, 3)).map((order) => (
             <View key={order.id} style={styles.historyRow}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.historyId}>Заказ #{order.id}</Text>
                 <Text style={styles.historyDate}>
-                  {order.date ? new Date(order.date).toLocaleDateString("ru-RU", { day: "2-digit", month: "long", year: "numeric" }) : ""}
+                  {order.date
+                    ? new Date(order.date).toLocaleDateString("ru-RU", {
+                        day: "2-digit",
+                        month: "long",
+                        year: "numeric",
+                      })
+                    : ""}
                 </Text>
               </View>
               <View style={{ alignItems: "flex-end" }}>
@@ -5377,830 +5416,231 @@ export default function App() {
     );
   };
 
-  // При открытии CRM подтягиваем заказы
-  useEffect(() => {
-    if (!showAdmin || !isAdmin) return;
-    syncSharedOrders(false);
-  }, [showAdmin, isAdmin]);
-
-  // ---- CRM helpers (стейт форм на уровне App — Modal не размонтируется) ----
-  useEffect(() => {
-    if (productDraft) {
-      setLocalProduct((prev) => {
-        if (prev && prev.id === productDraft.id) return prev;
-        return { ...productDraft };
-      });
-      setLocalIsNew(isNewProduct);
-    } else {
-      setLocalProduct(null);
-    }
-  }, [productDraft, isNewProduct]);
-
-  const handleSendBroadcast = async () => {
-    const text = (localBroadcast || "").trim();
-    const photo = (broadcastPhoto || "").trim();
-    const buttonText = (broadcastBtnText || "").trim();
-    const buttonUrl = (broadcastBtnUrl || "").trim();
-
-    if (!text && !photo) {
-      Alert.alert("Ошибка", "Введите текст или ссылку на фото");
-      return;
-    }
-    if (buttonText && !buttonUrl) {
-      Alert.alert("Ошибка", "Укажите ссылку для кнопки");
-      return;
-    }
-    if (buttonUrl && !/^https?:\/\//i.test(buttonUrl)) {
-      Alert.alert("Ошибка", "Ссылка кнопки должна начинаться с https://");
-      return;
-    }
-    if (broadcastSending) return;
-
-    setBroadcastSending(true);
-    showToast("📨 Отправляю рассылку…");
-    try {
-      const result = await sendBotBroadcast({ text, photo, buttonText, buttonUrl });
-      if (!result) {
-        Alert.alert("Ошибка", "Не удалось отправить. Проверьте деплой /api/users");
-        return;
-      }
-      const sent = Number(result.sent) || 0;
-      const failed = Number(result.failed) || 0;
-      const total = Number(result.total) || 0;
-      setBroadcastAudience(total);
-      Alert.alert(
-        "Рассылка",
-        `Отправлено: ${sent}\nОшибок: ${failed}\nВ базе: ${total}` +
-          (result.hint ? `\n\n${result.hint}` : "")
-      );
-      if (sent > 0) {
-        setLocalBroadcast("");
-        setBroadcastPhoto("");
-        setBroadcastBtnText("");
-        setBroadcastBtnUrl("");
-      }
-    } finally {
-      setBroadcastSending(false);
-    }
-  };
-
-  // Принудительно опубликовать каталог для всех аккаунтов/устройств
-  const publishCatalogToAll = async () => {
-    if (!products || products.length === 0) {
-      Alert.alert(
-        "Каталог пуст",
-        "Нельзя опубликовать пустой каталог. Сначала импортируйте товары из Google Таблицы или добавьте вручную."
-      );
-      return;
-    }
-    showToast("Публикация каталога…");
-    const ok = await sharedProductsSave(products);
-    if (ok) {
-      // проверка, что на сервере реально лежит
-      try {
-        const check = await sharedProductsLoad();
-        const n = Array.isArray(check) ? check.length : 0;
-        if (n > 0) {
-          showToast("✅ Каталог на сервере: " + n + " тов.");
-        } else {
-          Alert.alert(
-            "Сохранено, но сервер пуст",
-            "Попробуйте ещё раз «Опубликовать». Если не поможет — откройте консоль (F12) и пришлите красные ошибки."
-          );
-        }
-      } catch (e) {
-        showToast("✅ Отправлено (" + products.length + ")");
-      }
-    } else {
-      Alert.alert(
-        "Не удалось опубликовать",
-        "Сервер не принял каталог. Откройте F12 → Console и посмотрите строки [Products] netlify save."
-      );
-    }
-  };
-
-  // Полная очистка тестовых данных (локально + сервер заказов)
-  const doResetAllTestData = async () => {
-    // 0) Глобальный epoch — все устройства/пользователи при следующем открытии обнулят персональные данные
-    try {
-      const epoch = await bumpResetEpoch();
-      try {
-        if (typeof localStorage !== "undefined") {
-          localStorage.setItem("krost_reset_epoch", String(epoch));
-        }
-      } catch (e) {}
-      console.log("[Reset] bumped global epoch to", epoch);
-    } catch (e) {
-      console.warn("[Reset] bump epoch failed", e);
-    }
-    try {
-      showToast("Очищаю…");
-      // 1) Сервер заказов
-      try {
-        const urls = [];
-        if (typeof window !== "undefined" && window.location?.origin) {
-          const o = window.location.origin;
-          urls.push(`${o}/api/orders`);
-          urls.push(`${o}/.netlify/functions/orders`);
-        }
-        for (const url of urls) {
-          try {
-            const r = await fetch(url, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ orders: [] }),
-              cache: "no-store",
-            });
-            const data = await r.json().catch(() => ({}));
-            if (r.ok && data && data.ok !== false) {
-              console.log("[Reset] server orders cleared", data);
-              break;
-            }
-          } catch (e) {
-            console.warn("[Reset] orders clear fail", url, e);
-          }
-        }
-      } catch (e) {}
-
-      // 2) Локальный стейт
-      setAdminOrders([]);
-      setOrderHistory([]);
-      setOrders(0);
-      setBonusBalance(0);
-      setReferralCount(0);
-      setReferralEarnings(0);
-      setReferralNotified(false);
-      setCart([]);
-      setFavorites([]);
-      setLastOrderNumber(0);
-      setUsedFreeDelivery([]);
-      setReferredBy(null);
-
-      // 3) CloudStorage + localStorage
-      const keys = [
-        CLOUD_KEYS.orders,
-        CLOUD_KEYS.bonus,
-        CLOUD_KEYS.orderHistory,
-        CLOUD_KEYS.adminOrders,
-        CLOUD_KEYS.referralCount,
-        CLOUD_KEYS.referralEarnings,
-        CLOUD_KEYS.referralNotified,
-        CLOUD_KEYS.lastOrderNumber,
-        CLOUD_KEYS.usedFreeDelivery,
-        CLOUD_KEYS.refEvents,
-        CLOUD_KEYS.cart,
-        CLOUD_KEYS.favorites,
-        CLOUD_KEYS.referredBy,
-      ];
-      const zeroKeys = new Set([
-        CLOUD_KEYS.bonus,
-        CLOUD_KEYS.referralCount,
-        CLOUD_KEYS.referralEarnings,
-        CLOUD_KEYS.lastOrderNumber,
-      ]);
-      const falseKeys = new Set([CLOUD_KEYS.referralNotified]);
-      for (const k of keys) {
-        try {
-          let val = [];
-          if (zeroKeys.has(k)) val = 0;
-          else if (falseKeys.has(k)) val = false;
-          await saveToCloud(k, val);
-        } catch (e) {}
-        try {
-          localStorage.removeItem(k);
-          localStorage.removeItem("krost_" + k);
-        } catch (e) {}
-      }
-      [
-        "krost_bonus",
-        "krost_orderHistory",
-        "krost_adminOrders",
-        "krost_orders",
-        "krost_referralCount",
-        "krost_referralEarnings",
-        "krost_referralNotified",
-        "krost_lastOrderNumber",
-        "krost_usedFreeDelivery",
-        "krost_refEvents",
-        "krost_referredBy",
-        "krost_cart",
-        "krost_favorites",
-      ].forEach((k) => {
-        try {
-          localStorage.removeItem(k);
-        } catch (e) {}
-      });
-      const cs =
-        typeof window !== "undefined" && window.Telegram?.WebApp?.CloudStorage
-          ? window.Telegram.WebApp.CloudStorage
-          : null;
-      if (cs && typeof cs.removeItem === "function") {
-        [
-          "krost_bonus",
-          "krost_orderHistory",
-          "krost_adminOrders",
-          "krost_orders",
-          "krost_referralCount",
-          "krost_referralEarnings",
-          "krost_referralNotified",
-          "krost_lastOrderNumber",
-          "krost_usedFreeDelivery",
-          "krost_refEvents",
-          "krost_referredBy",
-          "krost_cart",
-          "krost_favorites",
-        ].forEach((k) => {
-          try {
-            cs.removeItem(k);
-          } catch (e) {}
-        });
-      }
-
-      // Очищаем свой user-state в pantry (остальные пользователи очистятся по epoch)
-      try {
-        const uid = String(user?.id || "");
-        if (uid && /^\d+$/.test(uid)) {
-          await saveUserStateToShared(uid, {
-            cart: [],
-            favorites: [],
-            bonusBalance: 0,
-            orderHistory: [],
-            referralCount: 0,
-            referralEarnings: 0,
-            orders: 0,
-          });
-        }
-      } catch (e) {}
-
-      showToast("✅ Все данные очищены у всех пользователей");
-      console.log("[Reset] done");
-    } catch (e) {
-      console.warn("[Reset] error", e);
-      showToast("Ошибка очистки");
-    }
-  };
-
-  const resetAllTestData = () => {
-    const msg =
-      "Очистить ВСЕ данные у ВСЕХ пользователей?\n\nЗаказы, бонусы, рефералы, корзины, избранное.\nКаталог не трогаем.\n\nЭто действие нельзя отменить.";
-    // Telegram Mini App — нативный confirm
-    const tg =
-      typeof window !== "undefined" && window.Telegram?.WebApp
-        ? window.Telegram.WebApp
-        : null;
-    if (tg && typeof tg.showConfirm === "function") {
-      tg.showConfirm(msg, (ok) => {
-        if (ok) doResetAllTestData();
-      });
-      return;
-    }
-    // Браузер
-    if (typeof window !== "undefined" && typeof window.confirm === "function") {
-      if (window.confirm(msg)) doResetAllTestData();
-      return;
-    }
-    // Fallback — без подтверждения
-    doResetAllTestData();
-  };
-
-  // Сохранить постоянную ссылку на Google Таблицу (CSV)
-  const saveGsheetUrl = async () => {
-    const url = (gsheetUrl || "").trim();
-    if (!url) {
-      Alert.alert("Ссылка", "Вставь ссылку на CSV из Google Таблицы");
-      return;
-    }
-    await saveToCloud("krost_gsheet_url", url);
-    showToast("✅ Ссылка сохранена");
-  };
-
-  // Импорт ТОЛЬКО новых товаров из Google Таблицы (CSV)
-  // Существующие (по brand + name) пропускаются
-  const importNewProductsFromSheet = async () => {
-    const url = (gsheetUrl || "").trim();
-    if (!url) {
-      Alert.alert("Нет ссылки", "Сначала вставь и сохрани ссылку на Google Таблицу (CSV)");
-      return;
-    }
-
-    // Проверяем, что это похоже на CSV-ссылку
-    const lower = url.toLowerCase();
-    if (
-      !lower.includes("output=csv") &&
-      !lower.includes("format=csv") &&
-      !lower.includes("/export?format=csv")
-    ) {
-      Alert.alert(
-        "Неверная ссылка",
-        "Нужна ссылка именно на CSV.\n\nВ Google Таблице:\nФайл → Поделиться → Опубликовать в интернете →\nвыбери «Значения через запятую (.csv)» → Опубликовать\n\nСкопируй полученную ссылку (в ней должно быть output=csv или format=csv)."
-      );
-      return;
-    }
-
-    setImporting(true);
-    showToast("Загрузка таблицы…");
-
-    try {
-      const cacheBust = `t=${Date.now()}`;
-      const baseUrl = url.includes("?") ? `${url}&${cacheBust}` : `${url}?${cacheBust}`;
-
-      // Несколько способов скачать (из-за CORS в Telegram WebView)
-      const candidates = [
-        baseUrl,
-        `https://corsproxy.io/?${encodeURIComponent(baseUrl)}`,
-        `https://api.allorigins.win/raw?url=${encodeURIComponent(baseUrl)}`,
-      ];
-
-      let textCsv = null;
-      let lastError = null;
-
-      for (const candidate of candidates) {
-        try {
-          const res = await fetch(candidate, { cache: "no-store", mode: "cors" });
-          if (!res.ok) {
-            lastError = `HTTP ${res.status}`;
-            continue;
-          }
-          const body = await res.text();
-          // Google иногда отдаёт HTML вместо CSV
-          if (
-            !body ||
-            body.trim().startsWith("<!DOCTYPE") ||
-            body.trim().startsWith("<html") ||
-            body.includes("accounts.google.com")
-          ) {
-            lastError = "Получен HTML вместо CSV (таблица не опубликована или закрыта)";
-            continue;
-          }
-          textCsv = body;
-          break;
-        } catch (err) {
-          lastError = (err && err.message) || String(err);
-        }
-      }
-
-      if (!textCsv) {
-        throw new Error(
-          lastError ||
-            "Не удалось скачать таблицу. Проверь, что она опубликована как CSV и ссылка правильная."
-        );
-      }
-
-      // Простой CSV-парсер (поддерживает кавычки)
-      const rows = [];
-      const normalized = textCsv.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-      const lines = normalized.split("\n");
-
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        const cols = [];
-        let current = "";
-        let inQuotes = false;
-        for (let i = 0; i < line.length; i++) {
-          const ch = line[i];
-          if (ch === '"') {
-            inQuotes = !inQuotes;
-          } else if (ch === "," && !inQuotes) {
-            cols.push(current.trim().replace(/^"|"$/g, ""));
-            current = "";
-          } else {
-            current += ch;
-          }
-        }
-        cols.push(current.trim().replace(/^"|"$/g, ""));
-        rows.push(cols);
-      }
-
-      if (rows.length < 2) {
-        Alert.alert(
-          "Пусто",
-          `В таблице почти нет данных (строк: ${rows.length}).\nНужна строка заголовков + хотя бы 1 товар.`
-        );
-        return;
-      }
-
-      // Нормализуем заголовки (убираем BOM, регистр, пробелы)
-      const headers = rows[0].map((h) =>
-        String(h || "")
-          .replace(/^\uFEFF/, "")
-          .toLowerCase()
-          .trim()
-      );
-
-      const findCol = (...names) => {
-        for (const n of names) {
-          const i = headers.indexOf(n);
-          if (i !== -1) return i;
-        }
-        return -1;
-      };
-
-      const idx = {
-        brand: findCol("brand", "бренд"),
-        name: findCol("name", "model", "модель", "название"),
-        price: findCol("price", "цена"),
-        oldPrice: findCol("oldprice", "oldpriced", "old_price", "old price", "старая цена", "стараяцена"),
-        description: findCol("description", "escription", "desc", "описание"),
-        sizes: findCol("sizes", "size", "размеры", "размер"),
-        image: findCol("image", "photo", "img", "url", "фото", "картинка"),
-      };
-
-      if (idx.brand === -1 || idx.name === -1 || idx.price === -1) {
-        Alert.alert(
-          "Ошибка заголовков",
-          `Не нашёл обязательные колонки.\n\nСейчас в первой строке: ${headers.join(", ") || "(пусто)"}\n\nНужно минимум: brand, name, price\n(можно на русском: бренд, название, цена)`
-        );
-        return;
-      }
-
-      // Существующие товары (ключ = brand|name в нижнем регистре)
-      const existingKeys = new Set(
-        products.map(
-          (p) =>
-            `${(p.brand || "").toLowerCase().trim()}|${(p.name || "").toLowerCase().trim()}`
-        )
-      );
-
-      const newProducts = [];
-      let skipped = 0;
-      let badPrice = 0;
-
-      for (let i = 1; i < rows.length; i++) {
-        const row = rows[i];
-        const brand = (row[idx.brand] || "").trim();
-        const name = (row[idx.name] || "").trim();
-        if (!brand || !name) continue;
-
-        const key = `${brand.toLowerCase()}|${name.toLowerCase()}`;
-        if (existingKeys.has(key)) {
-          skipped++;
-          continue;
-        }
-
-        const price = parseInt(String(row[idx.price] || "").replace(/\D/g, ""), 10) || 0;
-        if (!price) {
-          badPrice++;
-          continue;
-        }
-
-        const oldRaw =
-          idx.oldPrice >= 0 ? String(row[idx.oldPrice] || "").replace(/\D/g, "") : "";
-        const oldPrice = oldRaw ? parseInt(oldRaw, 10) : null;
-
-        const description =
-          idx.description >= 0 ? (row[idx.description] || "").trim() : "";
-        const sizesRaw = idx.sizes >= 0 ? row[idx.sizes] || "" : "";
-        const sizes = String(sizesRaw)
-          .split(/[,;|/]/)
-          .map((s) => s.trim())
-          .filter(Boolean);
-
-        const imageRaw = idx.image >= 0 ? (row[idx.image] || "").trim() : "";
-        const images = imageRaw
-          ? imageRaw.split(/[|;]/).map((s) => s.trim()).filter(Boolean)
-          : [];
-        const image = images[0] || "https://via.placeholder.com/400?text=Photo";
-
-        newProducts.push({
-          id: Date.now() + i + Math.floor(Math.random() * 900),
-          brand,
-          name,
-          price,
-          oldPrice,
-          image,
-          images: images.length ? images : [image],
-          description,
-          sizes: sizes.length ? sizes : ["40", "41", "42"],
-          sales: 0,
-          ratings: [],
-          averageRating: 0,
-          createdAt: new Date().toISOString(),
-          pinned: false,
-          hidden: false,
-        });
-
-        existingKeys.add(key);
-      }
-
-      // Фото из таблицы оставляем как URL (без тяжёлой обработки — иначе импорт зависает)
-
-      if (newProducts.length === 0) {
-        const parts = [];
-        if (skipped) parts.push(`уже есть в каталоге: ${skipped}`);
-        if (badPrice) parts.push(`без цены / цена 0: ${badPrice}`);
-        const sample = rows[1] ? rows[1].slice(0, 6).join(" | ") : "(нет строк)";
-        Alert.alert(
-          "Новых товаров нет",
-          (parts.length
-            ? `Ничего не добавлено.\n${parts.join("\n")}`
-            : "В таблице не найдено подходящих строк.") +
-            `\n\nЗаголовки: ${headers.join(", ")}` +
-            `\nПервая строка: ${sample}` +
-            `\nВсего строк данных: ${Math.max(0, rows.length - 1)}`
-        );
-        return;
-      }
-
-      const next = [...newProducts, ...products];
-      setProducts(next);
-
-      const ok = await sharedProductsSave(next);
-      if (ok) {
-        showToast(
-          `✅ Добавлено ${newProducts.length} новых` +
-            (skipped ? ` (пропущено ${skipped})` : "")
-        );
-        Alert.alert(
-          "Импорт готов",
-          `Добавлено новых товаров: ${newProducts.length}` +
-            (skipped ? `\nПропущено (уже были): ${skipped}` : "") +
-            `\n\nКаталог опубликован.`
-        );
-      } else {
-        showToast(`⚠️ Добавлено локально ${newProducts.length} — повторно нажми «Импортировать»`);
-        Alert.alert(
-          "Импорт",
-          `Товары добавлены на этом устройстве, но сервер не принял сохранение.\nПопробуй ещё раз «Импортировать новые».`
-        );
-      }
-    } catch (e) {
-      console.error("Import error", e);
-      Alert.alert(
-        "Ошибка импорта",
-        (e && e.message) ||
-          "Не удалось загрузить таблицу.\nПроверь ссылку и что таблица опубликована как CSV."
-      );
-    } finally {
-      setImporting(false);
-    }
-  };
-
-  // ---- Review Prompt (после завершения заказа) ----
-  const submitReviewPrompt = () => {
-    if (!reviewPrompt) return;
-    if (!reviewRating) {
-      Alert.alert("Оценка", "Поставьте оценку от 1 до 5");
-      return;
-    }
-    const { product, orderId } = reviewPrompt;
-    addRating(product.id, reviewRating, reviewComment || "");
-
-    // Есть ли ещё товары в заказе без отзыва?
-    const order = orderHistory.find((o) => String(o.id) === String(orderId));
-    const items = (order && order.items) || [];
-    const ratedIds = new Set([String(product.id)]);
-    // уже оценённые этим пользователем
-    items.forEach((item) => {
-      const p = products.find((x) => String(x.id) === String(item.id));
-      if (!p) return;
-      const already = (p.ratings || []).some((r) => String(r.userId) === String(user.id));
-      if (already) ratedIds.add(String(p.id));
-    });
-    ratedIds.add(String(product.id));
-
-    let nextProduct = null;
-    for (const item of items) {
-      const p = products.find((x) => String(x.id) === String(item.id));
-      if (!p) continue;
-      if (!ratedIds.has(String(p.id))) {
-        nextProduct = p;
-        break;
-      }
-    }
-
-    if (nextProduct) {
-      // ещё есть товары — не закрываем заказ, просим следующий отзыв
-      setReviewPrompt({
-        orderId,
-        product: nextProduct,
-        rating: 0,
-        comment: "",
-      });
-      setReviewRating(0);
-      setReviewComment("");
-      showToast("Спасибо! Оцените следующий товар");
-      return;
-    }
-
-    // все товары заказа оценены
-    setOrderHistory((prev) =>
-      prev.map((o) =>
-        String(o.id) === String(orderId)
-          ? { ...o, reviewDone: true, askReview: false }
-          : o
-      )
-    );
-    setAdminOrders((prev) =>
-      prev.map((o) =>
-        String(o.id) === String(orderId)
-          ? { ...o, reviewDone: true, askReview: false }
-          : o
-      )
-    );
-    setReviewPrompt(null);
-    showToast("Спасибо за отзыв!");
-  };
-
-  const skipReviewPrompt = () => {
-    if (!reviewPrompt) return;
-    const orderId = reviewPrompt.orderId;
-    try {
-      if (typeof localStorage !== "undefined") {
-        const prev = JSON.parse(localStorage.getItem("krost_dismissed_reviews") || "[]");
-        if (!prev.includes(orderId)) {
-          localStorage.setItem("krost_dismissed_reviews", JSON.stringify([...prev, orderId]));
-        }
-      }
-    } catch (e) {}
-    setOrderHistory((prev) =>
-      prev.map((o) => (o.id === orderId ? { ...o, reviewDone: true, askReview: false } : o))
-    );
-    setAdminOrders((prev) =>
-      prev.map((o) => (o.id === orderId ? { ...o, reviewDone: true, askReview: false } : o))
-    );
-    setReviewPrompt(null);
-  };
-
-  // ---- OrderModal ----
+  // ---- Order Modal ----
   const OrderModal = () => {
+    const { theme } = useTheme();
+    const isDark = theme === "dark";
     const [fullName, setFullName] = useState("");
     const [address, setAddress] = useState("");
     const [phone, setPhone] = useState("");
     const [delivery, setDelivery] = useState("courier");
-    const [useFreeDelivery, setUseFreeDelivery] = useState(false);
     const [errorMsg, setErrorMsg] = useState("");
-    const [promoInput, setPromoInput] = useState("");
+    const [promoInput, setPromoInput] = useState(promoCode || "");
     const [promoMsg, setPromoMsg] = useState("");
-    const { theme } = useTheme(); const isDark = theme === "dark";
+    const [useFreeDelivery, setUseFreeDelivery] = useState(false);
+
     useEffect(() => {
-      if (!orderModalVisible) { 
-        setFullName(""); setAddress(""); setPhone(""); setDelivery("courier"); setUseFreeDelivery(false); setErrorMsg("");
-        setPromoInput(""); setPromoMsg("");
+      if (!orderModalVisible) {
+        setErrorMsg("");
+        setPromoMsg("");
       }
     }, [orderModalVisible]);
 
-    const { total, discount, finalTotal } = calculateTotals();
-    let dp = delivery === "europost" ? 12 : 10;
-    const fullPhonePreview = phone.replace(/\D/g, "").length >= 9 ? "+375" + phone.replace(/\D/g, "") : "";
-    const eligible = fullName.trim() && fullPhonePreview ? isFreeDeliveryEligible(fullPhonePreview, fullName) : false;
+    if (!orderModalVisible) return null;
+
+    const { total, discount, usedBonus, finalTotal } = calculateTotals();
+    const deliveryPrice = useFreeDelivery ? 0 : delivery === "europost" ? 12 : 10;
+    const orderTotal = finalTotal + deliveryPrice;
+    const eligible = isFreeDeliveryEligible(phone ? "+375" + phone : "", fullName);
     const showFreeDeliveryOption = eligible && orderHistory.length === 0;
-    if (useFreeDelivery && showFreeDeliveryOption) dp = 0;
-    const orderTotal = finalTotal + dp;
 
     const applyPromoInModal = () => {
-      const code = promoInput.trim();
+      const code = (promoInput || "").trim().toUpperCase();
       if (!code) {
         setPromoMsg("Введите промокод");
         return;
       }
       const found = promoCodes.find((p) => {
-        if (String(p.code || "").trim().toUpperCase() !== code.toUpperCase()) return false;
+        if (p.code.toUpperCase() !== code) return false;
         if (p.active === false) return false;
         const maxU = p.maxUses != null ? Number(p.maxUses) : 999999;
         const used = Number(p.usedCount) || 0;
         return used < maxU;
       });
-      if (found) {
-        setPromoCode(code);
-        setPromoMsg(`✓ Скидка ${found.discount}% применена`);
-      } else {
+      if (!found) {
+        setPromoMsg("Промокод недействителен");
         setPromoCode("");
-        setPromoMsg("Неверный, неактивный или исчерпанный промокод");
+        return;
       }
+      setPromoCode(found.code);
+      setPromoMsg(`✓ Скидка ${found.discount}%`);
     };
 
-    const handlePlace = () => {
-      const digits = phone.replace(/\D/g, "");
-      if (!fullName.trim() || !address.trim() || digits.length < 9) {
-        setErrorMsg("⚠️ Заполните все поля (ФИО, адрес, телефон)");
+    const closeOrderModal = () => setOrderModalVisible(false);
+
+    const submit = () => {
+      if (!fullName.trim()) {
+        setErrorMsg("Укажите ФИО");
         return;
       }
-      const fullPhone = "+375" + digits;
-      if (useFreeDelivery && !isFreeDeliveryEligible(fullPhone, fullName)) {
-        setErrorMsg("⚠️ Бесплатная доставка уже была использована с этими данными");
+      if (!address.trim()) {
+        setErrorMsg("Укажите адрес");
         return;
       }
-      if (cart.length === 0) {
-        setErrorMsg("⚠️ Корзина пуста");
+      if (!phone || phone.length < 9) {
+        setErrorMsg("Укажите телефон");
         return;
       }
-      setErrorMsg("");
-      placeOrderWithDetails({ fullName, address, phone: fullPhone, delivery, freeDelivery: useFreeDelivery });
+      placeOrderWithDetails({
+        fullName: fullName.trim(),
+        address: address.trim(),
+        phone: "+375" + phone,
+        delivery,
+        freeDelivery: useFreeDelivery && showFreeDeliveryOption,
+      });
     };
-    if (!orderModalVisible) return null;
 
     return (
-      <View
-        style={{
-          position: "fixed",
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          backgroundColor: "rgba(0,0,0,0.55)",
-          zIndex: 200000,
-          elevation: 200000,
-          justifyContent: "center",
-          alignItems: "center",
-          padding: 12,
-        }}
-      >
-        <ScrollView
-          contentContainerStyle={{
-            flexGrow: 1,
-            justifyContent: "center",
-            alignItems: "center",
-            paddingVertical: 16,
-            width: "100%",
-          }}
-          keyboardShouldPersistTaps="handled"
-          style={{ width: "100%", maxWidth: 440 }}
-        >
-          <View style={[styles.modalView, isDark && styles.modalViewDark, { width: "100%" }]}>
-            <Text style={[styles.modalTitle, isDark && styles.textDark]}>Оформление заказа</Text>
+      <Modal visible transparent animationType="slide" onRequestClose={closeOrderModal}>
+        <View style={styles.modalOverlay}>
+          <ScrollView
+            contentContainerStyle={{ flexGrow: 1, justifyContent: "center", padding: 16 }}
+            keyboardShouldPersistTaps="handled"
+            style={{ width: "100%", maxWidth: 440, alignSelf: "center" }}
+          >
+            <View style={[styles.modalView, isDark && styles.modalViewDark, { width: "100%" }]}>
+              <Text style={[styles.modalTitle, isDark && styles.textDark]}>Оформление заказа</Text>
 
-            {errorMsg ? (
-              <View style={styles.modalError}>
-                <Text style={styles.modalErrorText}>{errorMsg}</Text>
+              {errorMsg ? (
+                <View style={styles.modalError}>
+                  <Text style={styles.modalErrorText}>{errorMsg}</Text>
+                </View>
+              ) : null}
+
+              <Text style={[styles.deliveryLabel, isDark && styles.textDark]}>Способ доставки</Text>
+              <View style={styles.deliveryOptions}>
+                <TouchableOpacity
+                  style={[styles.deliveryOption, delivery === "courier" && styles.deliveryOptionActive]}
+                  onPress={() => setDelivery("courier")}
+                >
+                  <Text style={[styles.deliveryOptionTitle, delivery === "courier" && styles.deliveryOptionTextActive]}>
+                    Курьер
+                  </Text>
+                  <Text style={[styles.deliveryDetail, delivery === "courier" && styles.deliveryDetailActive]}>10 BYN</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.deliveryOption, delivery === "europost" && styles.deliveryOptionActive]}
+                  onPress={() => setDelivery("europost")}
+                >
+                  <Text style={[styles.deliveryOptionTitle, delivery === "europost" && styles.deliveryOptionTextActive]}>
+                    ЕвроПочта
+                  </Text>
+                  <Text style={[styles.deliveryDetail, delivery === "europost" && styles.deliveryDetailActive]}>12 BYN</Text>
+                </TouchableOpacity>
               </View>
-            ) : null}
 
-            <Text style={[styles.deliveryLabel, isDark && styles.textDark]}>Способ доставки</Text>
-            <View style={styles.deliveryOptions}>
-              <TouchableOpacity style={[styles.deliveryOption, delivery === "courier" && styles.deliveryOptionActive]} onPress={() => setDelivery("courier")}>
-                <Text style={[styles.deliveryOptionTitle, delivery === "courier" && styles.deliveryOptionTextActive]}>Курьер</Text>
-                <Text style={[styles.deliveryDetail, delivery === "courier" && styles.deliveryDetailActive]}>10 BYN</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.deliveryOption, delivery === "europost" && styles.deliveryOptionActive]} onPress={() => setDelivery("europost")}>
-                <Text style={[styles.deliveryOptionTitle, delivery === "europost" && styles.deliveryOptionTextActive]}>ЕвроПочта</Text>
-                <Text style={[styles.deliveryDetail, delivery === "europost" && styles.deliveryDetailActive]}>12 BYN</Text>
-              </TouchableOpacity>
-            </View>
-            <TextInput style={[styles.modalInput, isDark && styles.inputDark]} placeholder="ФИО" placeholderTextColor={isDark ? "#999" : "#888"} value={fullName} onChangeText={(t) => { setFullName(t); setErrorMsg(""); }} />
-            <TextInput style={[styles.modalInput, isDark && styles.inputDark]} placeholder={delivery === "europost" ? "Адрес и номер отделения" : "Адрес доставки"} placeholderTextColor={isDark ? "#999" : "#888"} value={address} onChangeText={(t) => { setAddress(t); setErrorMsg(""); }} />
-            <View style={[styles.phoneRow, isDark && styles.inputDark]}>
-              <Text style={[styles.phonePrefix, isDark && { color: "#fff" }]}>+375</Text>
               <TextInput
-                style={[styles.phoneInput, isDark && { color: "#fff" }]}
-                placeholder="29 123-45-67"
+                style={[styles.modalInput, isDark && styles.inputDark]}
+                placeholder="ФИО"
                 placeholderTextColor={isDark ? "#999" : "#888"}
-                value={phone}
+                value={fullName}
                 onChangeText={(t) => {
-                  const digits = t.replace(/\D/g, "").slice(0, 9);
-                  setPhone(digits);
+                  setFullName(t);
                   setErrorMsg("");
                 }}
-                keyboardType="phone-pad"
-                maxLength={9}
               />
-            </View>
-
-            <View style={styles.promoBox}>
               <TextInput
-                style={[styles.promoInput, isDark && styles.inputDark]}
-                placeholder="Промокод"
+                style={[styles.modalInput, isDark && styles.inputDark]}
+                placeholder={delivery === "europost" ? "Адрес и номер отделения" : "Адрес доставки"}
                 placeholderTextColor={isDark ? "#999" : "#888"}
-                value={promoInput}
-                onChangeText={(t) => { setPromoInput(t); setPromoMsg(""); }}
-                autoCapitalize="characters"
+                value={address}
+                onChangeText={(t) => {
+                  setAddress(t);
+                  setErrorMsg("");
+                }}
               />
-              <TouchableOpacity style={styles.promoButton} onPress={applyPromoInModal}>
-                <Text style={styles.buttonText}>Применить</Text>
-              </TouchableOpacity>
-            </View>
-            {!!promoMsg && (
-              <Text style={[styles.discountText, isDark && styles.textDark, { marginBottom: 8 }, promoMsg.startsWith("✓") ? null : { color: "#c00" }]}>
-                {promoMsg}
-              </Text>
-            )}
-            {discount > 0 && (
-              <Text style={[styles.discountText, isDark && styles.textDark, { marginBottom: 4 }]}>
-                Скидка по промокоду: -{money(discount)}
-              </Text>
-            )}
+              <View style={[styles.phoneRow, isDark && styles.inputDark]}>
+                <Text style={[styles.phonePrefix, isDark && { color: "#fff" }]}>+375</Text>
+                <TextInput
+                  style={[styles.phoneInput, isDark && { color: "#fff" }]}
+                  placeholder="29 123-45-67"
+                  placeholderTextColor={isDark ? "#999" : "#888"}
+                  value={phone}
+                  onChangeText={(t) => {
+                    const digits = t.replace(/\D/g, "").slice(0, 9);
+                    setPhone(digits);
+                    setErrorMsg("");
+                  }}
+                  keyboardType="phone-pad"
+                  maxLength={9}
+                />
+              </View>
 
-            {showFreeDeliveryOption && (
-              <TouchableOpacity style={styles.bonusCheckbox} onPress={() => setUseFreeDelivery(!useFreeDelivery)}>
-                <Text style={[styles.bonusCheckboxText, isDark && styles.textDark]}>
-                  {useFreeDelivery ? "☑" : "☐"} Бесплатная доставка (первый заказ)
+              <View style={styles.promoBox}>
+                <TextInput
+                  style={[styles.promoInput, isDark && styles.inputDark]}
+                  placeholder="Промокод"
+                  placeholderTextColor={isDark ? "#999" : "#888"}
+                  value={promoInput}
+                  onChangeText={(t) => {
+                    setPromoInput(t);
+                    setPromoMsg("");
+                  }}
+                  autoCapitalize="characters"
+                />
+                <TouchableOpacity style={styles.promoButton} onPress={applyPromoInModal}>
+                  <Text style={styles.buttonText}>Применить</Text>
+                </TouchableOpacity>
+              </View>
+              {!!promoMsg && (
+                <Text
+                  style={[
+                    styles.discountText,
+                    isDark && styles.textDark,
+                    { marginBottom: 8 },
+                    promoMsg.startsWith("✓") ? null : { color: "#c00" },
+                  ]}
+                >
+                  {promoMsg}
                 </Text>
-              </TouchableOpacity>
-            )}
-            <View style={styles.totalRow}>
-              <Text style={[styles.totalLabel, isDark && styles.textDark]}>Итого к оплате:</Text>
-              <Text style={[styles.totalAmount, isDark && styles.textDark]}>{money(orderTotal)}</Text>
+              )}
+              {discount > 0 && (
+                <Text style={[styles.discountText, isDark && styles.textDark, { marginBottom: 4 }]}>
+                  Скидка по промокоду: -{money(discount)}
+                </Text>
+              )}
+
+              {bonusBalance > 0 && (
+                <TouchableOpacity style={styles.bonusCheckbox} onPress={() => setUseBonus(!useBonus)}>
+                  <Text style={[styles.bonusCheckboxText, isDark && styles.textDark]}>
+                    {useBonus ? "☑" : "☐"} Использовать бонусы ({money(Math.min(bonusBalance, total - discount))})
+                  </Text>
+                </TouchableOpacity>
+              )}
+              {useBonus && usedBonus > 0 && (
+                <Text style={[styles.discountText, isDark && styles.textDark, { marginBottom: 6 }]}>
+                  Бонусы: -{money(usedBonus)}
+                </Text>
+              )}
+
+              {showFreeDeliveryOption && (
+                <TouchableOpacity style={styles.bonusCheckbox} onPress={() => setUseFreeDelivery(!useFreeDelivery)}>
+                  <Text style={[styles.bonusCheckboxText, isDark && styles.textDark]}>
+                    {useFreeDelivery ? "☑" : "☐"} Бесплатная доставка (первый заказ)
+                  </Text>
+                </TouchableOpacity>
+              )}
+
+              <View style={styles.totalRow}>
+                <Text style={[styles.totalLabel, isDark && styles.textDark]}>Итого к оплате:</Text>
+                <Text style={[styles.totalAmount, isDark && styles.textDark]}>{money(orderTotal)}</Text>
+              </View>
+              <View style={styles.modalButtons}>
+                <TouchableOpacity style={styles.modalCancel} onPress={closeOrderModal}>
+                  <Text>Отмена</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.modalConfirm} onPress={submit}>
+                  <Text style={styles.buttonText}>Подтвердить</Text>
+                </TouchableOpacity>
+              </View>
             </View>
-            <View style={styles.modalButtons}>
-              <TouchableOpacity style={styles.modalCancel} onPress={closeOrderModal}><Text>Отмена</Text></TouchableOpacity>
-              <TouchableOpacity style={styles.modalConfirm} onPress={handlePlace}><Text style={styles.buttonText}>Подтвердить</Text></TouchableOpacity>
-            </View>
-          </View>
-        </ScrollView>
-      </View>
+          </ScrollView>
+        </View>
+      </Modal>
     );
   };
 
-  // ---- Меню (pill-стиль, чёрно-белый) ----
+  // ---- Menu ----
   const Menu = () => {
     const { theme } = useTheme();
     const isDark = theme === "dark";
@@ -6222,7 +5662,12 @@ export default function App() {
       <View style={styles.menuWrapper} pointerEvents="box-none">
         <View style={[styles.menu, isDark && styles.menuDark]}>
           <TouchableOpacity onPress={() => setPage("catalog")} style={styles.menuButton} activeOpacity={0.7}>
-            <View style={[styles.menuIconWrap, isActive("catalog") && (isDark ? styles.menuIconWrapActiveDark : styles.menuIconWrapActive)]}>
+            <View
+              style={[
+                styles.menuIconWrap,
+                isActive("catalog") && (isDark ? styles.menuIconWrapActiveDark : styles.menuIconWrapActive),
+              ]}
+            >
               <NavIcon name="catalog" active={isActive("catalog")} />
             </View>
             <Text style={[styles.menuText, isActive("catalog") && styles.menuTextActive]}>Каталог</Text>
@@ -6230,7 +5675,12 @@ export default function App() {
 
           <TouchableOpacity onPress={() => setPage("favorites")} style={styles.menuButton} activeOpacity={0.7}>
             <View style={{ position: "relative" }}>
-              <View style={[styles.menuIconWrap, isActive("favorites") && (isDark ? styles.menuIconWrapActiveDark : styles.menuIconWrapActive)]}>
+              <View
+                style={[
+                  styles.menuIconWrap,
+                  isActive("favorites") && (isDark ? styles.menuIconWrapActiveDark : styles.menuIconWrapActive),
+                ]}
+              >
                 <NavIcon name="heart" active={isActive("favorites")} />
               </View>
               {favorites.length > 0 && (
@@ -6244,7 +5694,12 @@ export default function App() {
 
           <TouchableOpacity onPress={() => setPage("cart")} style={styles.menuButton} activeOpacity={0.7}>
             <View style={{ position: "relative" }}>
-              <View style={[styles.menuIconWrap, isActive("cart") && (isDark ? styles.menuIconWrapActiveDark : styles.menuIconWrapActive)]}>
+              <View
+                style={[
+                  styles.menuIconWrap,
+                  isActive("cart") && (isDark ? styles.menuIconWrapActiveDark : styles.menuIconWrapActive),
+                ]}
+              >
                 <NavIcon name="cart" active={isActive("cart")} />
               </View>
               {cart.length > 0 && (
@@ -6257,7 +5712,12 @@ export default function App() {
           </TouchableOpacity>
 
           <TouchableOpacity onPress={() => setPage("profile")} style={styles.menuButton} activeOpacity={0.7}>
-            <View style={[styles.menuIconWrap, isActive("profile") && (isDark ? styles.menuIconWrapActiveDark : styles.menuIconWrapActive)]}>
+            <View
+              style={[
+                styles.menuIconWrap,
+                isActive("profile") && (isDark ? styles.menuIconWrapActiveDark : styles.menuIconWrapActive),
+              ]}
+            >
               <NavIcon name="user" active={isActive("profile")} />
             </View>
             <Text style={[styles.menuText, isActive("profile") && styles.menuTextActive]}>Профиль</Text>
@@ -6280,1611 +5740,118 @@ export default function App() {
 
   return (
     <ThemeContext.Provider value={{ theme, toggleTheme }}>
-      <View style={[styles.root, theme === "dark" && page !== "home" && styles.rootDark, page === "home" && { backgroundColor: "#FFFFFF", padding: 0, margin: 0 }]}>
-        {page === "home" && (() => {
-          const w = typeof window !== "undefined" && window.innerWidth ? window.innerWidth : 390;
-          const s = w / 390;
-          return (
-            <Image
-              source={{ uri: BRUSH_TOP_URI }}
-              style={{
-                position: "absolute",
-                top: 0,
-                left: 0,
-                width: Math.round(118 * s),
-                height: Math.round(63 * s),
-                zIndex: 100,
-                margin: 0,
-                padding: 0,
-              }}
-              resizeMode="contain"
-            />
-          );
-        })()}
-        <View style={[styles.contentContainer, theme === "dark" && page !== "home" && styles.pageDark, page === "home" && { backgroundColor: "#FFFFFF", paddingBottom: 90, paddingLeft: 0, paddingRight: 0, paddingTop: 0, margin: 0 }]}>
+      <View
+        style={[
+          styles.root,
+          theme === "dark" && page !== "home" && styles.rootDark,
+          page === "home" && { backgroundColor: "#FFFFFF", padding: 0, margin: 0 },
+        ]}
+      >
+        {page === "home" &&
+          (() => {
+            const w = typeof window !== "undefined" && window.innerWidth ? window.innerWidth : 390;
+            const s = w / 390;
+            return (
+              <Image
+                source={{ uri: BRUSH_TOP_URI }}
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  width: Math.round(118 * s),
+                  height: Math.round(63 * s),
+                  zIndex: 100,
+                  margin: 0,
+                  padding: 0,
+                }}
+                resizeMode="contain"
+              />
+            );
+          })()}
+
+        <View style={[styles.contentContainer, page === "home" && { padding: 0, backgroundColor: "#FFFFFF" }]}>
           {content}
         </View>
-        <Menu />
+
+        {page !== "home" && page !== "product" && <Menu />}
         <OrderModal />
-        {/* Review modal — inline, чтобы не размонтировался при вводе */}
-        <Modal transparent visible={!!reviewPrompt} animationType="fade" onRequestClose={skipReviewPrompt}>
-          <View style={styles.modalOverlay}>
-            <View style={[styles.modalView, theme === "dark" && styles.modalViewDark]}>
-              <Text style={[styles.modalTitle, theme === "dark" && styles.textDark]}>Оцените заказ</Text>
-              {!!reviewPrompt && (
-                <Text style={[styles.brand, theme === "dark" && styles.textDark, { textAlign: "center", marginBottom: 8 }]}>
-                  {reviewPrompt.product.brand} {reviewPrompt.product.name}
+
+        {showAdmin && isAdmin && (
+          <Modal visible transparent animationType="slide" onRequestClose={() => setShowAdmin(false)}>
+            <View style={styles.modalOverlay}>
+              <View style={[styles.modalView, { maxHeight: "90%", width: "100%", maxWidth: 480 }]}>
+                <Text style={styles.modalTitle}>CRM</Text>
+                <Text style={{ marginBottom: 12, color: "#555", fontSize: 13 }}>
+                  Админ-панель временно в упрощённом режиме. Основные функции каталога и заказов работают через облако.
                 </Text>
-              )}
-              {!!reviewPrompt?.product?.image && (
-                <SmartImage
-                  uri={reviewPrompt.product.image}
-                  style={{ width: 100, height: 100, borderRadius: 16, alignSelf: "center", marginBottom: 12 }}
-                />
-              )}
-              <View style={[styles.stars, { justifyContent: "center" }]}>
-                {[1, 2, 3, 4, 5].map((s) => (
-                  <TouchableOpacity key={s} onPress={() => setReviewRating(s)} activeOpacity={0.7}>
-                    <Text
-                      style={[
-                        styles.star,
-                        reviewRating >= s
-                          ? theme === "dark"
-                            ? styles.starActiveDark
-                            : styles.starActive
-                          : styles.starInactive,
-                      ]}
-                    >
-                      {reviewRating >= s ? "★" : "☆"}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-              <TextInput
-                style={[
-                  styles.reviewInput,
-                  theme === "dark" && styles.inputDark,
-                  { minHeight: 90, textAlignVertical: "top" },
-                ]}
-                placeholder="Комментарий (необязательно)"
-                placeholderTextColor={theme === "dark" ? "#999" : "#888"}
-                value={reviewComment}
-                onChangeText={setReviewComment}
-                multiline
-                blurOnSubmit={false}
-                textAlignVertical="top"
-              />
-              <View style={styles.modalButtons}>
-                <TouchableOpacity style={styles.modalCancel} onPress={skipReviewPrompt}>
-                  <Text>Позже</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.modalConfirm} onPress={submitReviewPrompt}>
-                  <Text style={{ color: "#fff", fontWeight: "700" }}>Отправить</Text>
+                <TouchableOpacity style={styles.modalConfirm} onPress={() => setShowAdmin(false)}>
+                  <Text style={styles.buttonText}>Закрыть</Text>
                 </TouchableOpacity>
               </View>
+            </View>
+          </Modal>
+        )}
+
+        {toastVisible && toastMessage ? (
+          <View style={styles.toastContainer} pointerEvents="none">
+            <View style={styles.toast}>
+              <Text style={styles.toastText}>{toastMessage}</Text>
             </View>
           </View>
-        </Modal>
-
-        {/* CRM */}
-        {isAdmin && (
-          <Modal visible={showAdmin} animationType="none" transparent={false} onRequestClose={closeAdminPanel}>
-            <View style={[styles.page, theme === "dark" && styles.pageDark, { paddingTop: 40 }]}>
-              <Toast message={toastMessage} visible={toastVisible} onHide={hideToast} />
-              <TouchableOpacity onPress={() => setShowAdmin(false)} style={styles.closeAdmin}>
-                <Text style={[styles.closeAdminText, theme === "dark" && styles.textDark]}>✕ Закрыть CRM</Text>
-              </TouchableOpacity>
-
-              <ScrollView
-                style={{ flex: 1 }}
-                contentContainerStyle={{ paddingBottom: 60, flexGrow: 1 }}
-                keyboardShouldPersistTaps="always"
-                nestedScrollEnabled
-                keyboardDismissMode="none"
-              >
-                <Text style={[styles.pageTitle, theme === "dark" && styles.textDark]}>CRM</Text>
-
-                <View style={styles.adminStatCard}>
-                  <Text style={styles.adminStatWhite}>Товаров в каталоге: {products.length}</Text>
-                  <Text style={styles.adminStatWhite}>Промокодов: {promoCodes.length}</Text>
-                </View>
-
-                <TouchableOpacity
-                  style={[styles.adminButton, { backgroundColor: "#c0392b", marginBottom: 16 }]}
-                  onPress={resetAllTestData}
-                  activeOpacity={0.85}
-                >
-                  <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13, textAlign: "center" }}>
-                    🗑 Очистить ВСЕ данные пользователей
-                  </Text>
-                </TouchableOpacity>
-
-                <Text style={[styles.sectionTitle, theme === "dark" && styles.textDark]}>Заказы</Text>
-                <View
-                  style={{
-                    flexDirection: "row",
-                    alignItems: "center",
-                    justifyContent: "flex-end",
-                    marginBottom: 10,
-                    gap: 8,
-                  }}
-                >
-                  <TouchableOpacity
-                    style={[
-                      styles.productAdminBtn,
-                      {
-                        width: 42,
-                        height: 42,
-                        paddingHorizontal: 0,
-                        paddingVertical: 0,
-                        borderRadius: 12,
-                        alignItems: "center",
-                        justifyContent: "center",
-                      },
-                    ]}
-                    onPress={() => syncSharedOrders(true)}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={[styles.productAdminBtnText, { fontSize: 18 }]}>↻</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[
-                      styles.productAdminBtn,
-                      {
-                        width: 42,
-                        height: 42,
-                        paddingHorizontal: 0,
-                        paddingVertical: 0,
-                        borderRadius: 12,
-                        alignItems: "center",
-                        justifyContent: "center",
-                      },
-                    ]}
-                    onPress={() => setOrdersFullscreen(true)}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={[styles.productAdminBtnText, { fontSize: 16 }]}>⛶</Text>
-                  </TouchableOpacity>
-                </View>
-
-                {ordersStatsBar}
-
-                {/* Фильтры заказов — сворачиваемые */}
-                <View style={{ marginBottom: 12 }}>
-                  <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-                    <TouchableOpacity
-                      onPress={() => setShowOrderFilters((v) => !v)}
-                      style={{
-                        flexDirection: "row",
-                        alignItems: "center",
-                        backgroundColor: theme === "dark" ? "#2a2a2a" : "#eee",
-                        paddingVertical: 8,
-                        paddingHorizontal: 14,
-                        borderRadius: 16,
-                      }}
-                      activeOpacity={0.8}
-                    >
-                      <Text style={[{ fontSize: 13, fontWeight: "700", color: "#111" }, theme === "dark" && styles.textDark]}>
-                        {showOrderFilters ? "▾ Фильтры" : "▸ Фильтры"}
-                      </Text>
-                      {hasActiveOrderFilters && (
-                        <View
-                          style={{
-                            marginLeft: 8,
-                            backgroundColor: "#111",
-                            borderRadius: 10,
-                            minWidth: 18,
-                            height: 18,
-                            alignItems: "center",
-                            justifyContent: "center",
-                            paddingHorizontal: 5,
-                          }}
-                        >
-                          <Text style={{ color: "#fff", fontSize: 10, fontWeight: "800" }}>•</Text>
-                        </View>
-                      )}
-                    </TouchableOpacity>
-                  </View>
-
-                  {showOrderFilters && (
-                    <View>
-                      <TextInput
-                        style={[
-                          styles.searchInput,
-                          theme === "dark" && styles.inputDark,
-                          { marginBottom: 8 },
-                        ]}
-                        placeholder="Поиск: ФИО, телефон, @username, № заказа..."
-                        placeholderTextColor={theme === "dark" ? "#999" : "#888"}
-                        value={orderFilterQuery}
-                        onChangeText={setOrderFilterQuery}
-                      />
-                      <ScrollView
-                        horizontal
-                        showsHorizontalScrollIndicator={false}
-                        style={{ marginBottom: 8 }}
-                        contentContainerStyle={{ alignItems: "center", paddingRight: 8 }}
-                      >
-                        {PERIOD_OPTIONS.map((p) => (
-                          <TouchableOpacity
-                            key={p.key}
-                            style={[
-                              styles.filterChip,
-                              orderFilterPeriod === p.key && styles.filterChipActive,
-                            ]}
-                            onPress={() => setOrderFilterPeriod(p.key)}
-                          >
-                            <Text
-                              style={[
-                                { fontSize: 12, fontWeight: "600", color: "#555" },
-                                orderFilterPeriod === p.key && styles.filterChipTextActive,
-                              ]}
-                            >
-                              {p.label}
-                            </Text>
-                          </TouchableOpacity>
-                        ))}
-                      </ScrollView>
-                      <ScrollView
-                        horizontal
-                        showsHorizontalScrollIndicator={false}
-                        style={{ marginBottom: 8 }}
-                        contentContainerStyle={{ alignItems: "center", paddingRight: 8 }}
-                      >
-                        <TouchableOpacity
-                          style={[
-                            styles.filterChip,
-                            orderFilterStatus === "all" && styles.filterChipActive,
-                          ]}
-                          onPress={() => setOrderFilterStatus("all")}
-                        >
-                          <Text
-                            style={[
-                              { fontSize: 12, fontWeight: "600", color: "#555" },
-                              orderFilterStatus === "all" && styles.filterChipTextActive,
-                            ]}
-                          >
-                            Все статусы
-                          </Text>
-                        </TouchableOpacity>
-                        {ORDER_STATUSES.map((st) => (
-                          <TouchableOpacity
-                            key={st}
-                            style={[
-                              styles.filterChip,
-                              orderFilterStatus === st && styles.filterChipActive,
-                            ]}
-                            onPress={() => setOrderFilterStatus(st)}
-                          >
-                            <Text
-                              style={[
-                                { fontSize: 12, fontWeight: "600", color: "#555" },
-                                orderFilterStatus === st && styles.filterChipTextActive,
-                              ]}
-                            >
-                              {st}
-                            </Text>
-                          </TouchableOpacity>
-                        ))}
-                      </ScrollView>
-                      <ScrollView
-                        horizontal
-                        showsHorizontalScrollIndicator={false}
-                        contentContainerStyle={{ alignItems: "center", paddingRight: 8 }}
-                      >
-                        <TouchableOpacity
-                          style={[
-                            styles.filterChip,
-                            orderFilterUtm === "all" && styles.filterChipActive,
-                          ]}
-                          onPress={() => setOrderFilterUtm("all")}
-                        >
-                          <Text
-                            style={[
-                              { fontSize: 12, fontWeight: "600", color: "#555" },
-                              orderFilterUtm === "all" && styles.filterChipTextActive,
-                            ]}
-                          >
-                            Все источники
-                          </Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          style={[
-                            styles.filterChip,
-                            orderFilterUtm === "__none__" && styles.filterChipActive,
-                          ]}
-                          onPress={() => setOrderFilterUtm("__none__")}
-                        >
-                          <Text
-                            style={[
-                              { fontSize: 12, fontWeight: "600", color: "#555" },
-                              orderFilterUtm === "__none__" && styles.filterChipTextActive,
-                            ]}
-                          >
-                            Без метки
-                          </Text>
-                        </TouchableOpacity>
-                        {utmSourceOptions.map((src) => (
-                          <TouchableOpacity
-                            key={src}
-                            style={[
-                              styles.filterChip,
-                              orderFilterUtm === src && styles.filterChipActive,
-                            ]}
-                            onPress={() => setOrderFilterUtm(src)}
-                          >
-                            <Text
-                              style={[
-                                { fontSize: 12, fontWeight: "600", color: "#555" },
-                                orderFilterUtm === src && styles.filterChipTextActive,
-                              ]}
-                              numberOfLines={1}
-                            >
-                              {src}
-                            </Text>
-                          </TouchableOpacity>
-                        ))}
-                      </ScrollView>
-                      {hasActiveOrderFilters && (
-                        <TouchableOpacity
-                          onPress={resetOrderFilters}
-                          style={{ marginTop: 8, alignSelf: "flex-start" }}
-                        >
-                          <Text style={{ fontSize: 12, fontWeight: "700", color: "#111" }}>
-                            Сбросить фильтры
-                          </Text>
-                        </TouchableOpacity>
-                      )}
-                    </View>
-                  )}
-                </View>
-
-                {adminOrders.length === 0 ? (
-                  <Text style={[styles.empty, theme === "dark" && styles.textDark, { marginBottom: 16 }]}>
-                    Заказов пока нет
-                  </Text>
-                ) : filteredAdminOrders.length === 0 ? (
-                  <Text style={[styles.empty, theme === "dark" && styles.textDark, { marginBottom: 16 }]}>
-                    Нет заказов по выбранным фильтрам
-                  </Text>
-                ) : (
-                  <ScrollView horizontal showsHorizontalScrollIndicator nestedScrollEnabled style={{ marginBottom: 16 }}>
-                    <View style={styles.crmTable}>
-                    <ScrollView
-                      nestedScrollEnabled
-                      style={{ maxHeight: 520 }}
-                      showsVerticalScrollIndicator
-                    >
-                      {/* header */}
-                      <View style={[styles.crmTableRow, styles.crmTableHeader]}>
-                        <Text style={[styles.crmTh, { width: 40 }]}>№</Text>
-                        <Text style={[styles.crmTh, { width: 72 }]}>ID</Text>
-                        <Text style={[styles.crmTh, { width: 120 }]}>Дата</Text>
-                        <Text style={[styles.crmTh, { width: 140 }]}>Статус</Text>
-                        <Text style={[styles.crmTh, { width: 200 }]}>Клиент</Text>
-                        <Text style={[styles.crmTh, { width: 130 }]}>Трек</Text>
-                        <Text style={[styles.crmTh, { width: 180 }]}>Товар</Text>
-                        <Text style={[styles.crmTh, { width: 80 }]}>Сумма</Text>
-                        <Text style={[styles.crmTh, { width: 110 }]}>Источник</Text>
-                      </View>
-                      {filteredAdminOrders.slice(0, 50).map((order, idx) => {
-                        const itemsLabel = (order.items || [])
-                          .map((i) => `${i.brand || ""} ${i.name}${i.size ? ` (${i.size})` : ""}`.trim())
-                          .join(", ");
-                        const dateLabel = order.date
-                          ? new Date(order.date).toLocaleString("ru-RU", {
-                              day: "2-digit",
-                              month: "2-digit",
-                              year: "2-digit",
-                              hour: "2-digit",
-                              minute: "2-digit",
-                            })
-                          : "—";
-                        const isOpen = openStatusId === order.id;
-                        return (
-                          <View
-                            key={order.id}
-                            style={[
-                              styles.crmTableRow,
-                              idx % 2 === 1 && styles.crmTableRowAlt,
-                              theme === "dark" && { borderBottomColor: "#333" },
-                              isOpen && { zIndex: 100, elevation: 20 },
-                            ]}
-                          >
-                            <Text style={[styles.crmTd, { width: 40, fontWeight: "700", color: "#888" }]} numberOfLines={1}>
-                              {idx + 1}
-                            </Text>
-                            <Text style={[styles.crmTd, { width: 72, fontWeight: "700" }]} numberOfLines={1}>
-                              {order.id}
-                            </Text>
-                            <Text style={[styles.crmTd, { width: 120 }]} numberOfLines={2}>
-                              {dateLabel}
-                            </Text>
-                            <View
-                              style={{
-                                width: 140,
-                                paddingVertical: 6,
-                                paddingHorizontal: 4,
-                                alignItems: "center",
-                                justifyContent: "center",
-                                position: "relative",
-                                zIndex: isOpen ? 200 : 1,
-                              }}
-                            >
-                              <TouchableOpacity
-                                style={[
-                                  styles.crmStatusBtn,
-                                  {
-                                    backgroundColor: getStatusBadgeStyle(order.status || "Новый").backgroundColor,
-                                    borderColor: getStatusBadgeStyle(order.status || "Новый").borderColor,
-                                  },
-                                ]}
-                                onPress={() => setOpenStatusId(isOpen ? null : order.id)}
-                                activeOpacity={0.85}
-                              >
-                                <Text
-                                  style={[
-                                    styles.crmStatusBtnText,
-                                    { color: getStatusBadgeStyle(order.status || "Новый").color },
-                                  ]}
-                                  numberOfLines={1}
-                                >
-                                  {order.status || "Новый"} ▾
-                                </Text>
-                              </TouchableOpacity>
-                              {isOpen && (
-                                <View style={styles.crmStatusMenu}>
-                                  {ORDER_STATUSES.map((st, stIdx) => (
-                                    <TouchableOpacity
-                                      key={st}
-                                      style={[
-                                        styles.crmStatusMenuItem,
-                                        order.status === st && styles.crmStatusMenuItemActive,
-                                        stIdx === ORDER_STATUSES.length - 1 && { borderBottomWidth: 0 },
-                                      ]}
-                                      onPress={() => {
-                                        changeStatus(order.id, st);
-                                        setOpenStatusId(null);
-                                      }}
-                                    >
-                                      <Text
-                                        style={[
-                                          styles.crmStatusMenuText,
-                                          order.status === st && styles.crmStatusMenuTextActive,
-                                        ]}
-                                      >
-                                        {st}
-                                      </Text>
-                                    </TouchableOpacity>
-                                  ))}
-                                </View>
-                              )}
-                            </View>
-                            <View style={{ width: 200, paddingVertical: 6, paddingHorizontal: 6, alignItems: "center" }}>
-                              <Text style={styles.crmTdStrong} numberOfLines={1}>
-                                {order.fullName || "—"}
-                              </Text>
-                              <Text style={styles.crmTdMuted} numberOfLines={1}>
-                                {order.phone || "—"}
-                              </Text>
-                              <Text style={styles.crmTdMuted} numberOfLines={1}>
-                                {order.tgUsername ? `@${order.tgUsername}` : "—"}
-                              </Text>
-                              <Text style={styles.crmTdMuted} numberOfLines={2}>
-                                {order.address || "—"}
-                              </Text>
-                            </View>
-                            <View style={{ width: 130, paddingVertical: 4, paddingHorizontal: 4, alignItems: "center", justifyContent: "center" }}>
-                              <TextInput
-                                style={[styles.crmTrackInput, { width: "100%" }]}
-                                placeholder="Трек-номер"
-                                placeholderTextColor="#999"
-                                value={order.trackingNumber || ""}
-                                onChangeText={(t) => {
-                                  setAdminOrders((prev) =>
-                                    prev.map((o) =>
-                                      String(o.id) === String(order.id)
-                                        ? { ...o, trackingNumber: t }
-                                        : o
-                                    )
-                                  );
-                                }}
-                                onBlur={() => {
-                                  const cur = (order.trackingNumber || "").trim();
-                                  updateTracking(order.id, cur);
-                                }}
-                                onSubmitEditing={() => {
-                                  const cur = (order.trackingNumber || "").trim();
-                                  updateTracking(order.id, cur);
-                                }}
-                                blurOnSubmit
-                                returnKeyType="done"
-                              />
-                            </View>
-                            <Text style={[styles.crmTd, { width: 180 }]} numberOfLines={3}>
-                              {itemsLabel || "—"}
-                            </Text>
-                            <Text style={[styles.crmTd, { width: 80, fontWeight: "700" }]}>
-                              {order.finalTotal != null ? `${order.finalTotal}` : "—"}
-                            </Text>
-                            <Text style={[styles.crmTd, { width: 110, fontSize: 11 }]} numberOfLines={2}>
-                              {order.utmSource || "—"}
-                            </Text>
-                          </View>
-                        );
-                      })}
-                    </ScrollView>
-                    </View>
-                  </ScrollView>
-                )}
-
-                <Text style={[styles.sectionTitle, theme === "dark" && styles.textDark]}>Промокоды</Text>
-                <View style={[styles.promoFormCard, theme === "dark" && styles.productEditDark]}>
-                  <Text style={[styles.crmMuted, theme === "dark" && styles.textDark, { marginBottom: 8 }]}>
-                    Новый промокод
-                  </Text>
-                  <TextInput
-                    style={[styles.editInput, theme === "dark" && styles.inputDark]}
-                    placeholder="Код (SAVE10)"
-                    placeholderTextColor="#999"
-                    value={localPromo.code}
-                    onChangeText={(t) => setLocalPromo((f) => ({ ...f, code: t }))}
-                    autoCapitalize="characters"
-                    blurOnSubmit={false}
-                  />
-                  <TextInput
-                    style={[styles.editInput, theme === "dark" && styles.inputDark]}
-                    placeholder="Скидка %"
-                    placeholderTextColor="#999"
-                    value={localPromo.discount}
-                    onChangeText={(t) => setLocalPromo((f) => ({ ...f, discount: t.replace(/\D/g, "") }))}
-                    keyboardType="numeric"
-                    blurOnSubmit={false}
-                  />
-                  <TextInput
-                    style={[styles.editInput, theme === "dark" && styles.inputDark]}
-                    placeholder="Кол-во использований (напр. 50)"
-                    placeholderTextColor="#999"
-                    value={localPromo.maxUses}
-                    onChangeText={(t) => setLocalPromo((f) => ({ ...f, maxUses: t.replace(/\D/g, "") }))}
-                    keyboardType="numeric"
-                    blurOnSubmit={false}
-                  />
-                  <TextInput
-                    style={[styles.editInput, theme === "dark" && styles.inputDark]}
-                    placeholder="Описание (необязательно)"
-                    placeholderTextColor="#999"
-                    value={localPromo.description}
-                    onChangeText={(t) => setLocalPromo((f) => ({ ...f, description: t }))}
-                    blurOnSubmit={false}
-                  />
-                  <TouchableOpacity
-                    style={styles.addBtn}
-                    onPress={() => addPromoFromForm(localPromo)}
-                    activeOpacity={0.85}
-                  >
-                    <Text style={styles.buttonText}>+ Создать промокод</Text>
-                  </TouchableOpacity>
-                </View>
-
-                {promoCodes.map((promo) => {
-                  const used = Number(promo.usedCount) || 0;
-                  const maxU = promo.maxUses != null ? Number(promo.maxUses) : 999999;
-                  const left = Math.max(0, maxU - used);
-                  return (
-                    <View key={promo.code} style={[styles.productEdit, theme === "dark" && styles.productEditDark]}>
-                      <Text style={[styles.productName, theme === "dark" && styles.textDark]}>
-                        {promo.code} — {promo.discount}%
-                      </Text>
-                      {!!promo.description && (
-                        <Text style={[styles.brand, theme === "dark" && styles.textDark]}>{promo.description}</Text>
-                      )}
-                      <Text style={[styles.crmMuted, theme === "dark" && styles.textDark]}>
-                        Использовано: {used} / {maxU >= 999999 ? "∞" : maxU} · Осталось: {maxU >= 999999 ? "∞" : left}
-                      </Text>
-                      <View style={styles.editActions}>
-                        <TouchableOpacity onPress={() => deletePromoCode(promo.code)}>
-                          <Text style={[styles.editAction, { color: "red" }]}>🗑 Удалить</Text>
-                        </TouchableOpacity>
-                      </View>
-                    </View>
-                  );
-                })}
-
-                <Text style={[styles.sectionTitle, theme === "dark" && styles.textDark]}>Управление товарами</Text>
-                <TouchableOpacity style={styles.addBtn} onPress={startAddProduct}>
-                  <Text style={styles.buttonText}>+ Добавить товар</Text>
-                </TouchableOpacity>
-
-                {/* ===== Импорт из Google Таблицы (только новые) ===== */}
-                <View
-                  style={{
-                    marginTop: 14,
-                    marginBottom: 14,
-                    padding: 14,
-                    borderRadius: 16,
-                    backgroundColor: theme === "dark" ? "#1f1f1f" : "#f0f0f0",
-                    borderWidth: 1,
-                    borderColor: theme === "dark" ? "#333" : "#e0e0e0",
-                  }}
-                >
-                  <Text
-                    style={[
-                      styles.sectionTitle,
-                      theme === "dark" && styles.textDark,
-                      { fontSize: 15, marginTop: 0, marginBottom: 8 },
-                    ]}
-                  >
-                    Импорт из Google Таблицы
-                  </Text>
-
-                  <TextInput
-                    style={[styles.editInput, theme === "dark" && styles.inputDark]}
-                    value={gsheetUrl}
-                    onChangeText={setGsheetUrl}
-                    placeholder="Ссылка на CSV (Файл → Опубликовать в интернете)"
-                    placeholderTextColor="#999"
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    blurOnSubmit={false}
-                  />
-
-                  <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
-                    <TouchableOpacity
-                      style={[styles.saveBtn, { flex: 1, backgroundColor: "#555" }]}
-                      onPress={saveGsheetUrl}
-                      activeOpacity={0.85}
-                    >
-                      <Text style={styles.buttonText}>Сохранить ссылку</Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      style={[
-                        styles.saveBtn,
-                        { flex: 1, opacity: importing ? 0.55 : 1 },
-                      ]}
-                      onPress={importNewProductsFromSheet}
-                      disabled={importing}
-                      activeOpacity={0.85}
-                    >
-                      <Text style={styles.buttonText}>
-                        {importing ? "Импорт…" : "Импортировать новые"}
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-
-                </View>
-
-                <TextInput
-                  style={[styles.editInput, theme === "dark" && styles.inputDark, { marginBottom: 10 }]}
-                  placeholder="🔍 Поиск по названию / бренду..."
-                  placeholderTextColor="#999"
-                  value={productSearch}
-                  onChangeText={setProductSearch}
-                  blurOnSubmit={false}
-                />
-
-                {localProduct && (
-                  <View style={[styles.productEdit, theme === "dark" && styles.productEditDark, { borderWidth: 2, borderColor: "#111" }]}>
-                    <Text style={[styles.productName, theme === "dark" && styles.textDark]}>
-                      {localIsNew ? "Новый товар" : "Редактирование"}
-                    </Text>
-                    <TextInput
-                      style={[styles.editInput, theme === "dark" && styles.inputDark]}
-                      value={localProduct.brand || ""}
-                      onChangeText={(t) => setLocalProduct((d) => ({ ...d, brand: t }))}
-                      placeholder="Бренд"
-                      placeholderTextColor="#999"
-                      blurOnSubmit={false}
-                    />
-                    <TextInput
-                      style={[styles.editInput, theme === "dark" && styles.inputDark]}
-                      value={localProduct.name || ""}
-                      onChangeText={(t) => setLocalProduct((d) => ({ ...d, name: t }))}
-                      placeholder="Название"
-                      placeholderTextColor="#999"
-                      blurOnSubmit={false}
-                    />
-                    <TextInput
-                      style={[styles.editInput, theme === "dark" && styles.inputDark]}
-                      value={localProduct.price || ""}
-                      onChangeText={(t) => setLocalProduct((d) => ({ ...d, price: t }))}
-                      placeholder="Цена"
-                      placeholderTextColor="#999"
-                      keyboardType="numeric"
-                      blurOnSubmit={false}
-                    />
-                    <TextInput
-                      style={[styles.editInput, theme === "dark" && styles.inputDark]}
-                      value={localProduct.oldPrice || ""}
-                      onChangeText={(t) => setLocalProduct((d) => ({ ...d, oldPrice: t }))}
-                      placeholder="Старая цена (необязательно)"
-                      placeholderTextColor="#999"
-                      keyboardType="numeric"
-                      blurOnSubmit={false}
-                    />
-                    <TextInput
-                      style={[styles.editInput, theme === "dark" && styles.inputDark]}
-                      value={localProduct.description || ""}
-                      onChangeText={(t) => setLocalProduct((d) => ({ ...d, description: t }))}
-                      placeholder="Описание"
-                      placeholderTextColor="#999"
-                      multiline
-                      blurOnSubmit={false}
-                      textAlignVertical="top"
-                    />
-                    <TextInput
-                      style={[styles.editInput, theme === "dark" && styles.inputDark]}
-                      value={localProduct.sizes || ""}
-                      onChangeText={(t) => setLocalProduct((d) => ({ ...d, sizes: t }))}
-                      placeholder="Размеры через запятую"
-                      placeholderTextColor="#999"
-                      blurOnSubmit={false}
-                    />
-                    <Text style={[{ fontSize: 13, fontWeight: "700", marginBottom: 6, color: "#111" }, theme === "dark" && styles.textDark]}>
-                      Фото ({(localProduct.images || (localProduct.image ? [localProduct.image] : [])).length})
-                    </Text>
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
-                      {(localProduct.images && localProduct.images.length
-                        ? localProduct.images
-                        : localProduct.image
-                        ? [localProduct.image]
-                        : []
-                      ).map((uri, idx) => (
-                        <View key={`draft-img-${idx}`} style={{ marginRight: 8, width: 100 }}>
-                          <SmartImage uri={uri} style={{ width: 100, height: 100, borderRadius: 12 }} />
-                          <TouchableOpacity
-                            onPress={() =>
-                              setLocalProduct((d) => {
-                                if (!d) return d;
-                                const list = (d.images && d.images.length
-                                  ? [...d.images]
-                                  : d.image
-                                  ? [d.image]
-                                  : []
-                                ).filter((_, i) => i !== idx);
-                                return { ...d, images: list, image: list[0] || "" };
-                              })
-                            }
-                            style={{
-                              marginTop: 4,
-                              backgroundColor: "#FEE2E2",
-                              borderRadius: 8,
-                              paddingVertical: 4,
-                              alignItems: "center",
-                            }}
-                          >
-                            <Text style={{ color: "#991B1B", fontSize: 11, fontWeight: "700" }}>Удалить</Text>
-                          </TouchableOpacity>
-                        </View>
-                      ))}
-                    </ScrollView>
-                    <TextInput
-                      style={[styles.editInput, theme === "dark" && styles.inputDark]}
-                      value={localProduct._imageUrlInput || ""}
-                      onChangeText={(t) => setLocalProduct((d) => ({ ...d, _imageUrlInput: t }))}
-                      placeholder="Вставить URL фото и нажать +"
-                      placeholderTextColor="#999"
-                      blurOnSubmit={false}
-                      autoCapitalize="none"
-                    />
-                    <View style={{ flexDirection: "row", gap: 8, marginBottom: 8 }}>
-                      <TouchableOpacity
-                        style={[styles.addBtn, { flex: 1, marginTop: 0 }]}
-                        onPress={() => {
-                          const url = (localProduct._imageUrlInput || "").trim();
-                          if (!url) return;
-                          setLocalProduct((d) => {
-                            if (!d) return d;
-                            const list = d.images && d.images.length ? [...d.images] : d.image ? [d.image] : [];
-                            if (!list.includes(url)) list.push(url);
-                            return { ...d, images: list, image: list[0] || "", _imageUrlInput: "" };
-                          });
-                        }}
-                      >
-                        <Text style={styles.buttonText}>+ URL</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={[styles.addBtn, { flex: 1, marginTop: 0 }]}
-                        onPress={() =>
-                          pickProductImage((dataUrl) => {
-                            setLocalProduct((d) => {
-                              if (!d) return d;
-                              const list = d.images && d.images.length ? [...d.images] : d.image ? [d.image] : [];
-                              list.push(dataUrl);
-                              return { ...d, images: list, image: list[0] || "" };
-                            });
-                          })
-                        }
-                      >
-                        <Text style={styles.buttonText}>📷 Файл</Text>
-                      </TouchableOpacity>
-                    </View>
-                    <View style={{ flexDirection: "row", gap: 8 }}>
-                      <TouchableOpacity
-                        style={[styles.saveBtn, { flex: 1 }]}
-                        onPress={() => {
-                          saveProductDraft(localProduct, localIsNew);
-                          setLocalProduct(null);
-                        }}
-                      >
-                        <Text style={styles.buttonText}>Сохранить</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={[styles.saveBtn, { flex: 1, backgroundColor: "#888" }]}
-                        onPress={() => {
-                          setLocalProduct(null);
-                          cancelProductDraft();
-                        }}
-                      >
-                        <Text style={styles.buttonText}>Отмена</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                )}
-
-                <ScrollView
-                  style={{ maxHeight: 480, marginBottom: 12 }}
-                  nestedScrollEnabled
-                  showsVerticalScrollIndicator
-                  keyboardShouldPersistTaps="always"
-                >
-                  {products
-                    .filter((p) => {
-                      if (!productSearch.trim()) return true;
-                      const q = productSearch.trim().toLowerCase();
-                      return (
-                        (p.name || "").toLowerCase().includes(q) ||
-                        (p.brand || "").toLowerCase().includes(q)
-                      );
-                    })
-                    .slice()
-                    .sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0))
-                    .map((p) => (
-                      <View key={p.id} style={[styles.productEdit, theme === "dark" && styles.productEditDark]}>
-                        <View style={{ flexDirection: "row", alignItems: "center" }}>
-                          {!!p.image && (
-                            <SmartImage uri={p.image} style={{ width: 56, height: 56, borderRadius: 10, marginRight: 10 }} />
-                          )}
-                          <View style={{ flex: 1 }}>
-                            <Text style={[styles.productName, theme === "dark" && styles.textDark]}>
-                              {p.brand} {p.name}
-                              {p.pinned ? " · закреплено" : ""}
-                              {p.hidden ? " · скрыт" : ""}
-                            </Text>
-                            <Text style={[styles.price, theme === "dark" && styles.textDark]}>{money(p.price)}</Text>
-                          </View>
-                        </View>
-                        <View style={styles.productAdminActions}>
-                          <TouchableOpacity
-                            style={[styles.productAdminBtn, p.pinned && styles.productAdminBtnActive]}
-                            onPress={() => togglePinProduct(p.id)}
-                            activeOpacity={0.8}
-                          >
-                            <Text style={styles.productAdminBtnText}>
-                              {p.pinned ? "Открепить" : "Закрепить"}
-                            </Text>
-                          </TouchableOpacity>
-                          <TouchableOpacity
-                            style={[styles.productAdminBtn, p.hidden && styles.productAdminBtnActive]}
-                            onPress={() => toggleHideProduct(p.id)}
-                            activeOpacity={0.8}
-                          >
-                            <Text style={styles.productAdminBtnText}>
-                              {p.hidden ? "Показать" : "Скрыть"}
-                            </Text>
-                          </TouchableOpacity>
-                          <TouchableOpacity
-                            style={styles.productAdminBtn}
-                            onPress={() => startEditProduct(p)}
-                            activeOpacity={0.8}
-                          >
-                            <Text style={styles.productAdminBtnText}>Редактировать</Text>
-                          </TouchableOpacity>
-                          <TouchableOpacity
-                            style={[styles.productAdminBtn, styles.productAdminBtnDanger]}
-                            onPress={() => deleteProduct(p.id)}
-                            activeOpacity={0.8}
-                          >
-                            <Text style={styles.productAdminBtnText}>Удалить</Text>
-                          </TouchableOpacity>
-                        </View>
-                      </View>
-                    ))}
-                </ScrollView>
-
-                <Text style={[styles.sectionTitle, theme === "dark" && styles.textDark]}>Модерация отзывов</Text>
-                {(() => {
-                  const pending = [];
-                  products.forEach((p) => {
-                    (p.ratings || []).forEach((r, idx) => {
-                      if (r.approved === false) {
-                        pending.push({ product: p, review: r, index: idx });
-                      }
-                    });
-                  });
-                  if (pending.length === 0) {
-                    return (
-                      <Text style={[styles.empty, theme === "dark" && styles.textDark]}>Нет отзывов на проверке</Text>
-                    );
-                  }
-                  return pending.map(({ product, review, index }) => (
-                    <View key={`${product.id}-${index}`} style={[styles.productEdit, theme === "dark" && styles.productEditDark]}>
-                      <Text style={[styles.productName, theme === "dark" && styles.textDark]}>
-                        {product.brand} {product.name}
-                      </Text>
-                      <Text style={[styles.reviewRating, theme === "dark" && styles.textDark]}>
-                        {"★".repeat(review.rating)}{"☆".repeat(5 - review.rating)}
-                      </Text>
-                      <Text style={[styles.reviewComment, theme === "dark" && styles.textDark]}>
-                        {review.comment || "(без текста)"}
-                      </Text>
-                      <Text style={[styles.reviewDate, theme === "dark" && styles.textDark]}>
-                        {review.userName || "Пользователь"} · {new Date(review.date).toLocaleDateString("ru-RU")}
-                      </Text>
-                      <View style={{ flexDirection: "row", marginTop: 8, gap: 8 }}>
-                        <TouchableOpacity
-                          style={[styles.saveBtn, { flex: 1, backgroundColor: "#22c55e" }]}
-                          onPress={() => moderateReview(product.id, index, true)}
-                        >
-                          <Text style={styles.buttonText}>✓ Одобрить</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          style={[styles.saveBtn, { flex: 1, backgroundColor: "#ef4444" }]}
-                          onPress={() => moderateReview(product.id, index, false)}
-                        >
-                          <Text style={styles.buttonText}>✕ Отклонить</Text>
-                        </TouchableOpacity>
-                      </View>
-                    </View>
-                  ));
-                })()}
-
-                <Text style={[styles.sectionTitle, theme === "dark" && styles.textDark]}>Рассылка</Text>
-                <Text style={[styles.crmMuted, theme === "dark" && styles.textDark, { marginBottom: 8 }]}>
-                  База: {broadcastAudience} чел.
-                </Text>
-                <TextInput
-                  style={[styles.broadcastInput, theme === "dark" && styles.inputDark]}
-                  placeholder="Текст сообщения"
-                  placeholderTextColor={theme === "dark" ? "#999" : "#888"}
-                  value={localBroadcast}
-                  onChangeText={setLocalBroadcast}
-                  multiline
-                  blurOnSubmit={false}
-                  textAlignVertical="top"
-                />
-                <TextInput
-                  style={[styles.editInput, theme === "dark" && styles.inputDark]}
-                  placeholder="URL фото (необязательно)"
-                  placeholderTextColor="#999"
-                  value={broadcastPhoto}
-                  onChangeText={setBroadcastPhoto}
-                  autoCapitalize="none"
-                  blurOnSubmit={false}
-                />
-                <TextInput
-                  style={[styles.editInput, theme === "dark" && styles.inputDark]}
-                  placeholder="Текст кнопки (необязательно)"
-                  placeholderTextColor="#999"
-                  value={broadcastBtnText}
-                  onChangeText={setBroadcastBtnText}
-                  blurOnSubmit={false}
-                />
-                <TextInput
-                  style={[styles.editInput, theme === "dark" && styles.inputDark]}
-                  placeholder="Ссылка кнопки https://..."
-                  placeholderTextColor="#999"
-                  value={broadcastBtnUrl}
-                  onChangeText={setBroadcastBtnUrl}
-                  autoCapitalize="none"
-                  blurOnSubmit={false}
-                />
-                <TouchableOpacity
-                  style={[styles.broadcastBtn, broadcastSending && { opacity: 0.6 }]}
-                  onPress={handleSendBroadcast}
-                  disabled={broadcastSending}
-                >
-                  <Text style={styles.buttonText}>
-                    {broadcastSending
-                      ? "Отправка…"
-                      : `📨 Отправить рассылку (${broadcastAudience})`}
-                  </Text>
-                </TouchableOpacity>
-              </ScrollView>
-            </View>
-          </Modal>
-        )}
-
-        {/* Полноэкранная таблица заказов (удобно на ПК) */}
-        {isAdmin && (
-          <Modal
-            visible={ordersFullscreen}
-            animationType="fade"
-            transparent={false}
-            onRequestClose={() => setOrdersFullscreen(false)}
-          >
-            <View
-              style={[
-                styles.page,
-                theme === "dark" && styles.pageDark,
-                { paddingTop: 16, paddingBottom: 16 },
-              ]}
-            >
-              <View
-                style={{
-                  flexDirection: "row",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  marginBottom: 12,
-                  paddingHorizontal: 4,
-                }}
-              >
-                <Text
-                  style={[
-                    styles.pageTitle,
-                    theme === "dark" && styles.textDark,
-                    { marginTop: 0, marginBottom: 0, fontSize: 22 },
-                  ]}
-                >
-                  Заказы · полный экран
-                </Text>
-                <View style={{ flexDirection: "row", gap: 8 }}>
-                  <TouchableOpacity
-                    style={[
-                      styles.productAdminBtn,
-                      {
-                        width: 42,
-                        height: 42,
-                        paddingHorizontal: 0,
-                        paddingVertical: 0,
-                        borderRadius: 12,
-                        alignItems: "center",
-                        justifyContent: "center",
-                      },
-                    ]}
-                    onPress={() => syncSharedOrders(true)}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={[styles.productAdminBtnText, { fontSize: 18 }]}>↻</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[
-                      styles.productAdminBtn,
-                      {
-                        width: 42,
-                        height: 42,
-                        paddingHorizontal: 0,
-                        paddingVertical: 0,
-                        borderRadius: 12,
-                        alignItems: "center",
-                        justifyContent: "center",
-                        backgroundColor: "#333",
-                      },
-                    ]}
-                    onPress={() => setOrdersFullscreen(false)}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={[styles.productAdminBtnText, { fontSize: 16 }]}>✕</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-
-              {/* Фильтры (полный экран) — сворачиваемые */}
-              <View style={{ marginBottom: 10, paddingHorizontal: 4 }}>
-                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-                  <TouchableOpacity
-                    onPress={() => setShowOrderFilters((v) => !v)}
-                    style={{
-                      flexDirection: "row",
-                      alignItems: "center",
-                      backgroundColor: theme === "dark" ? "#2a2a2a" : "#eee",
-                      paddingVertical: 8,
-                      paddingHorizontal: 14,
-                      borderRadius: 16,
-                    }}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={[{ fontSize: 13, fontWeight: "700", color: "#111" }, theme === "dark" && styles.textDark]}>
-                      {showOrderFilters ? "▾ Фильтры" : "▸ Фильтры"}
-                    </Text>
-                    {hasActiveOrderFilters && (
-                      <View
-                        style={{
-                          marginLeft: 8,
-                          backgroundColor: "#111",
-                          borderRadius: 10,
-                          minWidth: 18,
-                          height: 18,
-                          alignItems: "center",
-                          justifyContent: "center",
-                          paddingHorizontal: 5,
-                        }}
-                      >
-                        <Text style={{ color: "#fff", fontSize: 10, fontWeight: "800" }}>•</Text>
-                      </View>
-                    )}
-                  </TouchableOpacity>
-                </View>
-
-                {showOrderFilters && (
-                  <View>
-                    <TextInput
-                      style={[
-                        styles.searchInput,
-                        theme === "dark" && styles.inputDark,
-                        { marginBottom: 8 },
-                      ]}
-                      placeholder="Поиск: ФИО, телефон, @username, № заказа..."
-                      placeholderTextColor={theme === "dark" ? "#999" : "#888"}
-                      value={orderFilterQuery}
-                      onChangeText={setOrderFilterQuery}
-                    />
-                    <ScrollView
-                      horizontal
-                      showsHorizontalScrollIndicator={false}
-                      style={{ marginBottom: 8 }}
-                      contentContainerStyle={{ alignItems: "center", paddingRight: 8 }}
-                    >
-                      {PERIOD_OPTIONS.map((p) => (
-                        <TouchableOpacity
-                          key={`fs-period-${p.key}`}
-                          style={[
-                            styles.filterChip,
-                            orderFilterPeriod === p.key && styles.filterChipActive,
-                          ]}
-                          onPress={() => setOrderFilterPeriod(p.key)}
-                        >
-                          <Text
-                            style={[
-                              { fontSize: 12, fontWeight: "600", color: "#555" },
-                              orderFilterPeriod === p.key && styles.filterChipTextActive,
-                            ]}
-                          >
-                            {p.label}
-                          </Text>
-                        </TouchableOpacity>
-                      ))}
-                    </ScrollView>
-                    <ScrollView
-                      horizontal
-                      showsHorizontalScrollIndicator={false}
-                      style={{ marginBottom: 8 }}
-                      contentContainerStyle={{ alignItems: "center", paddingRight: 8 }}
-                    >
-                      <TouchableOpacity
-                        style={[
-                          styles.filterChip,
-                          orderFilterStatus === "all" && styles.filterChipActive,
-                        ]}
-                        onPress={() => setOrderFilterStatus("all")}
-                      >
-                        <Text
-                          style={[
-                            { fontSize: 12, fontWeight: "600", color: "#555" },
-                            orderFilterStatus === "all" && styles.filterChipTextActive,
-                          ]}
-                        >
-                          Все статусы
-                        </Text>
-                      </TouchableOpacity>
-                      {ORDER_STATUSES.map((st) => (
-                        <TouchableOpacity
-                          key={`fs-st-${st}`}
-                          style={[
-                            styles.filterChip,
-                            orderFilterStatus === st && styles.filterChipActive,
-                          ]}
-                          onPress={() => setOrderFilterStatus(st)}
-                        >
-                          <Text
-                            style={[
-                              { fontSize: 12, fontWeight: "600", color: "#555" },
-                              orderFilterStatus === st && styles.filterChipTextActive,
-                            ]}
-                          >
-                            {st}
-                          </Text>
-                        </TouchableOpacity>
-                      ))}
-                    </ScrollView>
-                    <ScrollView
-                      horizontal
-                      showsHorizontalScrollIndicator={false}
-                      contentContainerStyle={{ alignItems: "center", paddingRight: 8 }}
-                    >
-                      <TouchableOpacity
-                        style={[
-                          styles.filterChip,
-                          orderFilterUtm === "all" && styles.filterChipActive,
-                        ]}
-                        onPress={() => setOrderFilterUtm("all")}
-                      >
-                        <Text
-                          style={[
-                            { fontSize: 12, fontWeight: "600", color: "#555" },
-                            orderFilterUtm === "all" && styles.filterChipTextActive,
-                          ]}
-                        >
-                          Все источники
-                        </Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={[
-                          styles.filterChip,
-                          orderFilterUtm === "__none__" && styles.filterChipActive,
-                        ]}
-                        onPress={() => setOrderFilterUtm("__none__")}
-                      >
-                        <Text
-                          style={[
-                            { fontSize: 12, fontWeight: "600", color: "#555" },
-                            orderFilterUtm === "__none__" && styles.filterChipTextActive,
-                          ]}
-                        >
-                          Без метки
-                        </Text>
-                      </TouchableOpacity>
-                      {utmSourceOptions.map((src) => (
-                        <TouchableOpacity
-                          key={`fs-utm-${src}`}
-                          style={[
-                            styles.filterChip,
-                            orderFilterUtm === src && styles.filterChipActive,
-                          ]}
-                          onPress={() => setOrderFilterUtm(src)}
-                        >
-                          <Text
-                            style={[
-                              { fontSize: 12, fontWeight: "600", color: "#555" },
-                              orderFilterUtm === src && styles.filterChipTextActive,
-                            ]}
-                            numberOfLines={1}
-                          >
-                            {src}
-                          </Text>
-                        </TouchableOpacity>
-                      ))}
-                    </ScrollView>
-                    {hasActiveOrderFilters && (
-                      <TouchableOpacity
-                        onPress={resetOrderFilters}
-                        style={{ marginTop: 8, alignSelf: "flex-start" }}
-                      >
-                        <Text style={{ fontSize: 12, fontWeight: "700", color: "#111" }}>
-                          Сбросить фильтры
-                        </Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                )}
-              </View>
-
-              {adminOrders.length === 0 ? (
-                <Text style={[styles.empty, theme === "dark" && styles.textDark]}>
-                  Заказов пока нет
-                </Text>
-              ) : filteredAdminOrders.length === 0 ? (
-                <Text style={[styles.empty, theme === "dark" && styles.textDark]}>
-                  Нет заказов по выбранным фильтрам
-                </Text>
-              ) : (
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator
-                  nestedScrollEnabled
-                  style={{ flex: 1 }}
-                >
-                  <View style={[styles.crmTable, { minWidth: 1300 }]}>
-                    <ScrollView
-                      nestedScrollEnabled
-                      style={{ flex: 1 }}
-                      showsVerticalScrollIndicator
-                    >
-                      <View style={[styles.crmTableRow, styles.crmTableHeader]}>
-                        <Text style={[styles.crmTh, { width: 44 }]}>№</Text>
-                        <Text style={[styles.crmTh, { width: 80 }]}>ID</Text>
-                        <Text style={[styles.crmTh, { width: 130 }]}>Дата</Text>
-                        <Text style={[styles.crmTh, { width: 150 }]}>Статус</Text>
-                        <Text style={[styles.crmTh, { width: 220 }]}>Клиент</Text>
-                        <Text style={[styles.crmTh, { width: 140 }]}>Трек</Text>
-                        <Text style={[styles.crmTh, { width: 220 }]}>Товар</Text>
-                        <Text style={[styles.crmTh, { width: 90 }]}>Сумма</Text>
-                        <Text style={[styles.crmTh, { width: 120 }]}>Источник</Text>
-                      </View>
-                      {filteredAdminOrders.map((order, idx) => {
-                        const itemsLabel = (order.items || [])
-                          .map((i) =>
-                            `${i.brand || ""} ${i.name}${i.size ? ` (${i.size})` : ""}`.trim()
-                          )
-                          .join(", ");
-                        const dateLabel = order.date
-                          ? new Date(order.date).toLocaleString("ru-RU", {
-                              day: "2-digit",
-                              month: "2-digit",
-                              year: "2-digit",
-                              hour: "2-digit",
-                              minute: "2-digit",
-                            })
-                          : "—";
-                        const isOpen = openStatusId === order.id;
-                        return (
-                          <View
-                            key={`fs-${order.id}`}
-                            style={[
-                              styles.crmTableRow,
-                              idx % 2 === 1 && styles.crmTableRowAlt,
-                              theme === "dark" && { borderBottomColor: "#333" },
-                              isOpen && { zIndex: 100, elevation: 20 },
-                            ]}
-                          >
-                            <Text
-                              style={[styles.crmTd, { width: 44, fontWeight: "700", color: "#888" }]}
-                              numberOfLines={1}
-                            >
-                              {idx + 1}
-                            </Text>
-                            <Text
-                              style={[styles.crmTd, { width: 80, fontWeight: "700" }]}
-                              numberOfLines={1}
-                            >
-                              {order.id}
-                            </Text>
-                            <Text style={[styles.crmTd, { width: 130 }]} numberOfLines={2}>
-                              {dateLabel}
-                            </Text>
-                            <View
-                              style={{
-                                width: 150,
-                                paddingVertical: 6,
-                                paddingHorizontal: 4,
-                                alignItems: "center",
-                                justifyContent: "center",
-                                position: "relative",
-                                zIndex: isOpen ? 200 : 1,
-                              }}
-                            >
-                              <TouchableOpacity
-                                style={[
-                                  styles.crmStatusBtn,
-                                  {
-                                    backgroundColor: getStatusBadgeStyle(
-                                      order.status || "Новый"
-                                    ).backgroundColor,
-                                    borderColor: getStatusBadgeStyle(
-                                      order.status || "Новый"
-                                    ).borderColor,
-                                  },
-                                ]}
-                                onPress={() =>
-                                  setOpenStatusId(isOpen ? null : order.id)
-                                }
-                                activeOpacity={0.85}
-                              >
-                                <Text
-                                  style={[
-                                    styles.crmStatusBtnText,
-                                    {
-                                      color: getStatusBadgeStyle(
-                                        order.status || "Новый"
-                                      ).color,
-                                    },
-                                  ]}
-                                  numberOfLines={1}
-                                >
-                                  {order.status || "Новый"} ▾
-                                </Text>
-                              </TouchableOpacity>
-                              {isOpen && (
-                                <View style={styles.crmStatusMenu}>
-                                  {ORDER_STATUSES.map((st, stIdx) => (
-                                    <TouchableOpacity
-                                      key={st}
-                                      style={[
-                                        styles.crmStatusMenuItem,
-                                        order.status === st && styles.crmStatusMenuItemActive,
-                                        stIdx === ORDER_STATUSES.length - 1 && { borderBottomWidth: 0 },
-                                      ]}
-                                      onPress={() => {
-                                        changeStatus(order.id, st);
-                                        setOpenStatusId(null);
-                                      }}
-                                    >
-                                      <Text
-                                        style={[
-                                          styles.crmStatusMenuText,
-                                          order.status === st &&
-                                            styles.crmStatusMenuTextActive,
-                                        ]}
-                                      >
-                                        {st}
-                                      </Text>
-                                    </TouchableOpacity>
-                                  ))}
-                                </View>
-                              )}
-                            </View>
-                            <View
-                              style={{ width: 220, paddingVertical: 6, paddingHorizontal: 6, alignItems: "center" }}
-                            >
-                              <Text style={styles.crmTdStrong} numberOfLines={1}>
-                                {order.fullName || "—"}
-                              </Text>
-                              <Text style={styles.crmTdMuted} numberOfLines={1}>
-                                {order.phone || "—"}
-                              </Text>
-                              <Text style={styles.crmTdMuted} numberOfLines={1}>
-                                {order.tgUsername ? `@${order.tgUsername}` : "—"}
-                              </Text>
-                              <Text style={styles.crmTdMuted} numberOfLines={2}>
-                                {order.address || "—"}
-                              </Text>
-                            </View>
-                            <View
-                              style={{ width: 140, paddingVertical: 4, paddingHorizontal: 4, alignItems: "center", justifyContent: "center" }}
-                            >
-                              <TextInput
-                                style={[styles.crmTrackInput, { width: "100%" }]}
-                                placeholder="Трек-номер"
-                                placeholderTextColor="#999"
-                                value={order.trackingNumber || ""}
-                                onChangeText={(t) => {
-                                  setAdminOrders((prev) =>
-                                    prev.map((o) =>
-                                      String(o.id) === String(order.id)
-                                        ? { ...o, trackingNumber: t }
-                                        : o
-                                    )
-                                  );
-                                }}
-                                onBlur={() => {
-                                  const cur = (order.trackingNumber || "").trim();
-                                  updateTracking(order.id, cur);
-                                }}
-                                onSubmitEditing={() => {
-                                  const cur = (order.trackingNumber || "").trim();
-                                  updateTracking(order.id, cur);
-                                }}
-                                blurOnSubmit
-                                returnKeyType="done"
-                              />
-                            </View>
-                            <Text
-                              style={[styles.crmTd, { width: 220 }]}
-                              numberOfLines={3}
-                            >
-                              {itemsLabel || "—"}
-                            </Text>
-                            <Text
-                              style={[
-                                styles.crmTd,
-                                { width: 90, fontWeight: "700" },
-                              ]}
-                            >
-                              {order.finalTotal != null ? `${order.finalTotal}` : "—"}
-                            </Text>
-                            <Text
-                              style={[styles.crmTd, { width: 120, fontSize: 11 }]}
-                              numberOfLines={2}
-                            >
-                              {order.utmSource || "—"}
-                            </Text>
-                          </View>
-                        );
-                      })}
-                    </ScrollView>
-                  </View>
-                </ScrollView>
-              )}
-            </View>
-          </Modal>
-        )}
-
-        <Toast message={toastMessage} visible={toastVisible} onHide={hideToast} />
+        ) : null}
       </View>
     </ThemeContext.Provider>
   );
 }
 
-// ==============================
-// СТИЛИ (ПОЛНЫЕ)
-// ==============================
+const FONT =
+  '-apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
+
 const styles = StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: '#F7F7F5',
-    minHeight: '100%',
-    fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+    backgroundColor: "#FFFFFF",
+    minHeight: "100%",
+    fontFamily: FONT,
   },
-  rootDark: {
-    backgroundColor: '#1a1a1a',
-  },
+  rootDark: { backgroundColor: "#111" },
   contentContainer: {
     flex: 1,
+    paddingHorizontal: 16,
+    paddingTop: 8,
     paddingBottom: 100,
-    backgroundColor: '#F7F7F5',
   },
-  page: {
-    flex: 1,
-    backgroundColor: "#F7F7F5",
-    padding: 14,
-  },
-  pageDark: { backgroundColor: "#1a1a1a" },
+  page: { flex: 1, backgroundColor: "#FFFFFF" },
+  pageDark: { backgroundColor: "#111" },
+  scrollContent: { paddingBottom: 40 },
   textDark: { color: "#fff" },
-  inputDark: { backgroundColor: "#333", color: "#fff", borderColor: "#555" },
-  cardDark: { backgroundColor: "#2a2a2a" },
-  scrollContent: { paddingBottom: 10 },
+  inputDark: { backgroundColor: "#1C1C1E", color: "#fff", borderColor: "#333" },
 
-  logoWrap: { marginTop: 8, marginBottom: 4, alignItems: 'flex-start' },
-  logoImage: { width: 180, height: 70 },
-  logo: {
-    fontSize: 28,
-    fontWeight: "800",
-    marginTop: 18,
-    letterSpacing: -0.4,
-    fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
-  },
-  description: {
-    color: "#888",
-    marginTop: 4,
-    fontSize: 13,
-    fontWeight: "400",
-    letterSpacing: 0.1,
-    fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
-  },
-  pageTitle: {
-    fontSize: 22,
-    fontWeight: "800",
-    marginTop: 16,
-    marginBottom: 12,
-    letterSpacing: -0.4,
-    color: "#111",
-    fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: "800",
-    marginTop: 18,
-    marginBottom: 12,
-    letterSpacing: -0.3,
-    fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
-  },
-
-  banner: { backgroundColor: "#111", padding: 20, borderRadius: 28, marginTop: 18 },
-  bannerTitle: {
-    fontSize: 24,
-    fontWeight: "800",
-    color: "#fff",
-    letterSpacing: -0.3,
-    fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
-  },
-  bannerButton: { backgroundColor: "#fff", padding: 10, borderRadius: 20, marginTop: 15, alignSelf: "flex-start" },
-
+  // Cards / catalog
   grid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between" },
-  card: { width: "48%", backgroundColor: "#fff", borderRadius: 18, padding: 10, marginBottom: 14, position: "relative" },
-  image: {
-    width: "100%",
-    aspectRatio: 1,
-    borderRadius: 16,
-    backgroundColor: "#FFFFFF",
-  },
-  bigImageWrap: {
-    width: "100%",
+  card: {
+    width: "48%",
+    backgroundColor: "#fff",
+    borderRadius: 18,
+    padding: 10,
+    marginBottom: 14,
     position: "relative",
+    minHeight: 250,
+  },
+  cardDark: { backgroundColor: "#1C1C1E" },
+  image: { width: "100%", aspectRatio: 1, borderRadius: 14, backgroundColor: "#F5F5F5" },
+  brand: {
+    fontSize: 11,
+    color: "#999",
     marginTop: 8,
-    backgroundColor: "#FFFFFF",
-    borderRadius: 24,
-    overflow: "hidden",
+    fontWeight: "600",
+    letterSpacing: 0.6,
+    textTransform: "uppercase",
   },
-  bigImage: {
-    width: "100%",
-    aspectRatio: 1,
-    borderRadius: 24,
-    backgroundColor: "#FFFFFF",
-  },
-  favorite: { position: "absolute", right: 12, top: 12 },
-  favoriteText: { fontSize: 20 },
-  // Белый круг с чёрной обводкой + чёрное сердце
+  productName: { fontSize: 14, fontWeight: "700", color: "#111", marginTop: 2, minHeight: 36, lineHeight: 18 },
+  price: { fontSize: 15, fontWeight: "700", color: "#111", marginTop: 4 },
+  oldPrice: { fontSize: 12, color: "#999", textDecorationLine: "line-through", marginTop: 2 },
+
   favoriteBtn: {
     position: "absolute",
     right: 8,
@@ -7897,809 +5864,61 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     zIndex: 10,
-    elevation: 0,
   },
-  favoriteBtnOnImage: {
-    right: 14,
-    top: 14,
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-  },
-  favoriteBtnActive: {
-    backgroundColor: "transparent",
-  },
-  favoriteBtnText: {
-    fontSize: 13,
-    color: "#111",
-    lineHeight: 15,
-  },
-  favoriteBtnTextActive: {
-    color: "#111",
-  },
-  // Белый круг с чёрной обводкой + чёрная корзина (как избранное)
-  cartBtn: {
-    position: "absolute",
-    bottom: 10,
-    right: 10,
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: "#fff",
-    borderWidth: 1.5,
-    borderColor: "#111",
-    justifyContent: "center",
-    alignItems: "center",
-    zIndex: 10,
-    elevation: 6,
-  },
-  cartBtnText: {
-    fontSize: 16,
-    color: "#111",
-    lineHeight: 18,
-  },
-  brand: {
-    fontSize: 11,
-    fontWeight: "600",
-    color: "#888",
-    marginTop: 8,
-    letterSpacing: 1.1,
-    textTransform: "uppercase",
-    fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
-  },
-  productName: {
-    fontSize: 14,
-    fontWeight: "600",
-    marginTop: 3,
-    color: "#111",
-    letterSpacing: -0.1,
-    lineHeight: 18,
-    fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
-  },
-  price: {
-    fontSize: 16,
-    fontWeight: "800",
-    marginTop: 4,
-    color: "#111",
-    letterSpacing: -0.2,
-    fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
-  },
-  oldPrice: {
-    textDecorationLine: "line-through",
-    color: "#999",
-    fontSize: 13,
-    fontWeight: "500",
-    fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
-  },
-  oldPriceBig: {
-    textDecorationLine: "line-through",
-    color: "#999",
-    fontSize: 15,
-    marginRight: 10,
-    fontWeight: "500",
-  },
-  bigTitle: {
-    fontSize: 22,
-    fontWeight: "800",
-    letterSpacing: -0.3,
-    fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
-  },
-  bigPrice: {
-    fontSize: 24,
-    fontWeight: "800",
-    letterSpacing: -0.3,
-    fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
-  },
+  favoriteBtnActive: { backgroundColor: "transparent" },
+  favoriteBtnOnImage: { right: 14, top: 14, width: 36, height: 36 },
+  favoriteBtnText: { fontSize: 13, color: "#111" },
+  favoriteBtnTextActive: { color: "#111" },
 
-  // Product page new styles
-  productBrand: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#888",
-    letterSpacing: 1.4,
-    textTransform: "uppercase",
-    marginTop: 16,
-    marginBottom: 4,
-    fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
-  },
-  productTitle: {
-    fontSize: 24,
-    fontWeight: "800",
-    color: "#111",
-    lineHeight: 30,
-    marginBottom: 8,
-    letterSpacing: -0.4,
-    fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
-  },
-  priceRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 8,
-  },
-  productPrice: {
-    fontSize: 24,
-    fontWeight: "800",
-    color: "#111",
-    letterSpacing: -0.3,
-    fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
-  },
-  headerBtn: {
-    backgroundColor: "#111",
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  headerBtnText: {
-    color: "#fff",
-    fontSize: 22,
-    fontWeight: "600",
-    marginTop: -1,
-  },
-  productHeaderLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  headerIconBtn: {
-    backgroundColor: "#111",
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: "center",
-    justifyContent: "center",
-    marginLeft: 8,
-  },
-  headerIconBtnActive: {
-    backgroundColor: "#111",
-  },
-  headerIconBtnText: {
-    color: "#fff",
-    fontSize: 18,
-    fontWeight: "700",
-  },
-
-  buyButton: { backgroundColor: "#111", padding: 14, borderRadius: 22, marginTop: 16 },
-  buttonText: { color: "#fff", textAlign: "center", fontWeight: "800", fontSize: 13 },
-  addBtn: {
-    backgroundColor: "#111",
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 16,
-    alignItems: "center",
-    marginBottom: 10,
-  },
-  saveBtn: {
-    backgroundColor: "#111",
-    paddingVertical: 12,
+  // Search / filters
+  search: {
+    backgroundColor: "#F3F3F3",
+    borderRadius: 14,
     paddingHorizontal: 14,
-    borderRadius: 14,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  editInput: {
-    borderWidth: 1,
-    borderColor: "#ddd",
-    borderRadius: 14,
-    padding: 12,
-    marginBottom: 10,
-    fontSize: 14,
-    backgroundColor: "#fff",
+    paddingVertical: 12,
+    fontSize: 15,
+    marginBottom: 12,
     color: "#111",
   },
-  productEdit: {
-    backgroundColor: "#fff",
-    padding: 14,
-    borderRadius: 18,
-    marginBottom: 12,
-  },
-  productEditDark: {
-    backgroundColor: "#2a2a2a",
-  },
-  editActions: {
-    flexDirection: "row",
-    marginTop: 8,
-    gap: 12,
-  },
-  editAction: {
-    fontSize: 14,
-    fontWeight: "600",
-  },
-  productAdminActions: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 6,
-    marginTop: 10,
-  },
-  crmMuted: {
-    fontSize: 13,
-    color: "#777",
-  },
-  promoFormCard: {
-    backgroundColor: "#fff",
-    padding: 14,
-    borderRadius: 18,
-    marginBottom: 12,
-  },
-
-  cartItem: { backgroundColor: "#fff", padding: 12, borderRadius: 20, flexDirection: "row", marginBottom: 12 },
-  cartItemDark: { backgroundColor: "#2a2a2a" },
-  // Свайп в корзине: влево → избранное (белый) + удалить (чёрный)
-  swipeContainer: {
-    marginBottom: 12,
+  filterChip: {
+    backgroundColor: "#F0F0F0",
     borderRadius: 20,
-    overflow: "hidden",
-    position: "relative",
-    backgroundColor: "#E8E8E6",
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    marginRight: 8,
   },
-  swipeActions: {
-    position: "absolute",
-    right: 0,
-    top: 0,
-    bottom: 0,
-    width: 160,
-    flexDirection: "row",
-  },
-  swipeFavBtn: {
-    width: 80,
-    backgroundColor: "#fff",
-    justifyContent: "center",
-    alignItems: "center",
-    borderRightWidth: 1,
-    borderRightColor: "#eee",
-  },
-  swipeFavIcon: {
-    fontSize: 22,
-    color: "#111",
-    marginBottom: 4,
-  },
-  swipeFavLabel: {
-    fontSize: 10,
-    fontWeight: "700",
-    color: "#111",
-    textAlign: "center",
-  },
-  swipeDelBtn: {
-    width: 80,
-    backgroundColor: "#111",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  swipeDelIcon: {
-    fontSize: 22,
-    fontWeight: "700",
-    color: "#fff",
-    marginBottom: 4,
-  },
-  swipeDelLabel: {
-    fontSize: 10,
-    fontWeight: "700",
-    color: "#fff",
-    textAlign: "center",
-  },
-  cartImage: { width: 70, height: 70, borderRadius: 16, marginRight: 12, backgroundColor: "#FFFFFF" },
-  remove: { color: "red", marginTop: 6, fontSize: 13 },
-  total: { fontSize: 24, fontWeight: "900" },
-  finalTotal: { fontSize: 20, fontWeight: "900", marginTop: 4 },
-  discountText: { fontSize: 16, color: "green", marginTop: 4 },
+  filterChipActive: { backgroundColor: "#111" },
+  filterChipTextActive: { color: "#fff", fontWeight: "600" },
 
-  balanceCard: {
-    backgroundColor: "#111",
-    padding: 22,
-    borderRadius: 24,
-    marginBottom: 8,
-  },
-  balanceRowLabel: {
-    color: "rgba(255,255,255,0.7)",
-    fontSize: 13,
-    fontWeight: "600",
-    letterSpacing: 0.3,
-    marginBottom: 4,
-  },
-  balanceValue: {
-    color: "#fff",
-    fontSize: 34,
-    fontWeight: "900",
-    marginBottom: 4,
-  },
-  balanceDivider: {
-    height: 1,
-    backgroundColor: "rgba(255,255,255,0.15)",
-    marginVertical: 14,
-  },
-  balanceStatRow: {
+  sectionHeaderRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 8,
-  },
-  balanceStatLabel: {
-    color: "rgba(255,255,255,0.75)",
-    fontSize: 14,
-    fontWeight: "500",
-  },
-  balanceStatValue: {
-    color: "#fff",
-    fontSize: 15,
-    fontWeight: "700",
-  },
-  balanceHint: {
-    color: "rgba(255,255,255,0.45)",
-    fontSize: 11,
-    lineHeight: 16,
-    marginTop: 10,
-  },
-  balanceLabel: { color: "#fff" },
-  balanceInfo: { color: "#fff" },
-  userName: { fontSize: 18 },
-
-  referralBox: { backgroundColor: "#fff", padding: 16, borderRadius: 24 },
-  referralBoxDark: { backgroundColor: "#2a2a2a" },
-  referralText: { marginBottom: 12, fontSize: 13 },
-  referralStat: { fontSize: 14, fontWeight: "600", marginBottom: 4, color: "#111" },
-  referralHint: { fontSize: 12, color: "#888", marginTop: 8, lineHeight: 18 },
-  copyButton: { backgroundColor: "#111", padding: 12, borderRadius: 18 },
-
-  levelCard: {
-    backgroundColor: "#fff",
-    padding: 18,
-    borderRadius: 24,
     marginBottom: 12,
   },
-  levelCardDark: { backgroundColor: "#2a2a2a" },
-  activeLevel: { backgroundColor: "#111" },
-  levelName: { fontSize: 18, fontWeight: "900", color: "#111" },
-  levelInfo: { marginTop: 4, fontSize: 14, color: "#555" },
-  levelSubInfo: { marginTop: 6, fontSize: 13, color: "rgba(255,255,255,0.75)" },
-  activeText: { color: "#fff" },
-  levelProgressTrack: {
-    height: 8,
-    borderRadius: 8,
-    marginTop: 12,
-    overflow: "hidden",
-  },
-  levelProgressTrackActive: {
-    backgroundColor: "rgba(255,255,255,0.25)",
-  },
-  levelProgressTrackInactive: {
-    backgroundColor: "#E8E8E8",
-  },
-  levelProgressFill: {
-    height: 8,
-    borderRadius: 8,
-  },
-  levelProgressFillActive: {
-    backgroundColor: "#fff", // белая полоса на чёрной карточке
-  },
-  levelProgressFillInactive: {
-    backgroundColor: "#111", // чёрная полоса на белой карточке
-  },
-  levelProgressPct: {
-    marginTop: 6,
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#888",
-  },
+  sectionHeader: { fontSize: 16, fontWeight: "800", color: "#111", letterSpacing: 0.4 },
+  sectionLink: { fontSize: 13, color: "#888", fontWeight: "500" },
+  sectionTitle: { fontSize: 16, fontWeight: "700", marginTop: 16, marginBottom: 8, color: "#111" },
 
-  orderCard: { backgroundColor: "#fff", padding: 14, borderRadius: 18, marginBottom: 12 },
-  orderCardDark: { backgroundColor: "#2a2a2a" },
-  orderId: { fontSize: 15, fontWeight: "800" },
-  orderDate: { color: "#777", marginTop: 2, fontSize: 12 },
-  orderStatus: { fontWeight: "600", marginTop: 4, fontSize: 14 },
-  orderTotal: { fontWeight: "700", marginTop: 4, fontSize: 16 },
-  orderItem: { fontSize: 13, marginLeft: 8 },
-  orderMore: { fontSize: 12, color: "#777", marginLeft: 8 },
-  trackingText: { fontSize: 13, color: "#0066cc", marginTop: 2 },
-
-  modalOverlay: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "rgba(0,0,0,0.5)" },
-  modalScrollView: { flexGrow: 1, justifyContent: "center", paddingVertical: 12, paddingHorizontal: 10, width: "100%", alignItems: "center" },
-  modalView: { 
-    width: "100%", 
-    maxWidth: 420, 
-    backgroundColor: "#fff", 
-    borderRadius: 28, 
-    padding: 20, 
-    alignItems: "stretch", 
-    alignSelf: "center",
-    overflow: "hidden",
-  },
-  modalViewDark: { backgroundColor: "#2a2a2a" },
-  modalTitle: { fontSize: 20, fontWeight: "900", marginBottom: 16, textAlign: "center" },
-  modalInput: { borderWidth: 1, borderColor: "#ddd", borderRadius: 14, padding: 12, marginBottom: 12, fontSize: 15, width: "100%" },
-  phoneRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: "#ddd",
-    borderRadius: 14,
-    marginBottom: 12,
-    paddingLeft: 12,
-    backgroundColor: "#fff",
-    overflow: "hidden",
-    width: "100%",
-  },
-  phonePrefix: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: "#111",
-    marginRight: 6,
-    minWidth: 52,
-  },
-  phoneInput: {
-    flex: 1,
-    paddingVertical: 12,
-    paddingRight: 12,
-    fontSize: 15,
-    color: "#111",
-  },
-  modalButtons: { flexDirection: "row", justifyContent: "space-between", marginTop: 12, width: "100%" },
-  modalCancel: { padding: 12, borderRadius: 18, backgroundColor: "#eee", flex: 0.42, alignItems: "center" },
-  modalConfirm: { padding: 12, borderRadius: 18, backgroundColor: "#111", flex: 0.52, alignItems: "center" },
-  modalError: {
-    backgroundColor: "#111",
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderRadius: 12,
-    marginBottom: 14,
-    width: "100%",
-  },
-  modalErrorText: {
-    color: "#fff",
-    fontSize: 13,
-    fontWeight: "600",
-    textAlign: "center",
-  },
-
-  deliveryLabel: { fontSize: 15, fontWeight: "600", marginBottom: 8 },
-  deliveryOptions: { flexDirection: "row", justifyContent: "space-between", marginBottom: 16 },
-  deliveryOption: { flex: 1, paddingVertical: 14, paddingHorizontal: 10, borderRadius: 14, backgroundColor: "#eee", marginHorizontal: 4, alignItems: "center", justifyContent: "center" },
-  deliveryOptionActive: { backgroundColor: "#111" },
-  deliveryOptionTitle: { fontSize: 14, fontWeight: "700", textAlign: "center", color: "#111" },
-  deliveryOptionTextActive: { color: "#fff" },
-  deliveryDetail: { fontSize: 13, fontWeight: "600", color: "#666", marginTop: 6, textAlign: "center" },
-  deliveryDetailActive: { color: "#fff" },
-
-  promoBox: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginVertical: 8,
-    width: "100%",
-  },
-  promoInput: {
-    flex: 1,
-    minWidth: 0,
-    borderWidth: 1,
-    borderColor: "#ddd",
-    borderRadius: 18,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    marginRight: 8,
-    fontSize: 14,
-  },
-  promoButton: {
-    backgroundColor: "#111",
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderRadius: 18,
-    justifyContent: "center",
-    alignItems: "center",
-    flexShrink: 0,
-  },
-
-  bonusCheckbox: { flexDirection: "row", alignItems: "center", marginVertical: 8 },
-  bonusCheckboxText: { fontSize: 14, fontWeight: "600" },
-
-  searchInput: {
-    backgroundColor: "#fff",
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 22,
-    marginBottom: 12,
-    fontSize: 14,
-    fontWeight: "500",
-    color: "#111",
-    fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
-  },
-  filterScroll: { flexDirection: "row", marginBottom: 12, height: 44, flexShrink: 0, flexGrow: 0 },
-  filterContent: { alignItems: "center" },
-  filterChip: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 16, backgroundColor: "#eee", marginRight: 8, alignSelf: "flex-start", flexShrink: 0, flexGrow: 0 },
-  filterChipActive: { backgroundColor: "#111" },
-  filterChipTextActive: { color: "#fff" },
-  priceFilter: { flexDirection: "row", marginBottom: 12 },
-  priceInput: { flex: 1, backgroundColor: "#fff", padding: 8, borderRadius: 18, marginRight: 8, fontSize: 14 },
-
-  sizeBox: { marginTop: 16 },
-  sizeTitle: { fontSize: 15, fontWeight: "600", marginBottom: 8 },
-  sizes: { flexDirection: "row", flexWrap: "wrap" },
-  size: { width: 48, height: 48, borderRadius: 10, backgroundColor: "#F0F0F0", justifyContent: "center", alignItems: "center", marginRight: 8, marginBottom: 8 },
-  sizeActive: { backgroundColor: "#111" },
-  sizeTextActive: { color: "#fff" },
-  sizeText: { fontSize: 13, color: "#555", marginTop: 2 },
-
-  adminButton: { backgroundColor: "#111", padding: 10, borderRadius: 18, marginVertical: 8, alignSelf: "flex-start" },
-  closeAdmin: { marginBottom: 16, alignSelf: "flex-end" },
-  closeAdminText: { fontSize: 15, fontWeight: "600" },
-  adminStatCard: {
-    backgroundColor: "#111",
-    padding: 20,
-    borderRadius: 24,
-    marginBottom: 20,
-  },
-  adminStatCardDark: {
-    backgroundColor: "#2a2a2a",
-  },
-  adminStat: { fontSize: 16, marginVertical: 4 },
-  adminStatWhite: { fontSize: 16, marginVertical: 4, color: "#fff", fontWeight: "600" },
-  crmTableScroll: { marginBottom: 16 },
-
-  crmTable: {
-    borderWidth: 1,
-    borderColor: "#E5E5E5",
-    borderRadius: 12,
-    overflow: "visible",
-    backgroundColor: "#fff",
-    minWidth: 1100,
-  },
-  crmTableRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    borderBottomWidth: 1,
-    borderBottomColor: "#EEE",
-    paddingVertical: 4,
-    paddingHorizontal: 4,
-  },
-  crmTableRowAlt: {
-    backgroundColor: "#FAFAFA",
-  },
-  crmTableHeader: {
-    backgroundColor: "#111",
-    borderBottomWidth: 0,
-    paddingVertical: 10,
-    alignItems: "center",
-  },
-  crmTh: {
-    color: "#fff",
-    fontSize: 12,
-    fontWeight: "700",
-    paddingHorizontal: 6,
-    textAlign: "center",
-  },
-  crmTd: {
-    fontSize: 12,
-    color: "#222",
-    paddingHorizontal: 6,
-    paddingVertical: 8,
-    textAlign: "center",
-  },
-  crmTdStrong: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "#111",
-    textAlign: "center",
-  },
-  crmTdMuted: {
-    fontSize: 11,
-    color: "#666",
-    marginTop: 1,
-    textAlign: "center",
-  },
-  crmStatusBtn: {
-    borderRadius: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 8,
-    borderWidth: 1,
-    borderColor: "transparent",
+  brandCircleWrap: { alignItems: "center", marginRight: 14, width: 72 },
+  brandCircle: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: "#F2F2F2",
     alignItems: "center",
     justifyContent: "center",
+    marginBottom: 6,
   },
-  crmStatusBtnText: {
-    fontSize: 11,
-    fontWeight: "700",
-    textAlign: "center",
-  },
-  crmStatusMenu: {
-    position: "absolute",
-    top: "100%",
-    left: 0,
-    minWidth: 160,
-    marginTop: 4,
-    backgroundColor: "#fff",
-    borderWidth: 1,
-    borderColor: "#DDD",
-    borderRadius: 10,
-    overflow: "hidden",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.18,
-    shadowRadius: 10,
-    elevation: 24,
-    zIndex: 9999,
-  },
-  crmStatusMenuItem: {
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: "#F0F0F0",
-    backgroundColor: "#fff",
-  },
-  crmStatusMenuItemActive: {
-    backgroundColor: "#111",
-  },
-  crmStatusMenuText: {
-    fontSize: 13,
-    color: "#222",
-    textAlign: "center",
-  },
-  crmStatusMenuTextActive: {
-    color: "#fff",
-    fontWeight: "700",
-  },
-  crmTrackInput: {
-    borderWidth: 1,
-    borderColor: "#DDD",
-    borderRadius: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-    fontSize: 12,
-    backgroundColor: "#fff",
-    color: "#111",
-    textAlign: "center",
-  },
+  brandCircleLetter: { fontSize: 20, fontWeight: "800", color: "#111" },
+  brandCircleLabel: { fontSize: 11, color: "#555", textAlign: "center" },
 
-  productAdminBtn: {
-    flex: 1,
-    backgroundColor: "#111",
-    paddingVertical: 8,
-    paddingHorizontal: 4,
-    borderRadius: 10,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  productAdminBtnActive: {
-    backgroundColor: "#333",
-  },
-  productAdminBtnDanger: {
-    backgroundColor: "#111",
-  },
-  productAdminBtnText: {
-    color: "#fff",
-    fontSize: 11,
-    fontWeight: "700",
-    textAlign: "center",
-  },
-  trackingInput: { borderWidth: 1, borderColor: "#ddd", borderRadius: 8, padding: 4, flex: 1, marginRight: 6, fontSize: 13 },
-  broadcastInput: { borderWidth: 1, borderColor: "#ddd", borderRadius: 14, padding: 10, marginBottom: 12, minHeight: 60, fontSize: 14 },
-  broadcastBtn: { backgroundColor: "#111", padding: 12, borderRadius: 20, alignItems: "center", marginBottom: 20 },
+  horizCard: { width: 150, marginRight: 12 },
+  horizImage: { width: 150, height: 150, borderRadius: 16, backgroundColor: "#F5F5F5" },
+  horizName: { fontSize: 13, fontWeight: "700", color: "#111", marginTop: 8 },
+  horizPrice: { fontSize: 13, fontWeight: "700", color: "#111", marginTop: 2 },
 
-  ratingDisplay: { fontSize: 14, marginVertical: 4 },
-  reviewItem: { backgroundColor: "#f0f0f0", padding: 8, borderRadius: 12, marginBottom: 8 },
-  reviewItemDark: { backgroundColor: "#333" },
-  reviewRating: { fontSize: 16, color: "#111", letterSpacing: 2 },
-  reviewComment: { fontSize: 13, marginTop: 2 },
-  reviewDate: { fontSize: 11, color: "#777", marginTop: 2 },
-  noReviews: { fontStyle: "italic", marginVertical: 8, fontSize: 14 },
-  reviewForm: { marginTop: 16, padding: 12, backgroundColor: "#f9f9f9", borderRadius: 16 },
-  reviewFormDark: { backgroundColor: "#2a2a2a" },
-  reviewFormTitle: { fontSize: 16, fontWeight: "600", marginBottom: 8 },
-  stars: { flexDirection: "row", marginBottom: 8 },
-  star: { fontSize: 28, marginRight: 4 },
-  starActive: { color: "#111" },
-  starActiveDark: { color: "#fff" },
-  starInactive: { color: "#bbb" },
-  reviewInput: { borderWidth: 1, borderColor: "#ddd", borderRadius: 12, padding: 8, marginBottom: 8 },
-  submitReview: { backgroundColor: "#111", padding: 10, borderRadius: 16, alignItems: "center" },
-
-  themeRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginVertical: 12 },
-  themeLabel: { fontSize: 16 },
-
-  totalRow: { flexDirection: "row", justifyContent: "space-between", marginVertical: 12, paddingVertical: 8, borderTopWidth: 1, borderColor: "#ddd" },
-  totalLabel: { fontSize: 16, fontWeight: "600" },
-  totalAmount: { fontSize: 18, fontWeight: "900" },
-
-  cartBadge: { fontSize: 16, fontWeight: "600", color: "#000" },
-  menuBadge: {
-    position: 'absolute',
-    top: -2,
-    right: -6,
-    backgroundColor: '#111',
-    borderRadius: 10,
-    minWidth: 18,
-    height: 18,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 5,
-    borderWidth: 1.5,
-    borderColor: '#fff',
-    zIndex: 2,
-  },
-  menuBadgeText: {
-    color: '#fff',
-    fontSize: 11,
-    fontWeight: '800',
-  },
-
-  // Pill-меню (как на референсе)
-  menuWrapper: {
-    position: 'fixed',
-    bottom: 18,
-    left: 18,
-    right: 18,
-    zIndex: 10000,
-    elevation: 30,
-    alignItems: 'center',
-  },
-  menu: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.97)',
-    borderRadius: 28,
-    paddingVertical: 10,
-    paddingHorizontal: 6,
-    height: 74,
-    width: '100%',
-    maxWidth: 354,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.12,
-    shadowRadius: 16,
-    elevation: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(0,0,0,0.06)',
-  },
-  menuDark: {
-    backgroundColor: 'rgba(30,30,30,0.96)',
-    borderColor: 'rgba(255,255,255,0.08)',
-  },
-  menuButton: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    flex: 1,
-    paddingVertical: 2,
-  },
-  menuIconWrap: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'transparent',
-    marginBottom: 2,
-  },
-  menuIconWrapActive: {
-    backgroundColor: '#111',
-  },
-  menuIconWrapActiveDark: {
-    backgroundColor: '#fff',
-  },
-  menuIcon: {
-    fontSize: 20,
-    color: '#555',
-  },
-  menuIconActive: {
-    color: '#fff',
-  },
-  menuText: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: '#888',
-    marginTop: 1,
-    letterSpacing: 0.1,
-  },
-  menuTextActive: {
-    fontWeight: '700',
-    color: '#111',
-  },
-
-  back: { fontSize: 16, marginBottom: 12, color: "#555" },
-  shareBtn: { fontSize: 22, marginBottom: 12 },
-  productHeader: { 
-    flexDirection: "row", 
-    justifyContent: "space-between", 
-    alignItems: "center",
-    marginBottom: 12,
-    marginTop: 4,
-  },
+  // Product page
   productHeaderBar: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -8708,26 +5927,9 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
     minHeight: 44,
   },
-  productHeaderIconBtn: {
-    width: 40,
-    height: 40,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  productHeaderBack: {
-    fontSize: 32,
-    fontWeight: "300",
-    color: "#111",
-    lineHeight: 34,
-    marginTop: -2,
-  },
-  ppImageBlock: {
-    width: "100%",
-    position: "relative",
-    alignItems: "center",
-    marginBottom: 8,
-    backgroundColor: "#FFFFFF",
-  },
+  productHeaderIconBtn: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
+  productHeaderBack: { fontSize: 32, fontWeight: "300", color: "#111", lineHeight: 34, marginTop: -2 },
+  ppImageBlock: { width: "100%", position: "relative", alignItems: "center", marginBottom: 8, backgroundColor: "#FFFFFF" },
   ppBrushAccent: {
     position: "absolute",
     top: 8,
@@ -8738,56 +5940,15 @@ const styles = StyleSheet.create({
     opacity: 0.95,
     transform: [{ scaleX: -1 }],
   },
-  ppBigImage: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 0,
-  },
-  ppDots: {
-    flexDirection: "row",
-    justifyContent: "center",
-    gap: 6,
-    marginTop: 10,
-    marginBottom: 4,
-  },
-  ppDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: "#111",
-    opacity: 0.25,
-  },
-  ppTitleRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    marginTop: 14,
-    marginBottom: 18,
-  },
-  ppName: {
-    fontSize: 20,
-    fontWeight: "700",
-    color: "#111",
-    letterSpacing: -0.2,
-  },
-  ppSub: {
-    fontSize: 13,
-    color: "#9A9A9A",
-    marginTop: 4,
-    fontWeight: "400",
-  },
-  ppPrice: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: "#111",
-  },
-  ppSizeBlock: {
-    marginBottom: 16,
-  },
-  ppSizeLabel: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "#111",
-    letterSpacing: 0.8,
-  },
+  ppBigImage: { backgroundColor: "#FFFFFF", borderRadius: 0 },
+  ppDots: { flexDirection: "row", justifyContent: "center", gap: 6, marginTop: 10, marginBottom: 4 },
+  ppDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#111", opacity: 0.25 },
+  ppTitleRow: { flexDirection: "row", alignItems: "flex-start", marginTop: 14, marginBottom: 18 },
+  ppName: { fontSize: 20, fontWeight: "700", color: "#111", letterSpacing: -0.2 },
+  ppSub: { fontSize: 13, color: "#9A9A9A", marginTop: 4, fontWeight: "400" },
+  ppPrice: { fontSize: 18, fontWeight: "700", color: "#111" },
+  ppSizeBlock: { marginBottom: 16 },
+  ppSizeLabel: { fontSize: 12, fontWeight: "700", color: "#111", letterSpacing: 0.8 },
   ppSize: {
     width: 48,
     height: 48,
@@ -8798,125 +5959,49 @@ const styles = StyleSheet.create({
     marginRight: 8,
     marginBottom: 8,
   },
-  ppSizeActive: {
-    backgroundColor: "#111",
-  },
-  ppSizeText: {
-    fontSize: 14,
-    color: "#111",
-    fontWeight: "500",
-  },
-  ppSizeTextActive: {
-    fontSize: 14,
-    color: "#fff",
-    fontWeight: "600",
-  },
-
-  descriptionText: { fontSize: 14, color: "#666", marginVertical: 6, lineHeight: 20 },
-  loader: { textAlign: "center", padding: 8, color: "#777" },
-  empty: { textAlign: "center", padding: 20, color: "#999" },
-
-  toastContainer: {
-    position: 'fixed',
-    top: 18,
-    left: 58,
-    right: 58,
-    alignItems: 'center',
-    zIndex: 99999,
-    elevation: 99999,
-    pointerEvents: 'box-none',
-  },
-  toast: {
-    backgroundColor: 'rgba(0,0,0,0.9)',
-    paddingVertical: 9,
-    paddingHorizontal: 16,
-    borderRadius: 20,
-    maxWidth: '100%',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.25,
-    shadowRadius: 6,
-    elevation: 20,
-  },
-  toastText: {
-    color: '#fff',
-    fontSize: 13,
-    fontWeight: '600',
-    textAlign: 'center',
-  },
-
-  // ===== NEW DESIGN (black / white / brush) =====
-  homePage: {
-    flex: 1,
-    backgroundColor: "#FFFFFF",
-    position: "relative",
-    width: "100%",
-    margin: 0,
-    padding: 0,
-  },
-  homeBrushTopImg: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    width: 200,
-    height: 72,
-    zIndex: 100,
-    margin: 0,
-    padding: 0,
-  },
-  homeColumn: {
-    width: "100%",
-    alignItems: "center",
-    paddingHorizontal: 24,
-  },
-  homeCenter: {
-    width: "100%",
-    alignItems: "center",
-  },
-  homeBlock: {
-    alignItems: "center",
-  },
-  homeLogoImg: {
-    width: 340,
-    height: 110,
-    marginBottom: 0,
-  },
-  homeWelcome: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: "#111111",
-    marginBottom: 0,
-    textAlign: "center",
-  },
-  homeSub: {
-    fontSize: 14,
-    fontWeight: "400",
-    color: "#7A7A7A",
-    marginBottom: 0,
-    textAlign: "center",
-  },
-  brushBtnWrap: {
-    width: 290,
-    height: 56,
-    alignItems: "center",
+  ppSizeActive: { backgroundColor: "#111" },
+  ppSizeText: { fontSize: 14, color: "#111", fontWeight: "500" },
+  ppSizeTextActive: { fontSize: 14, color: "#fff", fontWeight: "600" },
+  sizes: { flexDirection: "row", flexWrap: "wrap" },
+  sizeBox: { marginBottom: 12 },
+  sizeHeaderRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 },
+  sizeTitle: { fontSize: 13, fontWeight: "700", color: "#111" },
+  sizeTableLink: { fontSize: 12, color: "#888", fontWeight: "500" },
+  sizeTable: { marginTop: 12, borderWidth: 1, borderColor: "#EAEAEA", borderRadius: 12, overflow: "hidden" },
+  sizeTableHead: { flexDirection: "row", backgroundColor: "#F5F5F5", paddingVertical: 8 },
+  sizeTableHeadCell: { flex: 1, textAlign: "center", fontSize: 11, fontWeight: "700", color: "#555" },
+  sizeTableRow: { flexDirection: "row", paddingVertical: 8, borderTopWidth: 1, borderTopColor: "#F0F0F0" },
+  sizeTableCell: { flex: 1, textAlign: "center", fontSize: 13, color: "#111" },
+  size: {
+    width: 48,
+    height: 48,
+    borderRadius: 10,
+    backgroundColor: "#F0F0F0",
     justifyContent: "center",
-    position: "relative",
+    alignItems: "center",
+    marginRight: 8,
+    marginBottom: 8,
   },
-  brushBtnImg: {
-    position: "absolute",
-    left: 0,
-    top: 0,
-    width: 290,
-    height: 56,
+  sizeActive: { backgroundColor: "#111" },
+  sizeTextActive: { color: "#fff", fontWeight: "600" },
+  sizeText: { fontSize: 14, color: "#111" },
+  oldPriceBig: { fontSize: 13, color: "#999", textDecorationLine: "line-through" },
+
+  accRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F0F0F0",
   },
-  brushBtnTextOverlay: {
-    color: "#FFFFFF",
-    fontSize: 12,
-    fontWeight: "700",
-    letterSpacing: 1.1,
-    textTransform: "uppercase",
-    zIndex: 2,
-  },
+  accTitle: { fontSize: 13, fontWeight: "700", color: "#111", letterSpacing: 0.6 },
+  accPlus: { fontSize: 20, color: "#111", fontWeight: "300" },
+  accBody: { fontSize: 13, color: "#555", lineHeight: 20, paddingVertical: 10, paddingBottom: 14 },
+
+  // Brush buttons
+  brushBtnWrap: { width: 290, height: 56, alignItems: "center", justifyContent: "center", position: "relative" },
+  brushBtnImg: { position: "absolute", left: 0, top: 0, width: 290, height: 56 },
   brushBtnWrapWide: {
     width: "100%",
     maxWidth: 340,
@@ -8927,139 +6012,27 @@ const styles = StyleSheet.create({
     alignSelf: "center",
     marginVertical: 8,
   },
-  brushBtnImgWide: {
-    position: "absolute",
-    left: 0,
-    top: 0,
-    width: "100%",
-    height: 56,
-  },
-  catalogPage: { backgroundColor: "#FFFFFF", paddingTop: 8 },
-  catalogSearch: {
-    backgroundColor: "#F5F5F5",
-    borderRadius: 22,
-    borderWidth: 0,
-    paddingHorizontal: 18,
-    height: 44,
-    marginBottom: 10,
-  },
-  sectionHeaderRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 12,
-    marginTop: 4,
-  },
-  sectionHeader: { fontSize: 15, fontWeight: "800", color: "#111", letterSpacing: 0.6 },
-  sectionLink: { fontSize: 13, color: "#888", fontWeight: "500" },
-  horizCard: { width: 150, marginRight: 12 },
-  horizCardImg: {
-    width: 150,
-    height: 150,
-    backgroundColor: "#F7F7F7",
-    borderRadius: 12,
-    marginBottom: 8,
-  },
-  horizCardName: { fontSize: 13, fontWeight: "600", color: "#111", marginBottom: 4, lineHeight: 17 },
-  horizCardPrice: { fontSize: 13, fontWeight: "700", color: "#111" },
-  brandCircleWrap: { width: 76, alignItems: "center", marginRight: 14 },
-  brandCircle: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: "#F5F5F5",
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 6,
-    borderWidth: 1,
-    borderColor: "#EEE",
-  },
-  brandCircleLetter: { fontSize: 22, fontWeight: "800", color: "#111" },
-  brandCircleLabel: { fontSize: 11, color: "#555", textAlign: "center" },
-  listPageTitle: { fontSize: 18, fontWeight: "800", letterSpacing: 0.8, marginBottom: 16 },
-  listRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: "#F0F0F0",
-  },
-  listRowImg: { width: 72, height: 72, borderRadius: 10, backgroundColor: "#F7F7F7", marginRight: 12 },
-  listRowName: { fontSize: 14, fontWeight: "600", color: "#111", marginBottom: 4 },
-  listRowPrice: { fontSize: 14, fontWeight: "700", color: "#111" },
-  productTitleRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    marginTop: 8,
-    marginBottom: 16,
-  },
-  sizeHeaderRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 10,
-  },
-  sizeTableLink: { fontSize: 12, color: "#888", fontWeight: "500" },
-  sizeText: { fontSize: 14, color: "#111" },
-  sizeTable: {
-    marginTop: 12,
-    borderWidth: 1,
-    borderColor: "#EAEAEA",
-    borderRadius: 12,
-    overflow: "hidden",
-  },
-  sizeTableHead: {
-    flexDirection: "row",
-    backgroundColor: "#F5F5F5",
-    paddingVertical: 8,
-  },
-  sizeTableHeadCell: {
-    flex: 1,
-    textAlign: "center",
-    fontSize: 11,
-    fontWeight: "700",
-    color: "#555",
-  },
-  sizeTableRow: {
-    flexDirection: "row",
-    paddingVertical: 8,
-    borderTopWidth: 1,
-    borderTopColor: "#F0F0F0",
-  },
-  sizeTableCell: {
-    flex: 1,
-    textAlign: "center",
-    fontSize: 13,
-    color: "#111",
-  },
-  accRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingVertical: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: "#F0F0F0",
-  },
-  accTitle: {
+  brushBtnImgWide: { position: "absolute", left: 0, top: 0, width: "100%", height: 56 },
+  brushBtnTextOverlay: {
+    color: "#FFFFFF",
     fontSize: 13,
     fontWeight: "700",
-    color: "#111",
-    letterSpacing: 0.6,
+    letterSpacing: 1.1,
+    textTransform: "uppercase",
+    zIndex: 2,
   },
-  accPlus: { fontSize: 20, color: "#111", fontWeight: "300" },
-  accBody: {
-    fontSize: 13,
-    color: "#555",
-    lineHeight: 20,
-    paddingVertical: 10,
-    paddingBottom: 14,
-  },
+
+  // Home
+  homePage: { flex: 1, backgroundColor: "#FFFFFF", position: "relative", width: "100%", margin: 0, padding: 0 },
+  homeWelcome: { fontSize: 18, fontWeight: "700", color: "#111111", marginBottom: 0, textAlign: "center" },
+  homeSub: { fontSize: 14, fontWeight: "400", color: "#7A7A7A", marginBottom: 0, textAlign: "center" },
+
 
   cartHeaderRow: {
     flexDirection: "row",
-    alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 8,
+    alignItems: "center",
+    marginBottom: 12,
   },
   cartListRow: {
     flexDirection: "row",
@@ -9068,33 +6041,46 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: "#F0F0F0",
   },
-  cartSizeLine: { fontSize: 12, color: "#888", marginTop: 2 },
+  listPageTitle: {
+    fontSize: 20,
+    fontWeight: "800",
+    color: "#111",
+    letterSpacing: 0.5,
+  },
+  // Cart / list
+  listRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F0F0F0",
+  },
+  listRowImg: { width: 72, height: 72, borderRadius: 12, backgroundColor: "#F5F5F5" },
+  listRowBody: { flex: 1, paddingHorizontal: 12 },
+  listRowName: { fontSize: 15, fontWeight: "700", color: "#111" },
+  listRowPrice: { fontSize: 14, fontWeight: "700", color: "#111", marginTop: 2 },
+  cartSizeLine: { fontSize: 12, color: "#999", marginTop: 2 },
   cartRightCol: { alignItems: "flex-end", justifyContent: "space-between", minHeight: 72 },
-  cartRemoveX: { fontSize: 22, color: "#999", lineHeight: 24, marginBottom: 8 },
+  cartRemoveX: { fontSize: 22, color: "#999", lineHeight: 22 },
   qtyBox: {
     flexDirection: "row",
     alignItems: "center",
-    borderWidth: 1,
-    borderColor: "#E5E5E5",
-    borderRadius: 8,
-    overflow: "hidden",
+    backgroundColor: "#F3F3F3",
+    borderRadius: 12,
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+    marginTop: 8,
   },
-  qtyBtn: { paddingHorizontal: 10, paddingVertical: 4 },
-  qtyBtnText: { fontSize: 16, color: "#111", fontWeight: "600" },
-  qtyNum: { fontSize: 14, fontWeight: "600", minWidth: 18, textAlign: "center" },
-  cartTotalLine: {
-    fontSize: 18,
-    fontWeight: "800",
-    color: "#111",
-    marginTop: 18,
-    marginBottom: 4,
-  },
-  profileHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 22,
-    marginTop: 4,
-  },
+  qtyBtn: { width: 28, height: 28, alignItems: "center", justifyContent: "center" },
+  qtyBtnText: { fontSize: 18, color: "#111", fontWeight: "500" },
+  qtyNum: { fontSize: 14, fontWeight: "700", color: "#111", minWidth: 20, textAlign: "center" },
+  cartTotalLine: { fontSize: 18, fontWeight: "800", color: "#111", marginTop: 16 },
+  discountText: { fontSize: 13, color: "#555", marginTop: 6 },
+  empty: { textAlign: "center", padding: 20, color: "#999" },
+  loader: { textAlign: "center", padding: 8, color: "#777" },
+
+  // Profile
+  profileHeader: { flexDirection: "row", alignItems: "center", marginBottom: 20 },
   profileAvatar: {
     width: 56,
     height: 56,
@@ -9113,61 +6099,49 @@ const styles = StyleSheet.create({
     backgroundColor: "#111",
     paddingHorizontal: 12,
     paddingVertical: 8,
-    borderRadius: 10,
+    borderRadius: 12,
   },
   profileSectionLabel: {
     fontSize: 12,
-    fontWeight: "800",
-    color: "#111",
+    fontWeight: "700",
+    color: "#888",
     letterSpacing: 0.8,
     marginBottom: 10,
   },
   bonusGrid: {
     flexDirection: "row",
-    borderWidth: 1,
-    borderColor: "#EAEAEA",
-    borderRadius: 12,
+    backgroundColor: "#F7F7F7",
+    borderRadius: 16,
     overflow: "hidden",
-    backgroundColor: "#FAFAFA",
   },
-  bonusCell: { flex: 1, paddingVertical: 14, paddingHorizontal: 8, alignItems: "center" },
+  bonusCell: { flex: 1, padding: 14, alignItems: "center" },
   bonusCellMid: { borderLeftWidth: 1, borderRightWidth: 1, borderColor: "#EAEAEA" },
-  bonusCellValue: { fontSize: 15, fontWeight: "800", color: "#111", marginBottom: 4 },
-  bonusCellLabel: { fontSize: 10, color: "#888", textAlign: "center", lineHeight: 13 },
+  bonusCellValue: { fontSize: 16, fontWeight: "800", color: "#111" },
+  bonusCellLabel: { fontSize: 11, color: "#888", textAlign: "center", marginTop: 4 },
   refLinkRow: {
     flexDirection: "row",
     alignItems: "center",
-    borderWidth: 1,
-    borderColor: "#EAEAEA",
-    borderRadius: 10,
+    backgroundColor: "#F5F5F5",
+    borderRadius: 14,
     paddingHorizontal: 12,
-    paddingVertical: 10,
-    backgroundColor: "#FAFAFA",
+    paddingVertical: 12,
   },
-  refLinkText: { flex: 1, fontSize: 12, color: "#555" },
-  refCopyBtn: { paddingLeft: 10 },
+  refLinkText: { flex: 1, fontSize: 12, color: "#555", marginRight: 8 },
+  refCopyBtn: { width: 36, height: 36, alignItems: "center", justifyContent: "center" },
   profileLevelCurrent: { fontSize: 13, color: "#555", marginBottom: 12 },
   levelRow: { flexDirection: "row", gap: 8 },
   levelTile: {
     flex: 1,
-    borderWidth: 1,
-    borderColor: "#EAEAEA",
-    borderRadius: 12,
-    padding: 10,
-    backgroundColor: "#FAFAFA",
+    backgroundColor: "#F5F5F5",
+    borderRadius: 14,
+    padding: 12,
     alignItems: "center",
-    minHeight: 110,
   },
-  levelTileActive: {
-    borderColor: "#111",
-    backgroundColor: "#111",
-  },
-  levelTileIcon: { fontSize: 18, marginBottom: 6, color: "#111" },
-  levelTileIconActive: { color: "#fff" },
-  levelTileName: { fontSize: 11, fontWeight: "700", color: "#111", textAlign: "center", marginBottom: 4 },
+  levelTileActive: { backgroundColor: "#111" },
+  levelTileName: { fontSize: 11, fontWeight: "700", color: "#111", textAlign: "center" },
   levelTileNameActive: { color: "#fff" },
-  levelTileCb: { fontSize: 11, fontWeight: "700", color: "#333", marginBottom: 2 },
-  levelTileRange: { fontSize: 10, color: "#888", textAlign: "center" },
+  levelTileCash: { fontSize: 16, fontWeight: "800", color: "#111", marginTop: 2 },
+  levelTileRange: { fontSize: 10, color: "#888", marginTop: 4, textAlign: "center" },
   historyRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -9175,151 +6149,222 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: "#F0F0F0",
   },
-  historyId: { fontSize: 14, fontWeight: "600", color: "#111" },
+  historyId: { fontSize: 14, fontWeight: "700", color: "#111" },
   historyDate: { fontSize: 12, color: "#999", marginTop: 2 },
   historySum: { fontSize: 14, fontWeight: "700", color: "#111" },
   historyStatus: { fontSize: 12, color: "#888", marginTop: 2 },
 
-  brushBtn: {
-    backgroundColor: "#111",
-    paddingVertical: 16,
-    paddingHorizontal: 32,
-    borderRadius: 4,
-    minWidth: 240,
+  // Menu
+  menuWrapper: {
+    position: "fixed",
+    bottom: 18,
+    left: 18,
+    right: 18,
+    zIndex: 10000,
+    elevation: 30,
     alignItems: "center",
   },
-  brushBtnText: {
-    color: "#fff",
-    fontSize: 14,
-    fontWeight: "800",
-    letterSpacing: 1.2,
-  },
-  sectionHeader: {
+  menu: {
     flexDirection: "row",
-    justifyContent: "space-between",
+    justifyContent: "space-around",
     alignItems: "center",
-    marginTop: 18,
-    marginBottom: 12,
-  },
-  sectionTitle: {
-    fontSize: 13,
-    fontWeight: "800",
-    letterSpacing: 1.4,
-    color: "#111",
-    textTransform: "uppercase",
-  },
-  sectionLink: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#999",
-  },
-  brandRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 8,
-  },
-  brandCircle: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: "#F5F5F5",
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1,
-    borderColor: "#EEE",
-  },
-  brandCircleActive: {
-    backgroundColor: "#111",
-    borderColor: "#111",
-  },
-  brandCircleText: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: "#333",
-    textAlign: "center",
-  },
-  brandCircleTextActive: {
-    color: "#fff",
-  },
-  brandLabel: {
-    fontSize: 11,
-    color: "#666",
-    textAlign: "center",
-    marginTop: 6,
-    fontWeight: "600",
-  },
-  horizCard: {
-    width: 150,
-    marginRight: 12,
-    backgroundColor: "#fff",
-    borderRadius: 16,
-    padding: 10,
-    borderWidth: 1,
-    borderColor: "#F0F0F0",
-  },
-  horizCardImg: {
-    width: "100%",
-    height: 110,
-    borderRadius: 12,
-    backgroundColor: "#F7F7F7",
-  },
-  listRowCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#fff",
-    borderRadius: 16,
-    padding: 12,
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: "#F0F0F0",
-  },
-  listRowImg: {
-    width: 72,
-    height: 72,
-    borderRadius: 12,
-    backgroundColor: "#F7F7F7",
-  },
-  listRowBody: {
-    flex: 1,
-    marginLeft: 12,
-  },
-  profileAvatar: {
-    width: 56,
-    height: 56,
+    backgroundColor: "rgba(255,255,255,0.97)",
     borderRadius: 28,
-    backgroundColor: "#111",
+    paddingVertical: 10,
+    paddingHorizontal: 6,
+    height: 74,
+    width: "100%",
+    maxWidth: 354,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.12,
+    shadowRadius: 16,
+    elevation: 12,
+    borderWidth: 1,
+    borderColor: "rgba(0,0,0,0.06)",
+  },
+  menuDark: { backgroundColor: "rgba(30,30,30,0.96)", borderColor: "rgba(255,255,255,0.08)" },
+  menuButton: { alignItems: "center", justifyContent: "center", flex: 1, paddingVertical: 2 },
+  menuIconWrap: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
     alignItems: "center",
     justifyContent: "center",
-    marginRight: 14,
-    overflow: "hidden",
+    backgroundColor: "transparent",
+    marginBottom: 2,
   },
-  profileAvatarText: {
-    color: "#fff",
-    fontSize: 24,
-    fontWeight: "900",
-  },
-  statsRow: {
-    flexDirection: "row",
-    backgroundColor: "#fff",
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: "#F0F0F0",
-    paddingVertical: 14,
-    marginBottom: 14,
-  },
-  statCell: {
-    flex: 1,
+  menuIconWrapActive: { backgroundColor: "#111" },
+  menuIconWrapActiveDark: { backgroundColor: "#fff" },
+  menuText: { fontSize: 12, fontWeight: "500", color: "#888", marginTop: 1 },
+  menuTextActive: { fontWeight: "700", color: "#111" },
+  menuBadge: {
+    position: "absolute",
+    top: -2,
+    right: -6,
+    backgroundColor: "#111",
+    borderRadius: 10,
+    minWidth: 18,
+    height: 18,
+    justifyContent: "center",
     alignItems: "center",
+    paddingHorizontal: 5,
+    borderWidth: 1.5,
+    borderColor: "#fff",
+    zIndex: 2,
   },
-  statValue: {
-    fontSize: 16,
-    fontWeight: "800",
+  menuBadgeText: { color: "#fff", fontSize: 11, fontWeight: "800" },
+
+  // Modal
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.45)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 16,
+  },
+  modalView: {
+    backgroundColor: "#fff",
+    borderRadius: 20,
+    padding: 20,
+    width: "100%",
+    maxWidth: 400,
+  },
+  modalViewDark: { backgroundColor: "#1C1C1E" },
+  modalTitle: { fontSize: 18, fontWeight: "800", color: "#111", marginBottom: 14 },
+  modalInput: {
+    borderWidth: 1,
+    borderColor: "#E5E5E5",
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    fontSize: 15,
+    marginBottom: 10,
+    color: "#111",
+    backgroundColor: "#FAFAFA",
+  },
+  modalError: {
+    backgroundColor: "#FEE",
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 10,
+  },
+  modalErrorText: { color: "#c00", fontSize: 13 },
+  modalButtons: { flexDirection: "row", justifyContent: "flex-end", gap: 10, marginTop: 8 },
+  modalCancel: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: "#F0F0F0",
+  },
+  modalConfirm: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: "#111",
+  },
+  buttonText: { color: "#fff", fontWeight: "700", fontSize: 14 },
+  deliveryLabel: { fontSize: 13, fontWeight: "600", color: "#555", marginBottom: 8 },
+  deliveryOptions: { flexDirection: "row", gap: 10, marginBottom: 12 },
+  deliveryOption: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: "#E5E5E5",
+    borderRadius: 12,
+    padding: 12,
+    backgroundColor: "#FAFAFA",
+  },
+  deliveryOptionActive: { backgroundColor: "#111", borderColor: "#111" },
+  deliveryOptionTitle: { fontSize: 14, fontWeight: "700", color: "#111" },
+  deliveryOptionTextActive: { color: "#fff" },
+  deliveryDetail: { fontSize: 12, color: "#888", marginTop: 2 },
+  deliveryDetailActive: { color: "rgba(255,255,255,0.8)" },
+  phoneRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#E5E5E5",
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    marginBottom: 10,
+    backgroundColor: "#FAFAFA",
+  },
+  phonePrefix: { fontSize: 15, color: "#111", marginRight: 6, fontWeight: "600" },
+  phoneInput: { flex: 1, paddingVertical: 12, fontSize: 15, color: "#111" },
+  promoBox: { flexDirection: "row", gap: 8, marginBottom: 8 },
+  promoInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: "#E5E5E5",
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    fontSize: 15,
+    color: "#111",
+    backgroundColor: "#FAFAFA",
+  },
+  promoButton: {
+    backgroundColor: "#111",
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    justifyContent: "center",
+  },
+  bonusCheckbox: { flexDirection: "row", alignItems: "center", marginVertical: 8 },
+  bonusCheckboxText: { fontSize: 14, fontWeight: "600", color: "#111" },
+  totalRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginVertical: 12,
+    paddingVertical: 8,
+    borderTopWidth: 1,
+    borderColor: "#ddd",
+  },
+  totalLabel: { fontSize: 16, fontWeight: "600", color: "#111" },
+  totalAmount: { fontSize: 18, fontWeight: "900", color: "#111" },
+
+  // Reviews
+  reviewItem: { backgroundColor: "#f0f0f0", padding: 8, borderRadius: 12, marginBottom: 8 },
+  reviewRating: { fontSize: 16, color: "#111", letterSpacing: 2 },
+  reviewComment: { fontSize: 13, marginTop: 2, color: "#333" },
+  reviewDate: { fontSize: 11, color: "#777", marginTop: 2 },
+  noReviews: { fontStyle: "italic", marginVertical: 8, fontSize: 14, color: "#999" },
+  reviewForm: { marginTop: 16, padding: 12, backgroundColor: "#f9f9f9", borderRadius: 16 },
+  reviewFormTitle: { fontSize: 16, fontWeight: "600", marginBottom: 8 },
+  stars: { flexDirection: "row", marginBottom: 8 },
+  star: { fontSize: 28, marginRight: 4 },
+  starActive: { color: "#111" },
+  starInactive: { color: "#bbb" },
+  reviewInput: {
+    borderWidth: 1,
+    borderColor: "#ddd",
+    borderRadius: 12,
+    padding: 8,
+    marginBottom: 8,
     color: "#111",
   },
-  statLabel: {
-    fontSize: 11,
-    color: "#999",
-    marginTop: 4,
-    textAlign: "center",
+  submitReview: { backgroundColor: "#111", padding: 10, borderRadius: 16, alignItems: "center" },
+
+  // Toast
+  toastContainer: {
+    position: "fixed",
+    top: 18,
+    left: 58,
+    right: 58,
+    alignItems: "center",
+    zIndex: 99999,
+    elevation: 99999,
+    pointerEvents: "box-none",
   },
+  toast: {
+    backgroundColor: "rgba(20,20,20,0.92)",
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 14,
+  },
+  toastText: { color: "#fff", fontSize: 13, fontWeight: "600", textAlign: "center" },
+
+  // list favorites header
+  pageTitle: { fontSize: 22, fontWeight: "800", color: "#111", marginBottom: 12 },
+  headerBtn: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
+  headerBtnText: { fontSize: 22, color: "#111" },
 });
